@@ -18,6 +18,7 @@ const tests = [
   ["demo/verify-capacity.mjs", 30_000],
   ["demo/verify-topology.mjs", 30_000],
   ["demo/verify-telemetry-relay.mjs", 30_000],
+  ["demo/verify-full-stack-bootstrap.mjs", 30_000],
   ["demo/verify-presenter.mjs", 120_000],
   ["demo/verify-seed-sweep.mjs", 30_000],
   ["demo/verify-seed-sweep-runner.mjs", 60_000],

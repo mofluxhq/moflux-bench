@@ -14,9 +14,12 @@
  * shows where each one breaks, including the last.
  *
  * Usage:
- *   docker compose -f demo/compose.yaml up -d      # prometheus, grafana, redis
- *   node demo/run-demo.mjs --step
- *   open http://localhost:3000                     # Grafana, admin/admin
+ *   node demo/run-demo.mjs --step                  # starts the stack and opens Grafana
+ *
+ * Pass --no-open-grafana for headless runs.
+ *
+ * Pass --no-stack-start only when the observability and Redis services are
+ * already managed externally.
  */
 
 import { spawn, spawnSync } from "node:child_process";
@@ -27,7 +30,11 @@ import path from "node:path";
 import { RedisClient } from "../arms/redis-client.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const RESULTS = path.join(ROOT, "results");
+const RESULTS = path.resolve(process.env.MOFLUX_BENCH_RESULTS_DIR ?? path.join(ROOT, "results"));
+const SUPPORT_COMPOSE_FILE = path.join(ROOT, "demo", "compose.yaml");
+const TELEMETRY_RELAY_URL = "http://127.0.0.1:8200";
+const GRAFANA_DASHBOARD_UID = "moflux-bench";
+const GRAFANA_DASHBOARD_PATH = `/d/${GRAFANA_DASHBOARD_UID}/moflux-benchmark-harness?orgId=1&refresh=5s`;
 mkdirSync(RESULTS, { recursive: true });
 
 // ── args ─────────────────────────────────────────────────────────────
@@ -54,8 +61,11 @@ const OPT = {
   seed: num("seed", 7),
   grafana: args.get("grafana") ?? "http://localhost:3000",
   grafanaAuth: args.get("grafana-auth") ?? "admin:admin",
+  openGrafana: !flag("no-open-grafana"),
   skipVerify: flag("skip-verify"),
   onlyPhase: args.get("only") ?? "",
+  startSupportStack: !flag("no-stack-start"),
+  supportStackTimeoutMs: num("stack-timeout-ms", 45000),
 };
 
 // The workload. Interactive traffic runs the whole time; batch arrives as a
@@ -113,7 +123,7 @@ async function annotate(text, tags = []) {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        authorization: `Basic ${Buffer.from(OPT.grafanaAuth).toString("base64")}`,
+        authorization: grafanaAuthHeader(),
       },
       body: JSON.stringify({ text, tags: ["moflux-bench", ...tags], time: Date.now() }),
       signal: AbortSignal.timeout(1500),
@@ -176,18 +186,169 @@ for (const sig of ["SIGINT", "SIGTERM"]) {
   });
 }
 
-async function waitForHealth(url, timeoutMs = 10000) {
+async function waitForUrl(url, timeoutMs = 10000) {
   const deadline = Date.now() + timeoutMs;
+  let lastStatus = null;
+  let lastError = null;
   while (Date.now() < deadline) {
     try {
-      const res = await fetch(`${url}/healthz`, { signal: AbortSignal.timeout(500) });
+      const res = await fetch(url, { signal: AbortSignal.timeout(1000) });
+      lastStatus = res.status;
       if (res.ok) return true;
-    } catch {
-      /* not yet */
+    } catch (error) {
+      lastError = error;
     }
-    await sleep(150);
+    await sleep(200);
   }
-  throw new Error(`${url} never became healthy`);
+  const detail = lastStatus != null
+    ? `last HTTP status ${lastStatus}`
+    : lastError?.message ?? "connection failed";
+  throw new Error(`${url} never became healthy (${detail})`);
+}
+
+async function waitForHealth(url, timeoutMs = 10000) {
+  return waitForUrl(`${url}/healthz`, timeoutMs);
+}
+
+function grafanaAuthHeader() {
+  return `Basic ${Buffer.from(OPT.grafanaAuth).toString("base64")}`;
+}
+
+async function waitForGrafanaDashboard(timeoutMs = 10000) {
+  const url = `${OPT.grafana}/api/dashboards/uid/${GRAFANA_DASHBOARD_UID}`;
+  const deadline = Date.now() + timeoutMs;
+  let lastStatus = null;
+  let lastError = null;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(url, {
+        headers: { authorization: grafanaAuthHeader() },
+        signal: AbortSignal.timeout(1000),
+      });
+      lastStatus = res.status;
+      if (res.ok) return true;
+    } catch (error) {
+      lastError = error;
+    }
+    await sleep(200);
+  }
+  const detail = lastStatus != null
+    ? `last HTTP status ${lastStatus}`
+    : lastError?.message ?? "connection failed";
+  throw new Error(`Grafana dashboard ${GRAFANA_DASHBOARD_UID} was not provisioned (${detail})`);
+}
+
+function grafanaDashboardUrl() {
+  return new URL(GRAFANA_DASHBOARD_PATH, `${OPT.grafana}/`).toString();
+}
+
+function openGrafanaDashboard() {
+  if (!OPT.openGrafana) return;
+
+  const url = grafanaDashboardUrl();
+  const override = process.env.MOFLUX_BENCH_BROWSER?.trim();
+  let command;
+  let argv;
+  if (override) {
+    command = override;
+    argv = [url];
+  } else if (process.platform === "darwin") {
+    command = "open";
+    argv = [url];
+  } else if (process.platform === "win32") {
+    command = "cmd";
+    argv = ["/c", "start", "", `"${url}"`];
+  } else {
+    command = "xdg-open";
+    argv = [url];
+  }
+
+  const result = spawnSync(command, argv, {
+    cwd: ROOT,
+    encoding: "utf8",
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  if (result.error || result.status !== 0) {
+    const detail = result.error?.message ?? result.stderr?.trim() ?? `exit ${result.status}`;
+    console.warn(`${YELLOW}   ! Could not open Grafana automatically (${detail})${OFF}`);
+    console.warn(`${YELLOW}     Open ${url}${OFF}`);
+    return;
+  }
+  console.log(`${GREEN}   ✓ Opened Grafana dashboard: ${url}${OFF}`);
+}
+
+function runDocker(args, { allowFailure = false } = {}) {
+  const result = spawnSync("docker", args, {
+    cwd: ROOT,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (result.error && !allowFailure) {
+    throw new Error(`failed to execute docker: ${result.error.message}`, { cause: result.error });
+  }
+  if (result.status !== 0 && !allowFailure) {
+    const output = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
+    throw new Error(`docker ${args.join(" ")} failed${output ? `:\n${output}` : ""}`);
+  }
+  return result;
+}
+
+function compose(args, options = {}) {
+  return runDocker(["compose", "-f", SUPPORT_COMPOSE_FILE, ...args], options);
+}
+
+function supportStackDiagnostics() {
+  const sections = [];
+  for (const [title, args] of [
+    ["docker compose ps", ["ps"]],
+    ["telemetry-relay logs", ["logs", "--no-color", "--tail=100", "telemetry-relay"]],
+    ["grafana logs", ["logs", "--no-color", "--tail=100", "grafana"]],
+  ]) {
+    const result = compose(args, { allowFailure: true });
+    const output = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
+    if (output) sections.push(`${title}:\n${output}`);
+  }
+  return sections.join("\n\n");
+}
+
+let supportStackReady = false;
+async function ensureSupportStack() {
+  if (supportStackReady) return;
+
+  if (OPT.startSupportStack) {
+    runDocker(["info"]);
+    runDocker(["compose", "version"]);
+    compose([
+      "up",
+      "-d",
+      "--force-recreate",
+      "telemetry-relay",
+      "prometheus",
+      "grafana",
+      "redis",
+    ]);
+  }
+
+  try {
+    await waitForUrl(`${TELEMETRY_RELAY_URL}/healthz`, OPT.supportStackTimeoutMs);
+    await waitForUrl("http://127.0.0.1:9090/-/ready", OPT.supportStackTimeoutMs);
+    await waitForUrl("http://127.0.0.1:3000/api/health", OPT.supportStackTimeoutMs);
+    await waitForGrafanaDashboard(OPT.supportStackTimeoutMs);
+  } catch (error) {
+    const diagnostics = supportStackDiagnostics();
+    const hint = OPT.startSupportStack
+      ? "The demo attempted to start the support stack automatically."
+      : "Automatic stack startup was disabled with --no-stack-start.";
+    throw new Error(
+      `The public demo support stack did not become ready. ${hint}` +
+        `${diagnostics ? `\n\n${diagnostics}` : ""}`,
+      { cause: error },
+    );
+  }
+
+  supportStackReady = true;
+  console.log(`${GREEN}   ✓ Telemetry relay, Prometheus, Grafana, and Redis are ready${OFF}`);
+  openGrafanaDashboard();
 }
 
 async function flushRedis() {
@@ -197,7 +358,7 @@ async function flushRedis() {
     await redis.command("DEL", "bench:leases", "bench:tokens", "bench:inflight");
   } catch (error) {
     throw new Error(
-      "Redis is required for the coordinated arm. Start it with `npm run stack:up`.",
+      "Redis was not reachable after the support stack started. Run `docker compose -f demo/compose.yaml ps` and inspect the Redis container logs.",
       { cause: error },
     );
   } finally {
@@ -215,6 +376,7 @@ async function flushRedis() {
  * arrival schedule. The admission policy is the only variable.
  */
 async function runArm({ label, arm, maxConcurrent, tokenBudget = 0, maxQueue = 0, killReplicaAtMs = 0 }) {
+  await ensureSupportStack();
   if (arm === "redis") await flushRedis();
 
   const sim = launch("sim", "sim/provider-sim.mjs", [
@@ -273,7 +435,8 @@ async function runArm({ label, arm, maxConcurrent, tokenBudget = 0, maxQueue = 0
     }, killReplicaAtMs);
   }
 
-  await waitForHealth("http://127.0.0.1:8200", 10000);
+  // Re-check the relay immediately before launching the ephemeral load generator.
+  await waitForUrl(`${TELEMETRY_RELAY_URL}/healthz`, 5000);
 
   const gen = launch(
     "loadgen",
@@ -292,7 +455,7 @@ async function runArm({ label, arm, maxConcurrent, tokenBudget = 0, maxQueue = 0
     `--batch-input-chars=${WORKLOAD.batchInputChars}`,
     `--batch-max-tokens=${WORKLOAD.batchMaxTokens}`,
     "--metrics-port=0",
-    "--metrics-relay-url=http://127.0.0.1:8200/ingest",
+    `--metrics-relay-url=${TELEMETRY_RELAY_URL}/ingest`,
     "--metrics-relay-required",
       `--out=${outFile}`,
     ],
@@ -375,6 +538,11 @@ function reportArm(summary) {
 
 const results = {};
 const want = (name) => OPT.onlyPhase === "" || OPT.onlyPhase === name;
+
+// Start observability before the first narrated pause so the dashboard is
+// already visible while the instrument-validation and contention-sweep phases
+// run. `runArm` keeps the same guard for direct phase-only invocations.
+await ensureSupportStack();
 
 console.log(`${BOLD}MoFlux benchmark harness — narrated walkthrough${OFF}`);
 note(

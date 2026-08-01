@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.8.2
+
+### Changed
+
+- Make `npm run demo:full` start and validate the public telemetry, Prometheus, Grafana, and Redis support stack automatically.
+- Increase the support-stack readiness window to 45 seconds for cold Docker Desktop starts.
+- Start the support stack before the first narrated phase, wait for the provisioned `moflux-bench` Grafana dashboard, and open its direct URL automatically.
+- Add `--no-open-grafana` for headless or externally managed browser sessions.
+
+### Fixed
+
+- Prevent the narrated public walkthrough from failing at `http://127.0.0.1:8200` when users did not manually run `npm run stack:up` first.
+- Include Docker Compose status, telemetry-relay logs, and Grafana logs when the support stack genuinely fails to start or provision the dashboard.
+- Allow the public walkthrough results directory to be overridden for isolated verification runs.
+
 ## 0.8.1
 
 ### Changed
