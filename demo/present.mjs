@@ -29,6 +29,9 @@ import {
 } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { RedisClient } from "../arms/redis-client.mjs";
+import { lendingComparison, lendingMetrics } from "./lending-lib.mjs";
+import { dividedStaticCap } from "./control-arm-lib.mjs";
 import { buildTrace } from "../load/trace-lib.mjs";
 import { reservationBounds, validateCapacityPlan } from "./capacity-lib.mjs";
 import {
@@ -50,6 +53,7 @@ const ENV_FILE = process.env.MOFLUX_BENCH_ENV_FILE
 const TYR_PORTS = [8101, 8102, 8103, 8104];
 const INTERACTIVE_PORTS = [8101, 8102, 8103, 8104];
 const BATCH_PORTS = [8104];
+const LOCAL_REPLICA_COUNT = TYR_PORTS.length;
 const TYR_SERVICES = ["tyr-r1", "tyr-r2", "tyr-r3", "tyr-r4"];
 const POOL_AGENT_COUNTS = Object.freeze({ "sim-interactive": 4, "sim-batch": 1 });
 mkdirSync(RESULTS, { recursive: true });
@@ -105,16 +109,98 @@ const OPT = Object.freeze({
   grantTtlMs: num("grant-ttl-ms", 120000),
   enrollmentGrantTtlMs: num("enrollment-grant-ttl-ms", 5000),
   seed: num("seed", 7),
+  // Comma-separated control arms replayed on the same trace between the
+  // baseline and MoFlux: "static-cap", "redis", or "all". These are the
+  // buy-vs-build alternatives; without them the sweep only answers "is
+  // admission control better than nothing", which nobody is choosing between.
+  controlArms: str("control-arms", ""),
+  /**
+   * Lending scenario. Batch stays absent for the first 60% of the phase
+   * instead of 35%, giving a wide idle window in which a lending policy can
+   * demonstrably exceed the interactive pool's own ceiling. A static split
+   * cannot, which is what makes the two distinguishable.
+   */
+  lending: str("lending", "false") !== "false",
   sigma: num("sigma", 0.25),
   kappa: num("kappa", 0),
   r1: num("r1", 400),
 });
+
+/**
+ * Arms 2 and 4 from the harness README, run in the same request-path position
+ * as the baseline and replaying the identical trace.
+ *
+ * These are local-admission policies: no Latchflo, no grants, no Tyr. They
+ * exist so the published comparison is against the alternatives a reader would
+ * otherwise build, not only against doing nothing.
+ */
+const CONTROL_ARM_SPECS = {
+  "static-cap": {
+    key: "staticCap",
+    file: "static-cap.json",
+    armLabel: "static-cap-divided",
+    title: "Static cap",
+    caption: "Arm 2 — local semaphore, envelope divided by replica count, no coordination",
+    replicaArm: "static-cap",
+    needsRedis: false,
+    replicaFlags: (opt) => [
+      `--max-concurrent=${dividedStaticCap({
+        envelope: opt.envelope,
+        replicaCount: LOCAL_REPLICA_COUNT,
+      })}`,
+      "--max-queue=4",
+      "--token-budget=0",
+    ],
+  },
+  redis: {
+    key: "redis",
+    file: "redis-coordinated.json",
+    armLabel: "redis-coordinated",
+    title: "Redis coordinated",
+    caption: "Arm 4 — fleet-shared concurrency and token budget via atomic Lua reserve",
+    replicaArm: "redis",
+    needsRedis: true,
+    replicaFlags: (opt) => [
+      `--max-concurrent=${opt.envelope}`,
+      "--max-queue=0",
+      `--token-budget=${opt.tokenBudget}`,
+      "--lease-ttl-ms=15000",
+    ],
+  },
+};
+
+const CONTROL_ARMS = (() => {
+  const raw = OPT.controlArms.trim();
+  if (raw === "") return [];
+  const names = raw === "all" ? Object.keys(CONTROL_ARM_SPECS) : raw.split(",").map((n) => n.trim());
+  return names.filter(Boolean).map((name) => {
+    const spec = CONTROL_ARM_SPECS[name];
+    if (!spec) {
+      throw new Error(
+        `unsupported --control-arms entry "${name}"; expected ${Object.keys(CONTROL_ARM_SPECS).join(", ")} or all`,
+      );
+    }
+    return spec;
+  });
+})();
+
+if (CONTROL_ARMS.length > 0 && OPT.mode !== "compare") {
+  throw new Error("--control-arms requires --mode=compare; they are only meaningful beside a baseline");
+}
 
 if (!new Set(["compare", "baseline", "moflux", "doctor"]).has(OPT.mode)) {
   throw new Error(`unsupported --mode=${OPT.mode}; expected compare, baseline, moflux, or doctor`);
 }
 if (!Number.isFinite(OPT.phaseMs) || OPT.phaseMs < 10000) {
   throw new Error("--phase-ms must be at least 10000");
+}
+if (OPT.lending && OPT.mode !== "compare") {
+  throw new Error("--lending requires --mode=compare; the idle window is only meaningful against a control arm");
+}
+if (OPT.lending && OPT.phaseMs < 30000) {
+  // Below this the idle window is too short for occupancy to settle, and a
+  // borrowed slot cannot be distinguished from scheduling noise.
+  throw new Error("--lending requires --phase-ms of at least 30000 for a readable idle window");
 }
 if (OPT.fault && OPT.phaseMs <= OPT.faultAtMs + 5000) {
   throw new Error("fault run must continue at least 5 seconds after --fault-at-ms");
@@ -160,8 +246,8 @@ const WORKLOAD = Object.freeze({
   interactiveRps: 6,
   interactiveInputChars: 1200,
   interactiveMaxTokens: 400,
-  batchStartMs: Math.round(OPT.phaseMs * 0.35),
-  batchDurationMs: Math.round(OPT.phaseMs * 0.5),
+  batchStartMs: Math.round(OPT.phaseMs * (OPT.lending ? 0.6 : 0.35)),
+  batchDurationMs: Math.round(OPT.phaseMs * (OPT.lending ? 0.35 : 0.5)),
   batchRps: 3,
   batchInputChars: 24000,
   batchMaxTokens: 3000,
@@ -752,10 +838,18 @@ async function startControlPlane(env) {
   // Recreate observability services so every recording uses the checked-in
   // scrape configuration and dashboard rather than a container created by an
   // older repo version.
-  compose("up", "-d", "--force-recreate", "telemetry-relay", "prometheus", "grafana");
+  // Only the arms that were selected. Redis backs arm 4 and is not part of the
+  // two-arm demo, so it stays down unless a control arm needs it.
+  const supportServices = ["telemetry-relay", "prometheus", "grafana"];
+  if (CONTROL_ARMS.some((spec) => spec.needsRedis)) supportServices.push("redis");
+  compose("up", "-d", "--force-recreate", ...supportServices);
   // Force recreation guarantees the running controller uses the tokens from
   // the current .env instead of a stale value from an earlier recording.
   compose("up", "-d", "--force-recreate", "latchflo");
+  if (CONTROL_ARMS.some((spec) => spec.needsRedis)) {
+    await waitForRedis();
+    console.log(`${GREEN}   ✓ Redis is ready for the coordinated arm${OFF}`);
+  }
   await waitFor("http://127.0.0.1:18080/readyz", {
     timeoutMs: 45000,
     label: "Latchflo readiness",
@@ -1108,11 +1202,16 @@ function subtractAccounting(after, before) {
   return delta;
 }
 
-async function runBaseline() {
-  // The control arm keeps the same four-replica hop and the same provider.
-  // Its replica policy is passthrough: every request is forwarded and no
-  // Latchflo/Tyr admission decision exists anywhere in the request path.
+/**
+ * Runs one locally-admitted arm: same four-replica hop, same provider, same
+ * immutable trace. Only the replica's admission policy changes.
+ *
+ * Tyr is stopped for the duration so no grant or admission decision from the
+ * managed path can leak into a control measurement.
+ */
+async function runLocalArm({ name, replicaArm, replicaFlags, armLabel, file, needsRedis }) {
   command("docker", composeArgs("stop", ...TYR_SERVICES), { allowFailure: true, quiet: true });
+  if (needsRedis) await flushRedis();
 
   const provider = launchNode("provider", "sim/provider-sim.mjs", providerArgs());
   await waitFor("http://127.0.0.1:9000/healthz", {
@@ -1125,34 +1224,124 @@ async function runBaseline() {
   try {
     for (let index = 0; index < TYR_PORTS.length; index += 1) {
       const port = TYR_PORTS[index];
-      const replica = launchNode(`baseline-r${index + 1}`, "arms/replica.mjs", [
+      const replica = launchNode(`${name}-r${index + 1}`, "arms/replica.mjs", [
         `--port=${port}`,
         `--id=r${index + 1}`,
-        "--arm=passthrough",
+        `--arm=${replicaArm}`,
         "--upstream=http://127.0.0.1:9000",
+        ...replicaFlags,
       ]);
       replicas.push(replica);
       await waitFor(`http://127.0.0.1:${port}/healthz`, {
         timeoutMs: 10000,
-        label: `baseline replica ${index + 1}`,
+        label: `${name} replica ${index + 1}`,
         child: replica,
       });
     }
 
-    const outFile = path.join(RESULTS, "baseline.json");
+    const outFile = path.join(RESULTS, file);
+    rmSync(outFile, { force: true });
     const summary = await runLoadgen({
       interactiveTargets: INTERACTIVE_PORTS.map((port) => `http://127.0.0.1:${port}`),
       batchTargets: BATCH_PORTS.map((port) => `http://127.0.0.1:${port}`),
-      armLabel: "baseline-no-control",
+      armLabel,
       outFile,
     });
     summary.simCounters = await readProviderCounters();
     attachScenario(summary);
+    attachLending(summary);
     writeFileSync(outFile, JSON.stringify(summary, null, 2));
     return summary;
   } finally {
     await Promise.all([...replicas, provider].map((child) => terminateHostChild(child)));
   }
+}
+
+/**
+ * Splits a completed run at the configured batch arrival and records what
+ * occupancy reached on each side.
+ *
+ * The interactive ceiling is what the interactive pool owns outright, so
+ * occupancy above it during the idle window is capacity that came from
+ * somewhere else. For an uncontrolled or locally-capped arm there is no pool
+ * structure at all, so the ceiling is the whole envelope and nothing can be
+ * reported as borrowed — which is the correct answer for those arms.
+ */
+function attachLending(summary, { interactiveCeiling } = {}) {
+  if (!OPT.lending) return;
+  summary.lending = lendingMetrics({
+    summary,
+    peakActiveBySecond: summary.simCounters?.peakActiveBySecond ?? [],
+    batchArrivalMs: WORKLOAD.batchStartMs,
+    runEndMs: WORKLOAD.durationMs,
+    interactiveCeiling: interactiveCeiling ?? OPT.envelope,
+    envelope: OPT.envelope,
+  });
+}
+
+/**
+ * Polls Redis until it answers, because a freshly created container accepts
+ * TCP before it is serving commands. Called once during startup so a missing
+ * or slow Redis fails with an actionable message before any arm has run,
+ * rather than mid-sweep after several minutes of work.
+ */
+async function waitForRedis({ timeoutMs = 30000 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  let lastError = null;
+  while (Date.now() < deadline) {
+    const redis = new RedisClient();
+    try {
+      await redis.connect();
+      await redis.command("PING");
+      redis.close();
+      return;
+    } catch (error) {
+      lastError = error;
+      redis.close();
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  }
+  throw new Error(
+    "Redis never became ready for the coordinated arm (arm 4). It is defined in demo/compose.yaml " +
+      "and started automatically when --control-arms includes redis. Check " +
+      "`docker compose -f demo/compose.yaml ps redis` and its logs, and that port 6379 is free. " +
+      `Last error: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
+  );
+}
+
+/**
+ * Arm 4 keeps concurrency and token state in Redis. Leaked leases from an
+ * earlier seed would silently shrink the capacity this seed sees, so the keys
+ * are cleared before every run rather than relying on TTL expiry.
+ */
+async function flushRedis() {
+  const redis = new RedisClient();
+  try {
+    await redis.connect();
+    await redis.command("DEL", "bench:leases", "bench:tokens", "bench:inflight");
+  } catch (error) {
+    throw new Error(
+      `Could not clear Redis state before the coordinated arm: ${
+        error instanceof Error ? error.message : String(error)
+      }. Running without a flush would carry leases from the previous seed into this one.`,
+    );
+  } finally {
+    redis.close();
+  }
+}
+
+async function runBaseline() {
+  // The control arm keeps the same four-replica hop and the same provider.
+  // Its replica policy is passthrough: every request is forwarded and no
+  // Latchflo/Tyr admission decision exists anywhere in the request path.
+  return runLocalArm({
+    name: "baseline",
+    replicaArm: "passthrough",
+    replicaFlags: [],
+    armLabel: "baseline-no-control",
+    file: "baseline.json",
+    needsRedis: false,
+  });
 }
 
 async function runMoflux(env) {
@@ -1209,6 +1398,10 @@ async function runMoflux(env) {
 
   summary.simCounters = simCounters;
   attachScenario(summary);
+  // MoFlux is the only arm with a real pool structure, so it is the only arm
+  // whose interactive ceiling is narrower than the envelope — and therefore
+  // the only one where borrowing is even expressible.
+  attachLending(summary, { interactiveCeiling: CAPACITY.interactiveConcurrencySlots });
   summary.runtime = {
     tyr: { version: TYR_VERSION, image: env.MOFLUX_TYR_IMAGE },
     latchflo: { version: LATCHFLO_VERSION, image: env.MOFLUX_LATCHFLO_IMAGE },
@@ -1304,6 +1497,144 @@ function comparisonMetrics(baseline, moflux) {
   };
 }
 
+/** Scene index for the nth control arm, after the baseline. */
+function controlScene(spec) {
+  return 3 + CONTROL_ARMS.indexOf(spec);
+}
+
+/** MoFlux runs after the baseline and every control arm. */
+function mofluxScene() {
+  if (OPT.mode !== "compare") return 2;
+  return 3 + CONTROL_ARMS.length;
+}
+
+/**
+ * Generic arm-vs-arm deltas for every arm in the run.
+ *
+ * `video-comparison.json` keeps its exact baseline-versus-MoFlux shape for
+ * existing consumers. This file is additive and answers the question that one
+ * cannot: how does MoFlux compare against the alternatives a reader would
+ * build, rather than against doing nothing.
+ */
+function armDelta(reference, candidate) {
+  const base = reference.classes.interactive;
+  const cand = candidate.classes.interactive;
+  const baseGoodput = interactiveGoodput(reference);
+  const candGoodput = interactiveGoodput(candidate);
+  const pct = (from, to) => (from > 0 ? +(((to / from) - 1) * 100).toFixed(2) : null);
+  return {
+    interactiveSuccessPercentagePointChange: +((cand.successRate - base.successRate) * 100).toFixed(2),
+    interactiveGoodputChangePercent: pct(baseGoodput, candGoodput),
+    interactiveP50LatencyChangePercent: pct(base.latencyMs.p50, cand.latencyMs.p50),
+    interactiveP95LatencyChangePercent: pct(base.latencyMs.p95, cand.latencyMs.p95),
+    interactiveTtftP50ChangePercent: pct(base.ttftMs.p50, cand.ttftMs.p50),
+    interactiveTtftP95ChangePercent: pct(base.ttftMs.p95, cand.ttftMs.p95),
+    batchSuccessPercentagePointChange: +(
+      (candidate.classes.batch.successRate - reference.classes.batch.successRate) * 100
+    ).toFixed(2),
+    retryAmplificationChangePercent: pct(base.retryAmplification, cand.retryAmplification),
+    upstream429Reference:
+      reference.classes.interactive.upstreamReject + reference.classes.batch.upstreamReject,
+    upstream429Candidate:
+      candidate.classes.interactive.upstreamReject + candidate.classes.batch.upstreamReject,
+  };
+}
+
+function armRecord(summary) {
+  const interactive = summary.classes.interactive;
+  const batch = summary.classes.batch;
+  return {
+    interactiveSuccessRate: interactive.successRate,
+    interactiveGoodputRps: +interactiveGoodput(summary).toFixed(3),
+    interactiveP50Ms: interactive.latencyMs.p50,
+    interactiveP95Ms: interactive.latencyMs.p95,
+    interactiveTtftP50Ms: interactive.ttftMs.p50,
+    interactiveTtftP95Ms: interactive.ttftMs.p95,
+    interactiveRetryAmplification: interactive.retryAmplification,
+    batchSuccessRate: batch.successRate,
+    localRejects: interactive.localReject + batch.localReject,
+    upstream429s: interactive.upstreamReject + batch.upstreamReject,
+    peakActive: Number(summary.simCounters?.peakActive ?? 0),
+  };
+}
+
+/**
+ * Reports whether lending actually happened, rather than whether it was
+ * configured. The static control arm is the reference: it cannot exceed its
+ * ceiling while batch is idle, so any gain over it is observed borrowing.
+ */
+function printLending(baseline, controlResults, moflux) {
+  const reference = controlResults.get("staticCap") ?? baseline;
+  if (!reference?.lending || !moflux?.lending) return;
+  const comparison = lendingComparison(reference.lending, moflux.lending);
+  console.log(`\n${BOLD}   Capacity lending — idle batch window, then batch arrival${OFF}`);
+  console.table([
+    {
+      window: `idle (0–${(WORKLOAD.batchStartMs / 1000).toFixed(1)}s)`,
+      "reference peak": `${reference.lending.idleWindow.peakActive}/${OPT.envelope}`,
+      "MoFlux peak": `${moflux.lending.idleWindow.peakActive}/${OPT.envelope}`,
+      borrowed: moflux.lending.idleWindow.borrowedSlots ?? "n/a",
+    },
+    {
+      window: `contended (${(WORKLOAD.batchStartMs / 1000).toFixed(1)}s+)`,
+      "reference peak": `${reference.lending.contendedWindow.peakActive}/${OPT.envelope}`,
+      "MoFlux peak": `${moflux.lending.contendedWindow.peakActive}/${OPT.envelope}`,
+      borrowed: "—",
+    },
+  ]);
+  console.log(
+    comparison.lendingObserved
+      ? `${GREEN}   Lending observed: idle occupancy exceeded the static reference by ${comparison.idlePeakActiveGain} slot(s).${OFF}`
+      : `${YELLOW}   No lending observed: idle occupancy did not exceed the static reference. The policy behaved like a static split.${OFF}`,
+  );
+  console.log(
+    moflux.lending.floorReassertion.reasserted
+      ? `${GREEN}   Floor reasserted: batch was served ${moflux.lending.floorReassertion.admissionGapMs}ms after first asking.${OFF}`
+      : `${RED}   Floor NOT reasserted: batch was never served. Borrowed capacity was not returned.${OFF}`,
+  );
+  const outFile = path.join(RESULTS, "lending.json");
+  writeFileSync(
+    outFile,
+    JSON.stringify(
+      {
+        generatedAt: new Date().toISOString(),
+        scenario: moflux.scenario,
+        batchArrivalMs: WORKLOAD.batchStartMs,
+        referenceArm: controlResults.has("staticCap") ? "staticCap" : "baseline",
+        reference: reference.lending,
+        moflux: moflux.lending,
+        comparison,
+      },
+      null,
+      2,
+    ),
+  );
+  console.log(`   lending: ${path.relative(ROOT, outFile)}`);
+}
+
+function writeArmComparisons(baseline, controls, moflux) {
+  const arms = { baseline, ...Object.fromEntries(controls), moflux };
+  const comparisons = {
+    generatedAt: new Date().toISOString(),
+    scenario: baseline.scenario,
+    envelope: OPT.envelope,
+    arms: Object.fromEntries(Object.entries(arms).map(([key, s]) => [key, armRecord(s)])),
+    // Against no control: does this policy help at all?
+    versusBaseline: Object.fromEntries(
+      Object.entries(arms)
+        .filter(([key]) => key !== "baseline")
+        .map(([key, s]) => [key, armDelta(baseline, s)]),
+    ),
+    // Against each alternative: is MoFlux worth deploying over it?
+    mofluxVersus: Object.fromEntries(
+      controls.map(([key, s]) => [key, armDelta(s, moflux)]),
+    ),
+  };
+  const outFile = path.join(RESULTS, "arm-comparisons.json");
+  writeFileSync(outFile, JSON.stringify(comparisons, null, 2));
+  return { comparisons, outFile };
+}
+
 function writeComparison(baseline, moflux) {
   assertSameScenario(baseline, moflux);
   const comparison = {
@@ -1392,6 +1723,7 @@ try {
   const startsWithBaseline = OPT.mode === "compare" || OPT.mode === "baseline";
   await cue(startsWithBaseline ? "run the uncontrolled baseline" : "start Tyr and run MoFlux");
 
+  const controlResults = new Map();
   let baseline = null;
   if (startsWithBaseline) {
     scene(2, "Uncontrolled baseline");
@@ -1414,10 +1746,31 @@ ${GREEN}${BOLD}   Baseline complete.${OFF}`);
       rl.close();
       process.exit(0);
     }
-    await cue("transition to Tyr + Latchflo");
+    await cue(CONTROL_ARMS.length > 0 ? "run the buy-vs-build control arms" : "transition to Tyr + Latchflo");
   }
 
-  scene(OPT.mode === "compare" ? 3 : 2, OPT.fault ? "MoFlux with a replica failure" : "MoFlux enforce");
+  // Arms 2 and 4: the alternatives a reader would otherwise build. Same
+  // trace, same replicas, same provider — only the admission policy differs.
+  for (const spec of CONTROL_ARMS) {
+    scene(controlScene(spec), spec.title);
+    say(spec.caption);
+    await annotate(spec.title, [spec.key]);
+    const summary = await runLocalArm({
+      name: spec.key,
+      replicaArm: spec.replicaArm,
+      replicaFlags: spec.replicaFlags(OPT),
+      armLabel: spec.armLabel,
+      file: spec.file,
+      needsRedis: spec.needsRedis,
+    });
+    assertValidRun(summary, spec.title);
+    controlResults.set(spec.key, summary);
+    console.table([experienceRow(spec.title, summary)]);
+    console.table([protectionRow(spec.title, summary)]);
+    await cue("continue");
+  }
+
+  scene(mofluxScene(), OPT.fault ? "MoFlux with a replica failure" : "MoFlux enforce");
   say(
     `Latchflo allocates ${OPT.envelope} concurrent slots and ${OPT.tokenBudget.toLocaleString("en-US")} in-flight tokens`,
     "across four interactive Tyr paths, with replica 4 also carrying the batch pool. Tyr makes each admission decision locally.",
@@ -1426,12 +1779,18 @@ ${GREEN}${BOLD}   Baseline complete.${OFF}`);
   const moflux = await runMoflux(env);
   assertValidRun(moflux, "MoFlux run");
 
-  scene(OPT.mode === "compare" ? 4 : 3, "Result");
+  scene(mofluxScene() + 1, "Result");
   const experienceRows = [];
   const protectionRows = [];
   if (baseline) {
     experienceRows.push(experienceRow("No control", baseline));
     protectionRows.push(protectionRow("No control", baseline));
+  }
+  for (const spec of CONTROL_ARMS) {
+    const summary = controlResults.get(spec.key);
+    if (!summary) continue;
+    experienceRows.push(experienceRow(spec.title, summary));
+    protectionRows.push(protectionRow(spec.title, summary));
   }
   experienceRows.push(experienceRow(OPT.fault ? "MoFlux + fault" : "MoFlux", moflux));
   protectionRows.push(protectionRow(OPT.fault ? "MoFlux + fault" : "MoFlux", moflux));
@@ -1445,6 +1804,14 @@ ${BOLD}   Interactive experience${OFF}`);
   if (baseline) {
     printObservedComparison(baseline, moflux);
     comparisonFile = writeComparison(baseline, moflux).outFile;
+    if (OPT.lending) printLending(baseline, controlResults, moflux);
+    if (CONTROL_ARMS.length > 0) {
+      const controls = CONTROL_ARMS.map((spec) => [spec.key, controlResults.get(spec.key)]).filter(
+        ([, summary]) => Boolean(summary),
+      );
+      const { outFile } = writeArmComparisons(baseline, controls, moflux);
+      console.log(`   arm comparisons: ${path.relative(ROOT, outFile)}`);
+    }
   }
 
   console.log(`\n${GREEN}${BOLD}   Demo complete. Grafana remains open for the closing explanation.${OFF}`);

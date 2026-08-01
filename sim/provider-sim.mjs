@@ -125,6 +125,17 @@ const counters = {
   trueOutputTokens: 0,
   peakActive: 0,
   peakQueue: 0,
+  /**
+   * Highest concurrent occupancy observed in each whole second since the
+   * simulator started, indexed by second.
+   *
+   * The lending measurement is "what did occupancy reach while the batch pool
+   * was idle, versus after batch arrived" — a question a single cumulative
+   * high-water mark cannot answer, because one late spike hides an entire
+   * quiet window. Per-second buckets let any window be reconstructed after the
+   * fact without the simulator needing to know the workload's phase layout.
+   */
+  peakActiveBySecond: [],
   emittedTokens: 0,
   ticks: 0,
   tickDtSum: 0,
@@ -194,10 +205,41 @@ function tryStart() {
     active.add(job);
     counters.admitted += 1;
     if (active.size > counters.peakActive) counters.peakActive = active.size;
+    recordOccupancy();
   }
 }
 
+/**
+ * Occupancy is sampled on a timer as well as on admission, because a busy
+ * provider can go a whole second without either an admission or a completion.
+ * Event-driven sampling alone leaves gaps exactly when the pool is most full.
+ */
+function startOccupancySampler() {
+  const timer = setInterval(recordOccupancy, 200);
+  timer.unref();
+  return timer;
+}
+
+/** Start of the simulator process, so buckets are indexed from run start. */
+const OCCUPANCY_EPOCH_MS = Date.now();
+/** Bound the array so a long-running simulator cannot grow it without limit. */
+const MAX_OCCUPANCY_SECONDS = 3600;
+
+function recordOccupancy() {
+  const second = Math.floor((Date.now() - OCCUPANCY_EPOCH_MS) / 1000);
+  if (second < 0 || second >= MAX_OCCUPANCY_SECONDS) return;
+  const buckets = counters.peakActiveBySecond;
+  // Backfill skipped seconds with the occupancy that actually held through
+  // them, not zero. A second can pass with no admission and no completion
+  // while the pool is full — recording 0 there would claim the provider went
+  // idle, and a window containing only such seconds would read as empty.
+  const current = active.size;
+  while (buckets.length <= second) buckets.push(current);
+  if (current > buckets[second]) buckets[second] = current;
+}
+
 function finish(job, { error } = {}) {
+  recordOccupancy();
   job.settled = true;
   active.delete(job);
   if (job.timer) clearTimeout(job.timer);
@@ -503,6 +545,7 @@ const server = createServer(async (req, res) => {
   tryStart();
 });
 
+startOccupancySampler();
 server.listen(CONFIG.port, "0.0.0.0", () => {
   console.log(
     `provider-sim :${CONFIG.port} envelope=${CONFIG.envelope} queue=${CONFIG.queue} ` +

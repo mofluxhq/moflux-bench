@@ -111,6 +111,17 @@ for (const cls of classes) {
     localRejectReasons: {},
     localRejectPools: {},
     localRejectDetails: {},
+    firstAttemptAtMs: null,
+    firstSuccessAtMs: null,
+    /**
+     * Every completion, kept for the whole run.
+     *
+     * Distinct from `samples`, which pruneWindows() trims to the rolling
+     * metrics window on each scrape. Phase analysis needs the start of the run
+     * to still be present when the summary is written, which for any run
+     * longer than windowMs the rolling array cannot guarantee.
+     */
+    phaseSamples: [],
     retryHints: {
       received: 0, // rejections that carried a usable hint
       applied: 0, // hints that moved the wait off blind backoff
@@ -146,9 +157,31 @@ function sleep(ms, signal = undefined) {
   });
 }
 
+/**
+ * Milliseconds since the run began. Wall-clock `t` is kept for the metrics
+ * relay, but every lending calculation uses this monotonic offset so it is
+ * unaffected by clock adjustment mid-run.
+ */
+function offsetMs() {
+  return performance.now() - startedAtMonotonic;
+}
+
+/** First time this class issued an attempt, and first time one succeeded. */
+function markAttempt(cls) {
+  const s = stats[cls];
+  if (s.firstAttemptAtMs === null) s.firstAttemptAtMs = +offsetMs().toFixed(1);
+}
+
+function markSuccess(cls) {
+  const s = stats[cls];
+  if (s.firstSuccessAtMs === null) s.firstSuccessAtMs = +offsetMs().toFixed(1);
+}
+
 function record(cls, latencyMs, ttftMs) {
   const s = stats[cls];
-  s.samples.push({ t: Date.now(), latencyMs, ttftMs });
+  const sample = { t: Date.now(), offsetMs: +offsetMs().toFixed(1), latencyMs, ttftMs };
+  s.samples.push(sample);
+  s.phaseSamples.push(sample);
 }
 
 function pruneWindows(now = Date.now()) {
@@ -166,6 +199,49 @@ function percentile(values, p) {
   const sorted = [...values].sort((a, b) => a - b);
   const idx = Math.min(sorted.length - 1, Math.floor(p * sorted.length));
   return sorted[idx];
+}
+
+/**
+ * Splits one class's completions at the configured batch arrival.
+ *
+ * The boundary is the configured `batchStartMs`, not an observed first
+ * arrival: an observed boundary lands differently in each arm and would make
+ * the two windows incomparable across a paired run.
+ *
+ * Reads `phaseSamples`, which is never pruned. Deriving this from the rolling
+ * `samples` array would lose the idle window entirely on any run longer than
+ * `windowMs`, and would report zero idle goodput rather than failing.
+ */
+function phaseWindows(s) {
+  const boundaryMs = CONFIG.batchStartMs;
+  const endMs = CONFIG.durationMs;
+  if (!Number.isFinite(boundaryMs) || boundaryMs <= 0 || boundaryMs >= endMs) return null;
+  const inRange = (x, from, to) => x.offsetMs >= from && x.offsetMs < to;
+  const describe = (bucket, spanMs) => ({
+    completed: bucket.length,
+    goodputRps: spanMs > 0 ? +(bucket.length / (spanMs / 1000)).toFixed(3) : null,
+    p50Ms: percentile(bucket.map((x) => x.latencyMs), 0.5),
+    p95Ms: percentile(bucket.map((x) => x.latencyMs), 0.95),
+    ttftP50Ms: percentile(bucket.map((x) => x.ttftMs), 0.5),
+    ttftP95Ms: percentile(bucket.map((x) => x.ttftMs), 0.95),
+  });
+  // Requests admitted before the offered-load window closes can complete after
+  // it. Those completions belong to neither phase — including them would
+  // inflate the contended window's goodput with work the window did not offer.
+  // They are counted separately so idle + contended + drain equals the class's
+  // total successes, and the split can be checked rather than trusted.
+  const drained = s.phaseSamples.filter((x) => x.offsetMs >= endMs);
+  return {
+    boundaryMs,
+    endMs,
+    idle: describe(s.phaseSamples.filter((x) => inRange(x, 0, boundaryMs)), boundaryMs),
+    contended: describe(
+      s.phaseSamples.filter((x) => inRange(x, boundaryMs, endMs)),
+      Math.max(0, endMs - boundaryMs),
+    ),
+    /** Completed after the offered-load window closed. */
+    drainCompleted: drained.length,
+  };
 }
 
 // ── one logical request, including its retries ───────────────────────
@@ -217,6 +293,7 @@ async function issue(entry) {
   try {
     for (let attempt = 0; attempt < CONFIG.maxAttempts; attempt += 1) {
       s.attempts += 1;
+      markAttempt(cls);
       let response;
       try {
         const target = targets[entry.targetSlots[attempt] % targets.length];
@@ -333,6 +410,7 @@ async function issue(entry) {
           }
         }
         s.success += 1;
+        markSuccess(cls);
         s.outputTokens += outputTokens;
         record(cls, performance.now() - logicalStart, ttftMs ?? performance.now() - logicalStart);
         return;
@@ -570,6 +648,30 @@ for (const cls of classes) {
     serverError: s.serverError,
     transportError: s.transportError,
     exhausted: s.exhausted,
+    firstAttemptAtMs: s.firstAttemptAtMs,
+    firstSuccessAtMs: s.firstSuccessAtMs,
+    /**
+     * How long this class waited between first asking and first being served.
+     * Under a lent-out floor this is the reassertion cost: the time the
+     * borrowing class needed to hand a slot back.
+     */
+    admissionGapMs:
+      s.firstAttemptAtMs === null || s.firstSuccessAtMs === null
+        ? null
+        : +(s.firstSuccessAtMs - s.firstAttemptAtMs).toFixed(1),
+    /** The run split at batch arrival. See phaseWindows(). */
+    windows: phaseWindows(s),
+    firstAttemptAtMs: s.firstAttemptAtMs,
+    firstSuccessAtMs: s.firstSuccessAtMs,
+    /**
+     * How long this class waited between first asking and first being served.
+     * Under a lent-out floor this is the reassertion cost: the time the
+     * borrowing class needed to give a slot back.
+     */
+    admissionGapMs:
+      s.firstAttemptAtMs === null || s.firstSuccessAtMs === null
+        ? null
+        : +(s.firstSuccessAtMs - s.firstAttemptAtMs).toFixed(1),
     retryHints: {
       received: s.retryHints.received,
       applied: s.retryHints.applied,

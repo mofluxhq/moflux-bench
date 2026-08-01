@@ -64,6 +64,31 @@ if (!VALID_ARMS.has(CONFIG.arm)) {
   process.exit(2);
 }
 
+function requireInteger(name, value, { minimum = 0 } = {}) {
+  if (!Number.isSafeInteger(value) || value < minimum) {
+    console.error(
+      `invalid --${name}=${String(value)}; expected an integer >= ${minimum}`,
+    );
+    process.exit(2);
+  }
+}
+
+requireInteger("port", CONFIG.port, { minimum: 1 });
+requireInteger("max-queue", CONFIG.maxQueue, { minimum: 0 });
+requireInteger("queue-timeout-ms", CONFIG.queueTimeoutMs, { minimum: 1 });
+requireInteger("token-budget", CONFIG.tokenBudget, { minimum: 0 });
+requireInteger("lease-ttl-ms", CONFIG.leaseTtlMs, { minimum: 1 });
+if (!Number.isFinite(CONFIG.charRatio) || CONFIG.charRatio <= 0) {
+  console.error(
+    `invalid --char-ratio=${String(CONFIG.charRatio)}; expected a finite number > 0`,
+  );
+  process.exit(2);
+}
+requireInteger("default-max-tokens", CONFIG.defaultMaxTokens, { minimum: 1 });
+if (CONFIG.arm !== "passthrough") {
+  requireInteger("max-concurrent", CONFIG.maxConcurrent, { minimum: 1 });
+}
+
 // ── metrics ──────────────────────────────────────────────────────────
 
 const counters = {

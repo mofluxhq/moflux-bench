@@ -21,6 +21,10 @@ const tests = [
   ["demo/verify-full-stack-bootstrap.mjs", 30_000],
   ["demo/verify-presenter.mjs", 120_000],
   ["demo/verify-seed-sweep.mjs", 30_000],
+  ["demo/verify-control-arms.mjs", 30_000],
+  ["demo/verify-static-cap.mjs", 30_000],
+  ["demo/verify-arm-services.mjs", 30_000],
+  ["demo/verify-lending.mjs", 30_000],
   ["demo/verify-seed-sweep-runner.mjs", 60_000],
   ["demo/verify-demo-command.mjs", 60_000],
 ];

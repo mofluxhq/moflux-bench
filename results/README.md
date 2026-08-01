@@ -32,7 +32,11 @@ A refund means unused safety reservation was returned for reuse; it is not newly
 
 `curated/negative-fragmented-batch-floor/` preserves the version 0.5.0 five-seed failure that motivated the topology and determinism remediation. It is historical negative evidence, not a current comparison.
 
-No corrected version 0.8.x licensed sweep is committed yet. Run and review a fresh sweep before adding current MoFlux performance claims under `curated/`.
+No valid version 0.9.0 four-arm licensed sweep is committed yet. The first
+local run of Arm 2 used a non-finite semaphore cap and was intentionally
+discarded rather than curated. Run `npm run demo:arms` again with the fixed
+v0.9.0 harness, review all five same-trace arms, and only then add current
+evidence under `curated/`.
 
 ## Public research replication
 

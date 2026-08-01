@@ -218,6 +218,105 @@ worse. Requests that previously exhausted their attempt budget contributed no
 latency sample at all; when they start succeeding they contribute slow ones. A
 p95 increase alongside a completion increase is the fix working.
 
+## Comparing against the alternatives, not against nothing
+
+A sweep that only runs MoFlux against no admission control answers a question
+nobody is choosing between. The decision a reader actually faces is MoFlux
+against a static per-replica cap or a Redis token bucket — policies they could
+write themselves in an afternoon. Arms 2 and 4 exist precisely so that
+comparison can be made, and they are now runnable inside the same paired sweep:
+
+```bash
+npm run demo:arms      # baseline, static cap, Redis, MoFlux — five seeds
+```
+
+Every arm sits in the same request-path position, uses the same four replicas
+and the same provider, and replays the same immutable trace. Only the admission
+policy changes. Tyr is stopped for the duration of each control arm so no grant
+or admission decision from the managed path can leak into a control
+measurement, and the Redis keys are flushed before arm 4 so a leaked lease from
+an earlier seed cannot silently shrink the capacity this seed sees.
+
+Arm 2 derives its local cap from the actual replica topology: with a 32-slot
+provider envelope and four replicas, every local semaphore receives 8 slots.
+The presenter and replica both fail before traffic starts if that calculation
+is missing, non-finite, or would give a replica zero capacity; an invalid arm is
+never aggregated as benchmark evidence.
+
+The aggregate gains two sections:
+
+- `aggregate.versusBaseline` — every policy against no control. Answers "does
+  this help at all", which is the easy question.
+- `aggregate.mofluxVersus` — MoFlux against each alternative, paired per seed
+  and then medianed. Answers "is this worth deploying over the thing I would
+  otherwise build", which is the one that decides anything.
+
+Raw evidence per seed is preserved as `static-cap-seed-N.json`,
+`redis-coordinated-seed-N.json`, and `arm-comparisons-seed-N.json`. The
+existing `video-comparison.json` keeps its exact baseline-versus-MoFlux shape,
+so nothing downstream of it changes.
+
+Expect the control arms to do well. Arm 2 eliminates every upstream 429 with a
+local semaphore and no coordination at all; arm 4 is a properly built Redis
+reserve. If MoFlux cannot beat them on something that matters, that is the
+result, and it is better to find it here than in a customer's cluster.
+
+## The lending benchmark
+
+A static split gives batch a permanent floor. While batch is idle that floor is
+dead capacity: interactive cannot touch it and the provider runs below its
+envelope for no reason. Two API keys with separate quotas have exactly this
+shape and cost nothing to operate — so a capacity control plane that only
+reproduces a static split is not worth deploying.
+
+Lending is the claim that justifies one: while batch has no active work,
+interactive borrows batch's reserved slots; when batch arrives, the floor comes
+back. That is a temporal property, and **no cumulative counter can show it**. A
+run-long peak-occupancy high-water mark of 32/32 is equally consistent with
+"borrowed the idle slot throughout" and "sat at 31 until batch arrived, then
+hit 32 together". Both policies produce the same headline number.
+
+```bash
+npm run demo:lending   # idle batch window, then batch arrival, vs the static cap
+```
+
+`--lending` widens the idle window from 35% to 60% of the phase so occupancy has
+time to settle. The run is then split at the configured batch arrival — the
+configured one, not the observed first request, because an observed boundary
+lands differently in each arm and makes the windows incomparable — and three
+things are measured separately:
+
+| Question | Measured by |
+|---|---|
+| Did interactive borrow? | Idle-window occupancy above the interactive pool's own ceiling |
+| Did the floor come back? | Batch `admissionGapMs`: first attempt to first success |
+| What did it cost? | Interactive goodput change across the handover |
+
+The static cap is the control. It cannot exceed its ceiling while batch is
+idle, by construction, so any idle-window gain over it is observed borrowing
+rather than an inference. If the lending arm does not beat it there,
+**lending did not happen**, whatever the configuration claims — and
+`lendingObserved` says so rather than reporting the run-long peak and letting a
+reader assume.
+
+A floor that is never reasserted is a starved pool, not lending. `reasserted`
+is false whenever batch completed nothing, so a policy that borrows and never
+gives back cannot be reported as a success.
+
+Results are written to `results/lending.json`. Two implementation notes that
+are load-bearing:
+
+- Phase windows are computed by the load generator from a record that is never
+  pruned. The rolling `samples` array exists for the Prometheus percentiles and
+  is trimmed to `windowMs` on every scrape — deriving windows from it would
+  lose the entire idle window on any run longer than 30 seconds and report zero
+  idle goodput instead of failing.
+- `idle + contended + drainCompleted` equals the class's total successes.
+  Requests admitted before the offered-load window closes can complete after
+  it; counting those in the contended window would inflate its goodput with
+  work the window never offered, so they are reported separately and the split
+  can be checked rather than trusted.
+
 ## Metrics that matter
 
 The one that carries the argument is the **reject split**. A local reject costs

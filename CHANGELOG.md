@@ -1,5 +1,89 @@
 # Changelog
 
+## 0.9.0
+
+### Added
+
+- Add arms 2 and 4 to the paired seed sweep via `--control-arms=static-cap,redis`
+  (or `all`), exposed as `npm run demo:arms`. Every arm replays the same
+  immutable trace in the same request-path position; only the admission policy
+  differs. Tyr is stopped for each control arm and Redis keys are flushed
+  before arm 4, so no managed-path grant or stale lease can leak into a control
+  measurement.
+- Add `aggregate.versusBaseline` and `aggregate.mofluxVersus` to the sweep
+  summary. The second is the comparison that decides deployment: MoFlux against
+  each alternative, paired per seed and then medianed.
+- Add `results/arm-comparisons.json` with pairwise deltas for every arm.
+  `video-comparison.json` keeps its exact baseline-versus-MoFlux shape, so
+  existing consumers are unaffected.
+- Add the capacity-lending benchmark: `--lending`, exposed as
+  `npm run demo:lending`. Widens the idle batch window, splits the run at the
+  configured batch arrival, and reports whether interactive borrowed the idle
+  floor, whether the floor was reasserted when batch arrived, and what the
+  handover cost. Written to `results/lending.json`.
+- Add `demo/lending-lib.mjs` with the pure window arithmetic, plus
+  `demo/verify-lending.mjs`, `demo/verify-control-arms.mjs`, and
+  `demo/verify-arm-services.mjs` to the `verify` chain.
+- Start `redis` from the paired presenter, and wait for it to answer `PING`,
+  whenever a selected control arm needs it. The service is only brought up when
+  arm 4 is actually in the run, so the two-arm demo is unchanged.
+- Record per-class `firstAttemptAtMs`, `firstSuccessAtMs`, `admissionGapMs`,
+  and a `windows` phase split in every load-generator summary.
+- Record `peakActiveBySecond` in the provider simulator so occupancy can be
+  scored over a window rather than only as a run-long high-water mark.
+
+### Fixed
+
+- **Arm 2 no longer launches with a `NaN` concurrency ceiling.** The paired
+  presenter divided the provider envelope by `OPT.replicas`, but that option
+  does not exist in the presenter path. Every semaphore comparison against
+  `NaN` was false, so the arm rejected every attempt and produced a misleading
+  all-zero result. Arm 2 now derives its replica count from the actual four
+  configured replica endpoints, yielding an 8-slot local cap for a 32-slot
+  envelope. The replica process also rejects non-finite or non-positive caps
+  before traffic starts, and a dedicated regression covers the exact failure.
+
+- **Phase windows are no longer derived from the pruned sample array.**
+  `pruneWindows()` trims `samples` to `windowMs` on every metrics scrape, so on
+  a 45-second run with batch arriving at 27 seconds the entire idle window was
+  discarded before the summary was written. The generator now keeps a separate
+  unpruned record and emits the split itself; the previous path reported zero
+  idle goodput instead of failing.
+- **Occupancy is no longer recorded as zero for seconds with no admission
+  event.** A full pool can pass a whole second without an admission or a
+  completion; those seconds were being backfilled with 0, claiming the provider
+  had gone idle. Gaps now carry the occupancy that actually held, occupancy is
+  recorded on completion as well as admission, and a 200ms sampler covers the
+  rest.
+- Reject an `interactiveCeiling` above the provider envelope. Passing a
+  per-replica `maxConcurrent` where the fleet-wide slot count is required made
+  a static cap report borrowing that never happened.
+- **The Redis-coordinated arm could not run from the paired presenter.**
+  `redis` is defined in `demo/compose.yaml` and was started by the standalone
+  research walkthrough, but the paired presenter had never needed it and so
+  never brought it up. Arm 4 failed at its first state flush. It is now started
+  on demand and awaited with a real command rather than a socket connect,
+  because a fresh container accepts TCP before it serves. Readiness failure and
+  flush failure are also reported as distinct faults; previously a genuine
+  flush error was indistinguishable from a missing container.
+- Fail Redis readiness during startup rather than mid-sweep, so a missing
+  container costs seconds instead of several minutes of completed arms.
+
+### Notes
+
+- A static split and a lending split both reach full occupancy over a whole
+  run, so a cumulative peak cannot distinguish them. That case is a named test
+  in `verify-lending.mjs`.
+- The canonical `npm run demo` remains the two-arm sweep. The four-arm and
+  lending runs are separate commands because they cost materially more wall
+  clock.
+- `demo/verify-arm-services.mjs` checks statically that every arm's declared
+  infrastructure is actually started, awaited, and flushed. The rest of this
+  chain is pure-function tests that never launch Docker, which is precisely why
+  the missing Redis service was not caught before it shipped. It strips
+  whole-line comments before checking call sites, so a commented-out call
+  cannot pass as a live one.
+
 ## 0.8.2
 
 ### Changed

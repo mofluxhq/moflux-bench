@@ -54,6 +54,27 @@ if (rawArgs.has("seed") && rawArgs.has("seeds")) {
 }
 
 const mode = str("mode", "compare");
+/**
+ * Mirrors present.mjs. Declared here too so the wrapper knows which extra
+ * result files to preserve and aggregate per seed.
+ */
+const CONTROL_ARM_FILES = {
+  staticCap: "static-cap.json",
+  redis: "redis-coordinated.json",
+};
+const controlArmsRaw = str("control-arms", "").trim();
+const CONTROL_ARM_KEYS =
+  controlArmsRaw === ""
+    ? []
+    : (controlArmsRaw === "all" ? ["static-cap", "redis"] : controlArmsRaw.split(",").map((n) => n.trim()))
+        .filter(Boolean)
+        .map((name) => {
+          const key = name === "static-cap" ? "staticCap" : name;
+          if (!CONTROL_ARM_FILES[key]) {
+            throw new Error(`unsupported --control-arms entry "${name}"; expected static-cap, redis, or all`);
+          }
+          return key;
+        });
 if (!new Set(["compare", "baseline", "moflux"]).has(mode)) {
   throw new Error(`unsupported --mode=${mode}; expected compare, baseline, or moflux`);
 }
@@ -94,6 +115,10 @@ function scratchPaths() {
   return {
     baseline: path.join(RESULTS, "baseline.json"),
     moflux: path.join(RESULTS, fault ? "moflux-enforce-fault.json" : "moflux-enforce.json"),
+    armComparisons: path.join(RESULTS, "arm-comparisons.json"),
+    ...Object.fromEntries(
+      CONTROL_ARM_KEYS.map((key) => [key, path.join(RESULTS, CONTROL_ARM_FILES[key])]),
+    ),
     comparison: path.join(RESULTS, fault ? "video-comparison-fault.json" : "video-comparison.json"),
     trace: path.join(RESULTS, "scenario-trace.json"),
   };
@@ -103,6 +128,13 @@ function outputNames(seed) {
   return {
     baseline: `baseline-seed-${seed}.json`,
     moflux: `${fault ? "moflux-enforce-fault" : "moflux-enforce"}-seed-${seed}.json`,
+    armComparisons: `arm-comparisons-seed-${seed}.json`,
+    ...Object.fromEntries(
+      CONTROL_ARM_KEYS.map((key) => [
+        key,
+        `${CONTROL_ARM_FILES[key].replace(/\.json$/, "")}-seed-${seed}.json`,
+      ]),
+    ),
     comparison: `${fault ? "comparison-fault" : "comparison"}-seed-${seed}.json`,
     trace: `trace-seed-${seed}.json`,
   };
@@ -190,7 +222,16 @@ function validateSeed(summary, seed, label) {
 function preserveSeed(seed) {
   const scratch = scratchPaths();
   const names = outputNames(seed);
-  const record = { seed, baseline: null, moflux: null, comparison: null, scenario: null, arms: {} };
+  const record = {
+    seed,
+    baseline: null,
+    moflux: null,
+    comparison: null,
+    scenario: null,
+    arms: {},
+    controlArms: {},
+    armComparisons: null,
+  };
 
   if (mode === "compare" || mode === "baseline") {
     record.baseline = readRequired(scratch.baseline, "baseline");
@@ -208,6 +249,25 @@ function preserveSeed(seed) {
     copyFileSync(scratch.moflux, target);
     record.arms.moflux = relativePath(target);
     record.scenario ??= record.moflux.scenario;
+  }
+
+  for (const key of CONTROL_ARM_KEYS) {
+    const summary = readRequired(scratch[key], key);
+    validateSeed(summary, seed, key);
+    if (summary.scenario?.id !== record.scenario?.id) {
+      throw new Error(`seed ${seed} ${key} scenario fingerprint differs from the baseline`);
+    }
+    const target = path.join(sweepDir, names[key]);
+    copyFileSync(scratch[key], target);
+    record.arms[key] = relativePath(target);
+    record.controlArms[key] = summary;
+  }
+
+  if (CONTROL_ARM_KEYS.length > 0) {
+    const target = path.join(sweepDir, names.armComparisons);
+    copyFileSync(scratch.armComparisons, target);
+    record.arms.armComparisons = relativePath(target);
+    record.armComparisons = readRequired(target, "arm comparisons");
   }
 
   const trace = readRequired(scratch.trace, "request trace");
@@ -249,6 +309,25 @@ const signedPoints = (value) => `${value >= 0 ? "+" : ""}${value.toFixed(1)} pp`
 const seconds = (value) => `${(value / 1000).toFixed(2)}s`;
 const count = (value) => Math.round(value).toString();
 
+const ARM_TITLES = {
+  baseline: "No control",
+  staticCap: "Static cap (arm 2)",
+  redis: "Redis coord (arm 4)",
+  moflux: "MoFlux",
+};
+
+function armRow(title, arm) {
+  return {
+    arm: title,
+    "int success": range(stat(arm, "interactiveSuccessRate"), pct),
+    "int goodput": range(stat(arm, "interactiveGoodputRps"), (value) => `${value.toFixed(2)} r/s`),
+    "int p95": range(stat(arm, "interactiveP95Ms"), seconds),
+    "TTFT p95": range(stat(arm, "interactiveTtftP95Ms"), seconds),
+    "upstream 429": range(stat(arm, "upstream429s"), count),
+    "batch success": range(stat(arm, "batchSuccessRate"), pct),
+  };
+}
+
 function printAggregate(summary) {
   const baseline = summary.aggregate.arms.baseline;
   const moflux = summary.aggregate.arms.moflux;
@@ -264,20 +343,31 @@ function printAggregate(summary) {
       "batch success": range(stat(baseline, "batchSuccessRate"), pct),
     });
   }
+  for (const key of summary.controlArms ?? []) {
+    const arm = summary.aggregate.arms[key];
+    if (arm) rows.push(armRow(ARM_TITLES[key] ?? key, arm));
+  }
   if (moflux) {
-    rows.push({
-      arm: fault ? "MoFlux + fault" : "MoFlux",
-      "int success": range(stat(moflux, "interactiveSuccessRate"), pct),
-      "int goodput": range(stat(moflux, "interactiveGoodputRps"), (value) => `${value.toFixed(2)} r/s`),
-      "int p95": range(stat(moflux, "interactiveP95Ms"), seconds),
-      "TTFT p95": range(stat(moflux, "interactiveTtftP95Ms"), seconds),
-      "upstream 429": range(stat(moflux, "upstream429s"), count),
-      "batch success": range(stat(moflux, "batchSuccessRate"), pct),
-    });
+    rows.push(armRow(fault ? "MoFlux + fault" : "MoFlux", moflux));
   }
 
   console.log(`\n${GREEN}${BOLD}── AGGREGATE: median [min–max] across ${summary.seeds.length} seed${summary.seeds.length === 1 ? "" : "s"}${OFF}`);
   console.table(rows);
+
+  const mofluxVersus = summary.aggregate.mofluxVersus;
+  if (mofluxVersus && Object.keys(mofluxVersus).length > 0) {
+    console.log(`${BOLD}   MoFlux versus each alternative — paired per seed, then medianed${OFF}`);
+    console.table(
+      Object.entries(mofluxVersus).map(([key, delta]) => ({
+        versus: ARM_TITLES[key] ?? key,
+        "int success": range(stat(delta, "interactiveSuccessPercentagePointChange"), signedPoints),
+        "int goodput": range(stat(delta, "interactiveGoodputChangePercent"), signedPct),
+        "int p95": range(stat(delta, "interactiveP95LatencyChangePercent"), signedPct),
+        "TTFT p95": range(stat(delta, "interactiveTtftP95ChangePercent"), signedPct),
+        "batch success": range(stat(delta, "batchSuccessPercentagePointChange"), signedPoints),
+      })),
+    );
+  }
 
   const paired = summary.aggregate.paired;
   if (paired) {

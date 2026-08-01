@@ -87,6 +87,7 @@ export function armMetrics(summary) {
     localRejects: interactive.localReject + batch.localReject,
     upstream429s: interactive.upstreamReject + batch.upstreamReject,
     peakActive: Number(summary.simCounters?.peakActive ?? 0),
+    batchAdmissionGapMs: summary.classes.batch?.admissionGapMs ?? null,
   };
 }
 
@@ -164,6 +165,45 @@ export function buildSweepSummary({ mode, fault, seeds, records }) {
     }
   }
 
+  // Every control arm present on every seed. An arm that appears on only some
+  // seeds is dropped rather than aggregated across an inconsistent set, which
+  // would silently compare different sample sizes.
+  const controlArmKeys = [
+    ...new Set(records.flatMap((record) => Object.keys(record.controlArms ?? {}))),
+  ].filter((key) => records.every((record) => record.controlArms?.[key]));
+
+  const controlArmAggregates = Object.fromEntries(
+    controlArmKeys.map((key) => [
+      key,
+      aggregateMetricObjects(records.map((record) => armMetrics(record.controlArms[key]))),
+    ]),
+  );
+
+  // MoFlux against each alternative, paired per seed then medianed — the
+  // comparison that decides whether MoFlux is worth deploying over a policy
+  // someone could write themselves.
+  const headToHead = Object.fromEntries(
+    controlArmKeys.map((key) => [
+      key,
+      aggregateMetricObjects(
+        records
+          .map((record) => record.armComparisons?.mofluxVersus?.[key])
+          .filter(Boolean),
+      ),
+    ]),
+  );
+
+  const versusBaseline = Object.fromEntries(
+    [...controlArmKeys, "moflux"].map((key) => [
+      key,
+      aggregateMetricObjects(
+        records
+          .map((record) => record.armComparisons?.versusBaseline?.[key])
+          .filter(Boolean),
+      ),
+    ]),
+  );
+
   const baselineMetrics = records
     .filter((record) => record.baseline)
     .map((record) => armMetrics(record.baseline));
@@ -199,12 +239,18 @@ export function buildSweepSummary({ mode, fault, seeds, records }) {
       metrics: record.comparison?.metrics ?? null,
       tokenAccounting: record.moflux?.tokenAccounting ?? null,
     })),
+    controlArms: controlArmKeys,
     aggregate: {
       arms: {
         baseline: baselineMetrics.length > 0 ? aggregateMetricObjects(baselineMetrics) : null,
+        ...controlArmAggregates,
         moflux: mofluxMetrics.length > 0 ? aggregateMetricObjects(mofluxMetrics) : null,
       },
       paired: pairedMetrics.length > 0 ? aggregateMetricObjects(pairedMetrics) : null,
+      // Each policy against no control. Answers "does this help at all".
+      versusBaseline: controlArmKeys.length > 0 ? versusBaseline : null,
+      // MoFlux against each alternative. Answers "is this worth deploying".
+      mofluxVersus: controlArmKeys.length > 0 ? headToHead : null,
       tokenAccounting: tokenMetrics.length > 0 ? aggregateMetricObjects(tokenMetrics) : null,
     },
   };
