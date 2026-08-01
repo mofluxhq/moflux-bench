@@ -1,0 +1,152 @@
+{
+  "arm": "moflux-enforce",
+  "seed": 3,
+  "config": {
+    "targets": [
+      "http://127.0.0.1:8101",
+      "http://127.0.0.1:8102",
+      "http://127.0.0.1:8103",
+      "http://127.0.0.1:8104"
+    ],
+    "metricsPort": 0,
+    "metricsRelayUrl": "http://127.0.0.1:8200/ingest",
+    "metricsPushIntervalMs": 1000,
+    "metricsRelayRequired": true,
+    "armLabel": "moflux-enforce",
+    "durationMs": 45000,
+    "seed": 3,
+    "interactiveModel": "sim-model-interactive",
+    "batchModel": "sim-model-batch",
+    "interactiveRps": 6,
+    "interactiveInputChars": 1200,
+    "interactiveMaxTokens": 400,
+    "batchStartMs": 15750,
+    "batchDurationMs": 22500,
+    "batchRps": 3,
+    "batchInputChars": 24000,
+    "batchMaxTokens": 3000,
+    "maxAttempts": 4,
+    "backoffBaseMs": 250,
+    "inFlightCeiling": 3000,
+    "windowMs": 30000,
+    "out": "requested"
+  },
+  "generatorSaturated": 0,
+  "wallClockMs": 48774,
+  "classes": {
+    "interactive": {
+      "logical": 281,
+      "attempts": 483,
+      "success": 257,
+      "successRate": 0.9146,
+      "retryAmplification": 1.719,
+      "localReject": 226,
+      "upstreamReject": 0,
+      "serverError": 0,
+      "transportError": 0,
+      "exhausted": 24,
+      "outputTokens": 57199,
+      "latencyMs": {
+        "p50": 4189.5,
+        "p95": 7307,
+        "p99": 8498.6
+      },
+      "ttftMs": {
+        "p50": 587.6,
+        "p95": 2079.7,
+        "p99": 2708
+      }
+    },
+    "batch": {
+      "logical": 57,
+      "attempts": 228,
+      "success": 0,
+      "successRate": 0,
+      "retryAmplification": 4,
+      "localReject": 228,
+      "upstreamReject": 0,
+      "serverError": 0,
+      "transportError": 0,
+      "exhausted": 57,
+      "outputTokens": 0,
+      "latencyMs": {
+        "p50": 0,
+        "p95": 0,
+        "p99": 0
+      },
+      "ttftMs": {
+        "p50": 0,
+        "p95": 0,
+        "p99": 0
+      }
+    }
+  },
+  "simCounters": {
+    "received": 257,
+    "admitted": 257,
+    "rejected429": 0,
+    "failed500": 0,
+    "completed": 257,
+    "disconnected": 0,
+    "trueInputTokens": 85927,
+    "trueOutputTokens": 57199,
+    "peakActive": 24,
+    "peakQueue": 1,
+    "emittedTokens": 57199,
+    "ticks": 8312,
+    "tickDtSum": 173.82199999998883
+  },
+  "scenario": {
+    "id": "54984b2343e4",
+    "workload": {
+      "durationMs": 45000,
+      "seed": 3,
+      "interactiveRps": 6,
+      "interactiveInputChars": 1200,
+      "interactiveMaxTokens": 400,
+      "batchStartMs": 15750,
+      "batchDurationMs": 22500,
+      "batchRps": 3,
+      "batchInputChars": 24000,
+      "batchMaxTokens": 3000,
+      "maxAttempts": 4,
+      "backoffBaseMs": 250,
+      "inFlightCeiling": 3000,
+      "windowMs": 30000
+    },
+    "provider": {
+      "envelope": 32,
+      "queue": 8,
+      "sigma": 0.25,
+      "kappa": 0,
+      "r1": 400,
+      "seed": 3
+    }
+  },
+  "capacity": {
+    "batchFloorPercent": 25,
+    "envelope": 32,
+    "tokenBudget": 40000,
+    "pools": [
+      {
+        "name": "sim-interactive",
+        "maxConcurrent": 24,
+        "tokenBudget": 30000
+      },
+      {
+        "name": "sim-batch",
+        "maxConcurrent": 8,
+        "tokenBudget": 10000
+      }
+    ]
+  },
+  "tokenAccounting": {
+    "totalReserved": 187802,
+    "totalConsumed": 143126,
+    "totalRefunded": 46356,
+    "totalOverrun": 1680,
+    "grossRecoveryRate": 0.2468,
+    "netRecovered": 44676,
+    "netRecoveryRate": 0.2379
+  }
+}

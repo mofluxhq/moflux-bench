@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [22, 24]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - name: Install metadata-only package
+        run: npm ci
+
+      - name: Verify public-release hygiene
+        run: npm run verify:publication
+
+      - name: Check JavaScript syntax
+        run: npm run check
+
+      - name: Verify benchmark harness
+        run: npm run verify
+
+      - name: Sweep simulator parameters
+        run: npm run sweep

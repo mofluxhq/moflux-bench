@@ -1,0 +1,96 @@
+x-tyr-common: &tyr-common
+  image: ${MOFLUX_TYR_IMAGE:?Set MOFLUX_TYR_IMAGE}
+  restart: unless-stopped
+  # Local video-demo convenience: fresh named volumes are root-owned. Override
+  # MOFLUX_TYR_USER with the image runtime UID:GID for a production-like run.
+  user: "${MOFLUX_TYR_USER:-0:0}"
+  environment:
+    TYR_CONFIG_FILE: /etc/tyr/config.yaml
+    LATCHFLO_AGENT_BOOTSTRAP_TOKEN: ${LATCHFLO_AGENT_BOOTSTRAP_TOKEN:?Set LATCHFLO_AGENT_BOOTSTRAP_TOKEN}
+  depends_on:
+    latchflo:
+      condition: service_healthy
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+
+services:
+  latchflo:
+    image: ${MOFLUX_LATCHFLO_IMAGE:?Set MOFLUX_LATCHFLO_IMAGE}
+    container_name: bench-latchflo
+    restart: unless-stopped
+
+    environment:
+      LATCHFLO_HOST: 0.0.0.0
+      LATCHFLO_PORT: "8080"
+      LATCHFLO_DATABASE_PATH: /app/data/latchflo-control-plane.db
+      LATCHFLO_ADMIN_TOKEN: ${LATCHFLO_ADMIN_TOKEN:?Set LATCHFLO_ADMIN_TOKEN}
+      LATCHFLO_AGENT_BOOTSTRAP_TOKEN: ${LATCHFLO_AGENT_BOOTSTRAP_TOKEN:?Set LATCHFLO_AGENT_BOOTSTRAP_TOKEN}
+      LATCHFLO_HEARTBEAT_INTERVAL_MS: "2000"
+      LATCHFLO_POLL_INTERVAL_MS: "1000"
+      LATCHFLO_AGENT_TIMEOUT_MS: "8000"
+      LATCHFLO_RECONCILE_INTERVAL_MS: "1000"
+
+    ports:
+      - "127.0.0.1:18080:8080"
+
+    volumes:
+      - latchflo-data:/app/data
+
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - >-
+          fetch('http://127.0.0.1:8080/readyz')
+          .then(response => {
+            if (!response.ok) process.exit(1);
+          })
+          .catch(() => process.exit(1))
+      interval: 2s
+      timeout: 2s
+      start_period: 5s
+      retries: 20
+
+  tyr-r1:
+    <<: *tyr-common
+    container_name: bench-tyr-r1
+    ports:
+      - "127.0.0.1:8101:8787"
+    volumes:
+      - ./moflux/tyr-r1.yaml:/etc/tyr/config.yaml:ro
+      - tyr-r1-data:/var/lib/tyr
+
+  tyr-r2:
+    <<: *tyr-common
+    container_name: bench-tyr-r2
+    ports:
+      - "127.0.0.1:8102:8787"
+    volumes:
+      - ./moflux/tyr-r2.yaml:/etc/tyr/config.yaml:ro
+      - tyr-r2-data:/var/lib/tyr
+
+  tyr-r3:
+    <<: *tyr-common
+    container_name: bench-tyr-r3
+    ports:
+      - "127.0.0.1:8103:8787"
+    volumes:
+      - ./moflux/tyr-r3.yaml:/etc/tyr/config.yaml:ro
+      - tyr-r3-data:/var/lib/tyr
+
+  tyr-r4:
+    <<: *tyr-common
+    container_name: bench-tyr-r4
+    ports:
+      - "127.0.0.1:8104:8787"
+    volumes:
+      - ./moflux/tyr-r4.yaml:/etc/tyr/config.yaml:ro
+      - tyr-r4-data:/var/lib/tyr
+
+volumes:
+  latchflo-data:
+  tyr-r1-data:
+  tyr-r2-data:
+  tyr-r3-data:
+  tyr-r4-data:

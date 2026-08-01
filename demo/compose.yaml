@@ -1,0 +1,83 @@
+# Observability and Redis only.
+#
+# The simulator, replicas, and load generator deliberately run on the host
+# rather than in containers: the demo kills a replica mid-run to show how each
+# arm handles a lost fleet member, and doing that through the host process tree
+# is far less fragile than orchestrating it through Docker.
+#
+#   docker compose -f demo/compose.yaml up -d
+#   npm run demo:full              # public research walkthrough
+#   open http://localhost:3000        # admin / admin
+#
+# On Linux, host-gateway lets Prometheus reach the host's ports. On Docker
+# Desktop host.docker.internal already resolves and extra_hosts is harmless.
+
+services:
+  telemetry-relay:
+    image: node:22-alpine
+    container_name: bench-telemetry-relay
+    command: ["node", "/app/demo/telemetry-relay.mjs", "--host=0.0.0.0", "--port=8200"]
+    ports:
+      - "127.0.0.1:8200:8200"
+    volumes:
+      - ..:/app:ro
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - >-
+          fetch('http://127.0.0.1:8200/healthz')
+          .then(response => { if (!response.ok) process.exit(1); })
+          .catch(() => process.exit(1))
+      interval: 2s
+      timeout: 2s
+      start_period: 2s
+      retries: 15
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: bench-prometheus
+    depends_on:
+      telemetry-relay:
+        condition: service_healthy
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=6h
+      # Lets the demo re-run without stale series confusing the graphs.
+      - --web.enable-lifecycle
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: bench-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      # Land straight on the dashboard when recording.
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/moflux-bench.json
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      prometheus:
+        condition: service_started
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  redis:
+    image: redis:7.4-alpine
+    container_name: bench-redis
+    # Persistence off: the arm-4 state is per-run and must not survive a restart.
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "6379:6379"

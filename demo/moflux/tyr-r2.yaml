@@ -1,0 +1,65 @@
+version: 1
+
+server:
+  port: 8787
+  maxRequestBodyBytes: 67108864
+  maxOutputTokens: 200000
+
+upstreams:
+  openai:
+    baseUrl: http://host.docker.internal:9000
+
+timeouts:
+  responseHeadersMs: 30000
+  streamIdleMs: 30000
+  clientStallMs: 30000
+
+shutdown:
+  drainTimeoutMs: 30000
+
+# The benchmark load generator sends x-priority directly.
+# This is acceptable only for this local, controlled benchmark.
+priority:
+  trustHeader: true
+
+telemetry:
+  metrics:
+    enabled: true
+  audit:
+    enabled: false
+
+pools:
+  - name: sim-interactive
+    modelPrefixes: [sim-model-interactive]
+    estimatorModel: gpt-4o
+    maxConcurrent: 0
+    maxQueue: 0
+    limitsRevision: 0
+    admissionMode: enforce
+    inFlightTokenBudget: 0
+    defaultOutputReservation: 2048
+    adaptiveEstimation:
+      enabled: true
+      smoothing: 0.2
+      minSamples: 5
+      minCorrection: 0.5
+      maxCorrection: 2
+      maxModels: 16
+
+controlPlane:
+  type: latchflo
+  url: http://latchflo:8080
+  instanceId: tyr-r2
+  pools: [sim-interactive]
+  bootstrapTokenEnv: LATCHFLO_AGENT_BOOTSTRAP_TOKEN
+  agentTokenFile: /var/lib/tyr/latchflo-agent.token
+  retryIntervalMs: 500
+  retryMaxIntervalMs: 5000
+  requestTimeoutMs: 3000
+  metadata:
+    region: local
+    zone: demo-2
+    version: 0.16.0
+    endpoint: http://tyr-r2:8787
+    labels:
+      environment: benchmark

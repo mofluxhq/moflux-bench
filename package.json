@@ -1,0 +1,54 @@
+{
+  "name": "moflux-bench",
+  "version": "0.8.1",
+  "description": "Synthetic benchmark harness for LLM admission control: a provider simulator with a parameterized concurrency-degradation curve, an open-loop multi-class load generator, and comparison arms.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "check": "node scripts/check-syntax.mjs",
+    "verify": "node scripts/verify.mjs",
+    "sweep": "node sim/sweep.mjs",
+    "demo:prepare": "node demo/ensure-env.mjs",
+    "predemo": "npm run demo:prepare",
+    "demo": "node demo/seed-sweep.mjs --seeds=1-5 --pause-ms=0",
+    "demo:auto": "node demo/seed-sweep.mjs --seeds=1-5 --pause-ms=2500",
+    "demo:moflux": "node demo/ensure-env.mjs --quiet && node demo/present.mjs --mode=moflux --step",
+    "demo:fault": "node demo/ensure-env.mjs --quiet && node demo/present.mjs --mode=moflux --fault --phase-ms=150000 --fault-at-ms=16000 --grant-ttl-ms=240000 --step",
+    "demo:doctor": "node demo/ensure-env.mjs --quiet && node demo/present.mjs --mode=doctor",
+    "demo:full": "node demo/run-demo.mjs --step",
+    "demo:down": "node demo/ensure-env.mjs --quiet && docker compose --env-file demo/moflux/.env -f demo/compose.yaml -f demo/moflux/compose.yaml down",
+    "stack:up": "docker compose -f demo/compose.yaml up -d",
+    "stack:down": "docker compose -f demo/compose.yaml down",
+    "replicate": "bash scripts/replicate.sh",
+    "demo:reset": "node demo/ensure-env.mjs --quiet && docker compose --env-file demo/moflux/.env -f demo/compose.yaml -f demo/moflux/compose.yaml down --volumes --remove-orphans",
+    "demo:compare": "node demo/ensure-env.mjs --quiet && node demo/seed-sweep.mjs --mode=compare --seeds=1-5 --step",
+    "demo:baseline": "node demo/present.mjs --mode=baseline --step",
+    "demo:single": "node demo/ensure-env.mjs --quiet && node demo/present.mjs --mode=compare --step",
+    "demo:sweep:baseline": "node demo/seed-sweep.mjs --mode=baseline --seeds=1-5 --step",
+    "demo:sweep:moflux": "node demo/ensure-env.mjs --quiet && node demo/seed-sweep.mjs --mode=moflux --seeds=1-5 --step",
+    "demo:sweep:fault": "node demo/ensure-env.mjs --quiet && node demo/seed-sweep.mjs --mode=compare --fault --seeds=1-5 --phase-ms=150000 --fault-at-ms=16000 --grant-ttl-ms=240000 --step",
+    "verify:publication": "node scripts/verify-publication.mjs",
+    "verify:all": "npm run verify:publication && npm run check && npm run verify && npm run sweep",
+    "demo:record": "node demo/seed-sweep.mjs --seeds=1-5 --step"
+  },
+  "keywords": [
+    "llm",
+    "admission-control",
+    "benchmark",
+    "load-shedding",
+    "capacity",
+    "universal-scalability-law"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mofluxhq/moflux-bench.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mofluxhq/moflux-bench/issues"
+  },
+  "homepage": "https://github.com/mofluxhq/moflux-bench#readme"
+}

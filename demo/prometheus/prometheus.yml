@@ -1,0 +1,41 @@
+# Fast scrape interval: this config exists to make a 45-second phase legible on
+# a Grafana graph during a screen recording, not to be efficient.
+global:
+  scrape_interval: 2s
+  evaluation_interval: 2s
+
+scrape_configs:
+  # Client-side truth. The host load generator pushes each arm into a small
+  # in-network relay, so Prometheus never races an ephemeral process and the
+  # baseline and MoFlux series remain available after each arm exits.
+  - job_name: loadgen-telemetry
+    static_configs:
+      - targets: ["telemetry-relay:8200"]
+
+  # Public benchmark replicas run as host processes during the baseline and
+  # research arms. Docker Desktop exposes those host listeners through
+  # host.docker.internal.
+  - job_name: benchmark-replicas
+    static_configs:
+      - targets:
+          - "host.docker.internal:8101"
+          - "host.docker.internal:8102"
+          - "host.docker.internal:8103"
+          - "host.docker.internal:8104"
+
+  # Tyr runs inside the same Compose project as Prometheus. Scrape the service
+  # DNS names directly instead of routing through ports published only on the
+  # host loopback interface.
+  - job_name: tyr-replicas
+    static_configs:
+      - targets:
+          - "tyr-r1:8787"
+          - "tyr-r2:8787"
+          - "tyr-r3:8787"
+          - "tyr-r4:8787"
+
+  # The simulated provider: envelope occupancy, queue depth, the current
+  # degraded per-stream token rate, and 429s it was forced to issue.
+  - job_name: provider-sim
+    static_configs:
+      - targets: ["host.docker.internal:9000"]
