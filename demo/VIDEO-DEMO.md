@@ -19,8 +19,11 @@ request characteristics.
 
 ## Runtime compatibility and setup
 
-The presenter is pinned to Tyr 0.16.0 and Latchflo 0.5.0. `npm run demo`
+The presenter is pinned to Tyr 0.17.0 and Latchflo 0.5.1. `npm run demo`
 creates the ignored local env file and random demo credentials automatically.
+Tyr capacity-aware routing is enabled across the four private replica addresses
+with one generated local-only `TYR_ROUTING_SECRET`. Latchflo continues to
+distribute grants; it does not distribute routing topology or the secret.
 If a pinned image is missing, the command builds it from a matching sibling
 source repository (or from `MOFLUX_TYR_SOURCE_DIR` /
 `MOFLUX_LATCHFLO_SOURCE_DIR`) before attempting a registry pull.
@@ -40,7 +43,7 @@ Latchflo/Tyr state, then the verified single-pair presenter:
 
 1. validates Docker, Compose, licensed images, and configuration;
 2. starts Latchflo, the telemetry relay, Prometheus, and Grafana;
-3. creates or updates `sim-interactive` and `sim-batch` with a short enrollment lease, an exact 31/1 concurrency split, 30,000/10,000 token budgets, and Latchflo 0.5.0 minimum-grant floors (1 slot; 755 interactive tokens; 9,942 batch tokens);
+3. creates or updates `sim-interactive` and `sim-batch` with a short enrollment lease, an exact 31/1 concurrency split, 30,000/10,000 token budgets, and Latchflo 0.5.1 minimum-grant floors (1 slot; 755 interactive tokens; 9,942 batch tokens);
 4. runs the no-control arm;
 5. replaces passthrough replicas with Tyr, waits for all four registrations,
    promotes the pools to the steady-state lease, and waits for one simultaneous

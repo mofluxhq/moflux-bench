@@ -67,8 +67,13 @@ for (const { full, rel } of files) {
   if (forbiddenExtensions.has(path.extname(base).toLowerCase())) {
     findings.push(`${rel}: credential-container extension is not allowed`);
   }
-  if (rel.startsWith("results/") && rel.endsWith(".json") && !rel.startsWith("results/curated/")) {
-    findings.push(`${rel}: generated JSON must not be committed outside results/curated/`);
+  const isPublishedResultJson = rel.endsWith(".json") && (
+    rel.startsWith("results/curated/") ||
+    rel === "results/video-seed-sweep.json" ||
+    rel.startsWith("results/video-seed-sweep/")
+  );
+  if (rel.startsWith("results/") && rel.endsWith(".json") && !isPublishedResultJson) {
+    findings.push(`${rel}: generated JSON is not in an approved published-evidence path`);
   }
   if (rel === "scripts/verify-publication.mjs") continue;
   const buffer = readFileSync(full);
@@ -77,9 +82,9 @@ for (const { full, rel } of files) {
   for (const [pattern, label] of contentPatterns) {
     if (pattern.test(text)) findings.push(`${rel}: contains ${label}`);
   }
-  if (rel.startsWith("results/curated/") && rel.endsWith(".json")) {
+  if (isPublishedResultJson) {
     try { JSON.parse(text); } catch (error) {
-      findings.push(`${rel}: invalid JSON (${error.message})`);
+      findings.push(`${rel}: invalid published-evidence JSON (${error.message})`);
     }
   }
 }
@@ -93,27 +98,41 @@ if (lock.packages?.[""]?.version !== pkg.version || lock.version !== pkg.version
 }
 const example = readFileSync(path.join(ROOT, "demo/moflux/.env.example"), "utf8");
 for (const expected of [
-  "MOFLUX_TYR_IMAGE=tyr-admission-controller:0.16.0",
-  "MOFLUX_LATCHFLO_IMAGE=latchflo-control-plane:0.5.0",
+  "MOFLUX_TYR_IMAGE=tyr-admission-controller:0.17.0",
+  "MOFLUX_LATCHFLO_IMAGE=latchflo-control-plane:0.5.1",
 ]) {
   if (!example.includes(expected)) {
     findings.push(`demo/moflux/.env.example: missing pinned runtime ${expected}`);
   }
 }
-for (const name of ["LATCHFLO_ADMIN_TOKEN", "LATCHFLO_AGENT_BOOTSTRAP_TOKEN"]) {
+for (const name of ["LATCHFLO_ADMIN_TOKEN", "LATCHFLO_AGENT_BOOTSTRAP_TOKEN", "TYR_ROUTING_SECRET"]) {
   const match = new RegExp(`^${name}=(.*)$`, "m").exec(example);
   if (!match || !match[1].startsWith("replace-with-")) {
     findings.push(`demo/moflux/.env.example: ${name} must remain an explicit placeholder`);
   }
 }
 
+const compose = readFileSync(path.join(ROOT, "demo/moflux/compose.yaml"), "utf8");
+if (!compose.includes("TYR_ROUTING_SECRET: ${TYR_ROUTING_SECRET:?Set TYR_ROUTING_SECRET}")) {
+  findings.push("demo/moflux/compose.yaml: Tyr replicas must receive the shared routing secret");
+}
 for (let replica = 1; replica <= 4; replica += 1) {
   const rel = `demo/moflux/tyr-r${replica}.yaml`;
   const yaml = readFileSync(path.join(ROOT, rel), "utf8");
-  if (!/^    version: 0\.16\.0$/m.test(yaml)) {
-    findings.push(`${rel}: control-plane metadata must identify Tyr 0.16.0`);
+  if (!/^    version: 0\.17\.0$/m.test(yaml)) {
+    findings.push(`${rel}: control-plane metadata must identify Tyr 0.17.0`);
+  }
+  if (!new RegExp(`^    instanceId: tyr-r${replica}$`, "m").test(yaml) ||
+      !/^    sharedSecretEnv: TYR_ROUTING_SECRET$/m.test(yaml)) {
+    findings.push(`${rel}: capacity-aware routing identity or secret environment is missing`);
+  }
+  for (let peer = 1; peer <= 4; peer += 1) {
+    const peerLine = new RegExp(`^      - id: tyr-r${peer}$`, "m");
+    if (peer === replica && peerLine.test(yaml)) findings.push(`${rel}: routing peer list includes itself`);
+    if (peer !== replica && !peerLine.test(yaml)) findings.push(`${rel}: routing peer tyr-r${peer} is missing`);
   }
 }
+
 if (pkg.scripts?.demo !== "node demo/seed-sweep.mjs --seeds=1-5 --pause-ms=0" ||
     pkg.scripts?.predemo !== "npm run demo:prepare" ||
     pkg.scripts?.["demo:record"] !== "node demo/seed-sweep.mjs --seeds=1-5 --step") {

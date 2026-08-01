@@ -354,6 +354,33 @@ function printAggregate(summary) {
   console.log(`\n${GREEN}${BOLD}── AGGREGATE: median [min–max] across ${summary.seeds.length} seed${summary.seeds.length === 1 ? "" : "s"}${OFF}`);
   console.table(rows);
 
+  // Printed before the head-to-head, because a comparison between a
+  // token-aware arm and a concurrency-only one cannot be read until you know
+  // whether the token budget refused anything.
+  const awareness = summary.tokenAwareness;
+  if (awareness && Object.values(awareness).some(Boolean)) {
+    console.log(`${BOLD}   Did the token budget decide any admission?${OFF}`);
+    console.table(
+      Object.entries(awareness)
+        .filter(([, value]) => value)
+        .map(([arm, value]) => ({
+          arm: ARM_TITLES[arm] ?? arm,
+          "budget-limited rejects": value.totalBudgetLimitedRejects,
+          "seeds exercised": `${value.seedsExercised}/${value.seeds}`,
+          "token-aware": value.exercisedTokenAwareness ? "yes" : "NO",
+        })),
+    );
+    const silent = Object.entries(awareness)
+      .filter(([, value]) => value && !value.exercisedTokenAwareness)
+      .map(([arm]) => ARM_TITLES[arm] ?? arm);
+    if (silent.length > 0) {
+      console.log(
+        `${YELLOW}   ${silent.join(", ")} never had an admission refused by the token budget. ` +
+          `Nothing in their comparison is attributable to token-aware admission.${OFF}`,
+      );
+    }
+  }
+
   const mofluxVersus = summary.aggregate.mofluxVersus;
   if (mofluxVersus && Object.keys(mofluxVersus).length > 0) {
     console.log(`${BOLD}   MoFlux versus each alternative — paired per seed, then medianed${OFF}`);

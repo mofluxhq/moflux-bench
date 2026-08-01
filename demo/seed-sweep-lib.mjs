@@ -71,6 +71,43 @@ function interactiveGoodput(summary) {
     : 0;
 }
 
+/**
+ * Per-arm summary of whether the token budget ever bound.
+ *
+ * Reported as counts and the number of seeds on which it fired, rather than a
+ * bare boolean, so a single seed exercising it is not mistaken for the
+ * benchmark exercising it throughout.
+ */
+function tokenAwarenessByArm(records, controlArmKeys) {
+  const armsOf = (record) => ({
+    baseline: record.baseline,
+    ...Object.fromEntries(controlArmKeys.map((key) => [key, record.controlArms?.[key]])),
+    moflux: record.moflux,
+  });
+  const names = [...new Set(records.flatMap((record) => Object.keys(armsOf(record))))];
+  return Object.fromEntries(
+    names.map((name) => {
+      const perSeed = records
+        .map((record) => armsOf(record)[name]?.classes?.interactive?.bindingConstraint)
+        .filter(Boolean);
+      if (perSeed.length === 0) return [name, null];
+      const budget = perSeed.reduce((total, b) => total + (b.budgetLimited ?? 0), 0);
+      const seedsExercised = perSeed.filter((b) => (b.budgetLimited ?? 0) > 0).length;
+      return [
+        name,
+        {
+          seeds: perSeed.length,
+          seedsExercised,
+          totalBudgetLimitedRejects: budget,
+          exercisedTokenAwareness: seedsExercised > 0,
+          /** True only when every seed exercised it, not merely one. */
+          exercisedOnEverySeed: seedsExercised === perSeed.length,
+        },
+      ];
+    }),
+  );
+}
+
 export function armMetrics(summary) {
   const interactive = summary.classes.interactive;
   const batch = summary.classes.batch;
@@ -88,6 +125,19 @@ export function armMetrics(summary) {
     upstream429s: interactive.upstreamReject + batch.upstreamReject,
     peakActive: Number(summary.simCounters?.peakActive ?? 0),
     batchAdmissionGapMs: summary.classes.batch?.admissionGapMs ?? null,
+    coordinatorLatencyMs: summary.coordinatorLatencyMs ?? 0,
+    // Which limit actually refused work. Without these in the aggregate, a
+    // reader has to open five per-seed files to learn whether the token budget
+    // decided anything — and a comparison between a token-aware arm and a
+    // concurrency-only one is uninterpretable until they do.
+    budgetLimitedRejects: interactive.bindingConstraint?.budgetLimited ?? null,
+    concurrencyLimitedRejects: interactive.bindingConstraint?.concurrencyLimited ?? null,
+    tokenBoundShare: interactive.bindingConstraint?.tokenBoundShare ?? null,
+    // The realised workload, so a claimed size distribution can be checked
+    // against what the arm was actually offered.
+    requestSizeP50: interactive.requestSizes?.p50 ?? null,
+    requestSizeP95: interactive.requestSizes?.p95 ?? null,
+    requestSizeSpread: interactive.requestSizes?.spread ?? null,
   };
 }
 
@@ -240,6 +290,15 @@ export function buildSweepSummary({ mode, fault, seeds, records }) {
       tokenAccounting: record.moflux?.tokenAccounting ?? null,
     })),
     controlArms: controlArmKeys,
+    /**
+     * Did each arm's token budget refuse anything?
+     *
+     * `false` means the arm never made an admission decision a plain
+     * concurrency counter could not have made, so nothing in its comparison is
+     * attributable to token-aware admission — whatever the configuration says.
+     * Read this before any MoFlux-versus-concurrency claim.
+     */
+    tokenAwareness: tokenAwarenessByArm(records, controlArmKeys),
     aggregate: {
       arms: {
         baseline: baselineMetrics.length > 0 ? aggregateMetricObjects(baselineMetrics) : null,

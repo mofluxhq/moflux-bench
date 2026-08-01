@@ -38,7 +38,7 @@ function scenario(seed) {
 }
 
 /** One arm's result file, with only the fields the aggregation reads. */
-function arm({ seed, successRate, goodputSuccess, p95, ttftP95, batchRate, upstream429, peakActive, admissionGapMs = null }) {
+function arm({ seed, successRate, goodputSuccess, p95, ttftP95, batchRate, upstream429, peakActive, admissionGapMs = null, budgetLimited = 0 }) {
   return {
     generatorSaturated: 0,
     wallClockMs: 46000,
@@ -54,6 +54,13 @@ function arm({ seed, successRate, goodputSuccess, p95, ttftP95, batchRate, upstr
         upstreamReject: upstream429,
         latencyMs: { p50: p95 / 2, p95 },
         ttftMs: { p50: ttftP95 / 3, p95: ttftP95 },
+        bindingConstraint: {
+          budgetLimited,
+          concurrencyLimited: 40 - budgetLimited,
+          tokenBoundShare: +(budgetLimited / 40).toFixed(4),
+          exercisedTokenAwareness: budgetLimited > 0,
+        },
+        requestSizes: { n: 270, min: 150, p50: 1215, p95: 3828, max: 4800, spread: 32 },
       },
       batch: {
         logical: 60,
@@ -78,14 +85,17 @@ function record(seed) {
   const staticCap = arm({
     seed, successRate: 0.9, goodputSuccess: 243, p95: 12000, ttftP95: 8500,
     batchRate: 0.9, upstream429: 0, peakActive: 24, admissionGapMs: 200,
+    budgetLimited: 0, // a semaphore has no token budget to refuse against
   });
   const redis = arm({
     seed, successRate: 0.95, goodputSuccess: 257, p95: 8000, ttftP95: 3000,
     batchRate: 0.11, upstream429: 0, peakActive: 32, admissionGapMs: 400,
+    budgetLimited: 12,
   });
   const moflux = arm({
     seed, successRate: 0.944, goodputSuccess: 254, p95: 9200, ttftP95: 2800,
     batchRate: 0.027, upstream429: 0, peakActive: 32, admissionGapMs: 300,
+    budgetLimited: 15,
   });
   const delta = (ref, cand) => ({
     interactiveSuccessPercentagePointChange: +(
@@ -199,6 +209,50 @@ check("the static cap also beats no control on success",
     plainSummary.aggregate.mofluxVersus === null);
   check("the paired baseline comparison is untouched",
     Boolean(plainSummary.aggregate.paired));
+}
+
+// ── the binding constraint reaches the aggregate ─────────────────────
+{
+  // The gap this closes: bindingConstraint and requestSizes were recorded in
+  // every per-seed arm file but never aggregated, so answering "did the token
+  // budget decide anything" meant opening five files by hand — and until it is
+  // answered, a token-aware arm cannot be meaningfully compared with a
+  // concurrency-only one.
+  const moflux = summary.aggregate.arms.moflux;
+  check("budget-limited rejects are aggregated", moflux.budgetLimitedRejects?.median === 15);
+  check("concurrency-limited rejects are aggregated", moflux.concurrencyLimitedRejects?.median === 25);
+  check("the token-bound share is aggregated", moflux.tokenBoundShare?.median === 0.375);
+  check("realised request sizes are aggregated",
+    moflux.requestSizeP50?.median === 1215 && moflux.requestSizeSpread?.median === 32);
+
+  const awareness = summary.tokenAwareness;
+  check("a token-aware arm is reported as exercised",
+    awareness.moflux.exercisedTokenAwareness === true);
+  check("its per-seed coverage is reported, not just a boolean",
+    awareness.moflux.seedsExercised === 3 && awareness.moflux.seeds === 3);
+  check("exercised-on-every-seed is distinguished from exercised-once",
+    awareness.moflux.exercisedOnEverySeed === true);
+  check("a concurrency-only arm is reported as not exercised",
+    awareness.staticCap.exercisedTokenAwareness === false);
+  check("the control arm's total is zero, not null",
+    awareness.staticCap.totalBudgetLimitedRejects === 0);
+  check("Redis is also reported as token-aware", awareness.redis.exercisedTokenAwareness === true);
+
+  // A single seed exercising the budget must not read as the sweep doing so.
+  const mostlySilent = SEEDS.map((seed) => {
+    const base = record(seed);
+    if (seed !== 1) {
+      base.moflux.classes.interactive.bindingConstraint = {
+        budgetLimited: 0, concurrencyLimited: 40, tokenBoundShare: 0, exercisedTokenAwareness: false,
+      };
+    }
+    return base;
+  });
+  const partial = buildSweepSummary({ mode: "compare", fault: false, seeds: SEEDS, records: mostlySilent });
+  check("one seed exercising the budget is not reported as every seed",
+    partial.tokenAwareness.moflux.exercisedTokenAwareness === true &&
+      partial.tokenAwareness.moflux.exercisedOnEverySeed === false,
+    JSON.stringify(partial.tokenAwareness.moflux));
 }
 
 console.log();

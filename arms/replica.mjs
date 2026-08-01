@@ -49,6 +49,15 @@ const CONFIG = Object.freeze({
   // redis arm
   redisHost: str("redis-host", "127.0.0.1"),
   redisPort: num("redis-port", 6379),
+  /**
+   * Simulated network distance to the coordination service, per round trip.
+   *
+   * Only the redis arm consults a coordinator on the admission path, so only
+   * it pays this. A lease-based design pays the same latency on grant renewal
+   * instead, amortised across every admission the grant covers — the point of
+   * the sweep is to show which of those two costs scales with request rate.
+   */
+  coordinatorLatencyMs: num("coordinator-latency-ms", 0),
   tokenBudget: num("token-budget", 0), // 0 disables token gating
   leaseTtlMs: num("lease-ttl-ms", 120000),
   keyPrefix: str("key-prefix", "bench"),
@@ -231,7 +240,11 @@ return 1
 `;
 
 async function createRedisPolicy() {
-  const client = new RedisClient({ host: CONFIG.redisHost, port: CONFIG.redisPort });
+  const client = new RedisClient({
+    host: CONFIG.redisHost,
+    port: CONFIG.redisPort,
+    latencyMs: CONFIG.coordinatorLatencyMs,
+  });
   await client.connect();
   const reserve = await client.loadScript(RESERVE_LUA);
   const release = await client.loadScript(RELEASE_LUA);

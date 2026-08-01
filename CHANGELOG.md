@@ -1,5 +1,109 @@
 # Changelog
 
+## 0.10.0
+
+### Added
+
+- Add heterogeneous request sizes: `--size-distribution=lognormal` draws an
+  input size and a max-token count per request instead of using one constant
+  per class. Exposed as `npm run demo:hetero`. Spread is controlled by
+  `--interactive-size-sigma` (default 0.75) and `--batch-size-sigma`
+  (default 0).
+- Add `bindingConstraint` to every class summary: how many local rejections
+  came from the token budget versus concurrency, and `exercisedTokenAwareness`.
+  This is the instrument that says whether a run tested token-aware admission
+  at all.
+- Add `requestSizes` to every class summary — the realised min, p50, p95, max,
+  and spread of the replayed trace.
+- Aggregate both across seeds. The sweep summary now carries
+  `budgetLimitedRejects`, `concurrencyLimitedRejects`, `tokenBoundShare`, and
+  the realised request sizes per arm, plus a top-level `tokenAwareness` block
+  reporting how many seeds each arm's token budget actually refused work on.
+  Recording these per seed but not aggregating them meant answering "did the
+  token budget decide anything" required opening five files by hand — and
+  until that is answered, a comparison between a token-aware arm and a
+  concurrency-only one cannot be read at all. The sweep prints the verdict
+  above the head-to-head table, and warns by name about any arm whose budget
+  refused nothing.
+- Add the coordinator-distance ladder: `--coordinator-latency-ms` simulates
+  network distance to the coordination service, applied to every Redis command
+  round trip. `npm run demo:coordinator` runs a full paired sweep at each rung
+  and reports a per-arm sensitivity slope with an r², plus the crossover
+  between per-request and lease-based coordination. Only the Redis arm receives
+  the flag, since only it consults a coordinator while admitting.
+- Add `demo/coordination-lib.mjs` and `demo/verify-coordination.mjs`. The
+  crossover is reported only when observed inside the tested ladder; a ladder
+  that never crosses does not license a claim that it would.
+- Add `load/verify-trace-sizes.mjs` and `demo/verify-loadgen-args.mjs` to the
+  `verify` chain. The second derives the flags the load generator must receive
+  from `traceWorkload()` rather than from a hand-written list, so a key added
+  to the trace in future is covered without anyone remembering to update it,
+  and checks that the generator actually parses each forwarded flag — an
+  unknown argument is ignored rather than rejected, so forwarding a flag the
+  generator never reads would fail the same way and just as quietly. It also
+  asserts both sides declare the same `size-distribution` default, and that the
+  default is `uniform`.
+
+### Changed
+
+- Pin the licensed benchmark path to Tyr 0.17.0 and Latchflo 0.5.1.
+- Enable Tyr 0.17.0 capacity-aware one-hop routing across the four benchmark
+  replicas. Each replica polls the private capacity snapshots of its three peers
+  and can forward a request to the replica with better request-specific
+  concurrency and token headroom.
+- Generate one local-only `TYR_ROUTING_SECRET` for the demo fleet and pass it to
+  every Tyr container. Latchflo remains responsible for grants and lease safety;
+  this release does not make Latchflo distribute Tyr topology or routing secrets.
+- Preserve the committed result corpus byte for byte. Existing JSON evidence
+  retains its recorded Tyr 0.16.0 and Latchflo 0.5.0 provenance; rerunning the
+  licensed arms produces new evidence under Tyr 0.17.0 and Latchflo 0.5.1.
+- Treat the named `results/video-seed-sweep` corpus as reviewed published
+  evidence while continuing to reject arbitrary generated JSON elsewhere under
+  `results/`.
+- Trace format is now versioned by distribution. A uniform trace remains
+  **version 1 and hashes exactly as before**; a heterogeneous trace is version
+  2. Sizes are drawn from a separate seeded stream, so arrival times and retry
+  jitter are byte-identical between a v1 trace and its v2 counterpart — only
+  the sizes are new.
+- A version-1 trace cannot be replayed under a heterogeneous configuration, or
+  the reverse. Mixing them would offer different work to the two arms of a
+  pair while both reported a matching scenario.
+- Under `lognormal`, the capacity plan no longer requires every concurrency
+  slot to be funded for a worst-case request. Provisioning every slot for a
+  tail most requests never reach would defeat the point; tokens are expected to
+  bind sometimes, and that is the property being measured. The floor still
+  holds: a grant must fund at least one worst-case request.
+
+### Notes
+
+- The presenter forwards `--size-distribution`, `--interactive-size-sigma`, and
+  `--batch-size-sigma` to the load generator. Without them the generator parses
+  its own configuration as uniform, rebuilds the expected workload from that,
+  and rejects the version-2 trace the presenter just wrote — both files
+  individually correct, only the handshake between them missing. Anything
+  included in `traceWorkload()` has to be forwarded, which is what
+  `demo/verify-loadgen-args.mjs` enforces.
+- **On loopback, a per-request coordinator looks free.** A Redis round trip on
+  localhost is a few hundred microseconds, so consulting it on every admission
+  costs almost nothing — the most favourable condition that design can be given
+  and one that does not exist in production. Every comparison here was run that
+  way before 0.10.0, which quietly assumed the answer to the question that
+  actually separates the two designs.
+- **Why this matters.** With one fixed size per class, token-aware admission
+  and a concurrency semaphore are the same algorithm: N slots times a constant
+  is a fixed token ceiling, so there is no decision token accounting can make
+  that a counter cannot. Every result previously attributed to token awareness
+  was unattributable, and a static per-replica cap was expected to match it.
+  Real traffic in one class spans one to two orders of magnitude.
+- **Version-1 results are preserved, not archived.** `--size-distribution`
+  defaults to `uniform`, so `npm run demo` and every existing script reproduce
+  the previous traces bit for bit. Seed 3 still hashes to `14745a76…`, which is
+  asserted on every verify run.
+- Drawn sizes are clamped to a bounded multiple of the class median. An
+  unclamped tail would produce requests whose reservation exceeds any single
+  grant, reproducing the stranded-capacity failure through the workload rather
+  than the configuration.
+
 ## 0.9.0
 
 ### Added

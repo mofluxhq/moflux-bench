@@ -11,7 +11,7 @@ npm ci
 npm run verify:all
 ```
 
-Docker Compose v2 is required only for the public walkthrough and the licensed MoFlux presenter. The licensed presenter is pinned to Tyr 0.16.0 and Latchflo 0.5.0. Tyr and Latchflo images are proprietary and are not accepted as repository contributions.
+Docker Compose v2 is required only for the public walkthrough and the licensed MoFlux presenter. The licensed presenter is pinned to Tyr 0.17.0 and Latchflo 0.5.1. Tyr and Latchflo images are proprietary and are not accepted as repository contributions.
 
 ## Pull requests
 

@@ -52,17 +52,32 @@ four agents are visible, the presenter promotes both pools to the long run lease
 and waits for one simultaneously ready, correctly sized fleet-wide grant set.
 Each accepted grant must also have enough remaining lifetime to finish the
 configured MoFlux phase. Startup fails if any live local grant is too small or
-too close to expiration. Pool creation also sends Latchflo 0.5.0's durable
+too close to expiration. Pool creation also sends Latchflo 0.5.1's durable
 minimum-grant invariants: one concurrency slot, 755 tokens for interactive, and
 9,942 tokens for batch. Latchflo therefore rejects an unusable split before it
 can issue a zero-capacity or sub-request grant.
 
-The licensed path is pinned to **Tyr 0.16.0** and **Latchflo 0.5.0**. The
+The licensed path is pinned to **Tyr 0.17.0** and **Latchflo 0.5.1**. The
 single canonical command can use images that already exist, pull configured
 registry images, or build missing images from local source directories. Place
 `tyr-admission-controller` and `latchflo-control-plane` beside this repository,
 or set `MOFLUX_TYR_SOURCE_DIR` and `MOFLUX_LATCHFLO_SOURCE_DIR` in the local
-environment file. Then run:
+environment file.
+
+Tyr 0.17.0 capacity-aware routing is enabled for the licensed four-replica
+MoFlux arm. Each Tyr polls the private capacity snapshots of the other three
+replicas and may forward a request once to the peer with better headroom for
+that request's concurrency and token reservation. The benchmark generates one
+local-only shared routing secret in `demo/moflux/.env`; the secret is never
+committed. Latchflo 0.5.1 still owns capacity grants and lease safety. It does
+not distribute peer topology or the routing secret in this release.
+
+The committed `results/` corpus is deliberately unchanged. Those files are
+historical evidence and retain their recorded Tyr 0.16.0/Latchflo 0.5.0 runtime
+metadata. New licensed runs use Tyr 0.17.0/Latchflo 0.5.1 and should be compared
+as a new evidence set rather than silently relabeling the old one.
+
+Run:
 
 ```bash
 npm run demo
@@ -316,6 +331,126 @@ are load-bearing:
   it; counting those in the contended window would inflate its goodput with
   work the window never offered, so they are reported separately and the split
   can be checked rather than trusted.
+
+## Request size heterogeneity
+
+Until version 0.10.0 every request in a class was the same size: 1,200 chars
+and 400 max tokens for interactive, on every request and every seed. That makes
+the benchmark unable to measure its own subject.
+
+With a single fixed size per class, **token-aware admission and a plain
+concurrency semaphore are the same algorithm**. N slots times one constant is a
+fixed token ceiling, so there is no admission decision token accounting can
+make that a counter cannot. Measured on the committed policy, the interactive
+pool had 31 concurrency slots against 36 token-funded ones — the token budget
+never decided a single admission, on any seed. Any advantage claimed for token
+awareness was unattributable, and a static per-replica cap was expected to
+match it.
+
+Real traffic in one class spans one to two orders of magnitude, because context
+length, retrieved documents, and conversation history vary per call.
+
+```bash
+npm run demo:hetero    # lognormal sizes, all four arms, five seeds
+```
+
+`--size-distribution=lognormal` draws an input size and a max-token count per
+request. `--interactive-size-sigma` (default 0.75) and `--batch-size-sigma`
+(default 0) control the spread. Sizes are clamped to a bounded multiple of the
+class median, because an unclamped tail produces requests whose reservation
+exceeds any single grant — reproducing the stranded-capacity failure through
+the workload rather than the configuration.
+
+### Version 1 results are preserved
+
+`--size-distribution` defaults to `uniform`, which reproduces the version-1
+trace **bit for bit**. Seed 3 still hashes to
+`14745a767634923c7d42d626df4d541b98ff66372c5d84ebe1f33b33ebe9c02b`, asserted on
+every verify run. Sizes are drawn from a separate seeded stream, so arrival
+times and retry jitter are identical between a v1 trace and its v2 counterpart;
+only the sizes are new.
+
+A version-1 trace cannot replay under a heterogeneous configuration, or the
+reverse. Mixing them would offer different work to the two arms of a pair while
+both reported a matching scenario.
+
+### Reading the result
+
+Every class summary now carries `bindingConstraint`:
+
+```json
+"bindingConstraint": {
+  "budgetLimited": 0,
+  "concurrencyLimited": 13,
+  "tokenBoundShare": 0,
+  "exercisedTokenAwareness": false
+}
+```
+
+`exercisedTokenAwareness: false` means the token budget refused nothing, so
+nothing in that run is attributable to token-aware admission — whatever the
+configuration claims. Check it before reading any comparison between MoFlux and
+a concurrency-limited arm. A run where it is false is measuring two
+concurrency limiters.
+
+`requestSizes` reports the realised min, p50, p95, max, and spread of the
+replayed trace, so a claimed distribution can be checked against what actually
+ran.
+
+Both are aggregated across seeds. `aggregate.arms.<arm>` carries
+`budgetLimitedRejects`, `concurrencyLimitedRejects`, `tokenBoundShare`, and the
+realised sizes; a top-level `tokenAwareness` block reports how many seeds each
+arm's token budget refused work on, distinguishing "one seed exercised it" from
+"every seed did". The sweep prints this above the head-to-head table and names
+any arm whose budget refused nothing.
+
+## Coordinator distance
+
+Every admission-control design answers "may this request proceed" against state
+shared across replicas, and there are two ways to do it.
+
+**Per-request coordination** (arm 4, Redis) consults the shared store on every
+admission. The decision is always exact. The cost is one round trip per
+attempt, on the request's critical path, forever.
+
+**Lease-based coordination** (MoFlux) holds a grant of capacity and decides
+locally against it. The round trip is paid on grant renewal, off the critical
+path, amortised across every admission the grant covers. The decision is exact
+within the grant and approximate across the fleet.
+
+On loopback these are indistinguishable, because a round trip costs a few
+hundred microseconds. Every comparison in this harness was run that way until
+0.10.0, which gave the per-request design the most favourable condition it can
+have and one that does not exist in production — a same-AZ hop is roughly
+0.5-1ms, cross-AZ 1-3ms, and a contended instance considerably more.
+
+```bash
+npm run demo:coordinator      # full sweep at 0, 1, 5, 15, 30, 50ms
+```
+
+`--coordinator-latency-ms` is applied to the Redis client's every command.
+Only arm 4 receives it, because only arm 4 consults a coordinator while
+admitting; sending it to the others would make them look sensitive to a service
+they never call. `demo/verify-loadgen-args.mjs` enforces that routing.
+
+### The prediction, and how it can fail
+
+Per-request coordination should degrade roughly linearly with distance,
+multiplied by attempts per request. Lease-based coordination should be flat.
+
+`results/coordinator-ladder.json` reports a least-squares slope per arm in
+milliseconds of added latency per millisecond of coordinator distance, with an
+r² so a slope fitted to noise is not read as a trend. A flat Redis line, or a
+rising MoFlux line, refutes the prediction — and `isCoordinatorIndependent`
+will say so, because it judges the fit rather than the architecture.
+
+The crossover is reported only when it is **observed inside the tested ladder**.
+If the two arms never cross, the report says so and gives the narrowest deficit
+rather than extrapolating a crossing beyond the last rung.
+
+Sizing note: each rung is a complete paired sweep, so the cost is
+rungs × seeds × arms runs. Start with two or three rungs before committing to
+the full ladder.
 
 ## Metrics that matter
 

@@ -65,9 +65,24 @@ function parse(buf, offset) {
 }
 
 export class RedisClient {
-  constructor({ host = "127.0.0.1", port = 6379 } = {}) {
+  /**
+   * `latencyMs` simulates network distance to the coordinator, applied to
+   * every command round trip.
+   *
+   * A benchmark that runs Redis on loopback measures a coordinator that is
+   * effectively free to consult, which is the most favourable condition a
+   * per-request coordination design can be given and one that does not exist
+   * in production. A same-AZ hop is roughly 0.5-1ms, cross-AZ 1-3ms, and a
+   * loaded or contended instance considerably more. Every one of those is paid
+   * once per admission here, and once per grant renewal in a lease-based
+   * design — which is the architectural difference this makes visible.
+   */
+  constructor({ host = "127.0.0.1", port = 6379, latencyMs = 0 } = {}) {
     this.host = host;
     this.port = port;
+    this.latencyMs = Number.isFinite(latencyMs) && latencyMs > 0 ? latencyMs : 0;
+    /** Round trips issued, so cost per admission can be counted, not assumed. */
+    this.roundTrips = 0;
     this.socket = null;
     this.buffer = "";
     /** FIFO of pending command resolvers — RESP replies arrive in order. */
@@ -111,9 +126,17 @@ export class RedisClient {
   }
 
   command(...args) {
+    this.roundTrips += 1;
+    const send = () =>
+      new Promise((resolve, reject) => {
+        this.pending.push({ resolve, reject });
+        this.socket.write(encode(args), "binary");
+      });
+    if (this.latencyMs === 0) return send();
+    // Delay the request leg only. Modelling the full round trip would double
+    // count: the reply still has to traverse the real socket.
     return new Promise((resolve, reject) => {
-      this.pending.push({ resolve, reject });
-      this.socket.write(encode(args), "binary");
+      setTimeout(() => send().then(resolve, reject), this.latencyMs);
     });
   }
 

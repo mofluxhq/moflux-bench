@@ -1,6 +1,6 @@
 # Results
 
-Generated benchmark output is written under this directory and ignored by Git. Intentionally published evidence belongs only under `results/curated/` after review.
+Generated benchmark output is written under this directory and ignored by Git unless it is explicitly designated as reviewed evidence. Curated historical cases live under `results/curated/`; the named `video-seed-sweep` corpus is also intentionally retained.
 
 Do not publish a single run as representative evidence. Use at least five seeds, report medians with spread, retain every paired raw result and immutable trace, and record the exact command, Node version, Docker image versions, seed list, capacity policy, and aggregation method. Runs with a saturated load generator are invalid.
 
@@ -28,15 +28,21 @@ The MoFlux result contains per-run token-accounting deltas:
 
 A refund means unused safety reservation was returned for reuse; it is not newly created capacity.
 
-## Curated evidence status
+## Published evidence status
 
-`curated/negative-fragmented-batch-floor/` preserves the version 0.5.0 five-seed failure that motivated the topology and determinism remediation. It is historical negative evidence, not a current comparison.
+`video-seed-sweep.json` and `video-seed-sweep/` preserve the reviewed five-seed
+heterogeneous four-arm run produced during the unpublished 0.10.0 development
+cycle. The JSON files are intentionally unchanged and retain their recorded
+Tyr 0.16.0 and Latchflo 0.5.0 runtime metadata. They are the pre-routing comparison set, not evidence produced by Tyr 0.17.0.
 
-No valid version 0.9.0 four-arm licensed sweep is committed yet. The first
-local run of Arm 2 used a non-finite semaphore cap and was intentionally
-discarded rather than curated. Run `npm run demo:arms` again with the fixed
-v0.9.0 harness, review all five same-trace arms, and only then add current
-evidence under `curated/`.
+New licensed runs use Tyr 0.17.0 and Latchflo 0.5.1 with one-hop capacity-aware
+routing enabled among Tyr replicas. Do not edit the existing runtime metadata to
+make old evidence appear new. Preserve the old corpus before replacing these
+paths, or curate the new run under a separately named evidence directory.
+
+`curated/negative-fragmented-batch-floor/` preserves the version 0.5.0 five-seed
+failure that motivated the topology and determinism remediation. It is
+historical negative evidence, not a current comparison.
 
 ## Public research replication
 

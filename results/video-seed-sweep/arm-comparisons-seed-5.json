@@ -1,0 +1,175 @@
+{
+  "generatedAt": "2026-08-01T19:25:53.713Z",
+  "scenario": {
+    "id": "b1f2cf443725",
+    "workload": {
+      "durationMs": 45000,
+      "seed": 5,
+      "interactiveRps": 6,
+      "interactiveInputChars": 1200,
+      "interactiveMaxTokens": 400,
+      "batchStartMs": 15750,
+      "batchDurationMs": 22500,
+      "batchRps": 3,
+      "batchInputChars": 24000,
+      "batchMaxTokens": 3000,
+      "maxAttempts": 4,
+      "backoffBaseMs": 250,
+      "sizeDistribution": "lognormal",
+      "interactiveSizeSigma": 0.75,
+      "batchSizeSigma": 0,
+      "inFlightCeiling": 3000,
+      "windowMs": 30000
+    },
+    "provider": {
+      "envelope": 32,
+      "queue": 8,
+      "sigma": 0.25,
+      "kappa": 0,
+      "r1": 400,
+      "inputCharRatio": 3.6,
+      "inputJitter": 0.04,
+      "seed": 5
+    },
+    "trace": {
+      "version": 2,
+      "hash": "24a0370ec424dedbe1dde0822ea30299efcbb5ae4585fbed4f2bb576892688d8",
+      "planned": {
+        "interactive": 263,
+        "batch": 69,
+        "total": 332
+      },
+      "evidence": "results/scenario-trace.json"
+    },
+    "routing": {
+      "interactiveReplicas": [
+        "http://127.0.0.1:8101",
+        "http://127.0.0.1:8102",
+        "http://127.0.0.1:8103",
+        "http://127.0.0.1:8104"
+      ],
+      "batchReplicas": [
+        "http://127.0.0.1:8104"
+      ]
+    }
+  },
+  "envelope": 32,
+  "arms": {
+    "baseline": {
+      "interactiveSuccessRate": 0.6616,
+      "interactiveGoodputRps": 3.867,
+      "interactiveP50Ms": 9274,
+      "interactiveP95Ms": 17284.4,
+      "interactiveTtftP50Ms": 5328.4,
+      "interactiveTtftP95Ms": 7838.2,
+      "interactiveRetryAmplification": 2.243,
+      "batchSuccessRate": 0.5362,
+      "localRejects": 0,
+      "upstream429s": 566,
+      "peakActive": 32
+    },
+    "staticCap": {
+      "interactiveSuccessRate": 0.9011,
+      "interactiveGoodputRps": 5.267,
+      "interactiveP50Ms": 7345.4,
+      "interactiveP95Ms": 13878.8,
+      "interactiveTtftP50Ms": 2619.4,
+      "interactiveTtftP95Ms": 6263.3,
+      "interactiveRetryAmplification": 1.741,
+      "batchSuccessRate": 0.1739,
+      "localRejects": 461,
+      "upstream429s": 0,
+      "peakActive": 32
+    },
+    "redis": {
+      "interactiveSuccessRate": 0.9582,
+      "interactiveGoodputRps": 5.6,
+      "interactiveP50Ms": 4136.3,
+      "interactiveP95Ms": 9030.6,
+      "interactiveTtftP50Ms": 701.1,
+      "interactiveTtftP95Ms": 2826.7,
+      "interactiveRetryAmplification": 1.479,
+      "batchSuccessRate": 0.058,
+      "localRejects": 401,
+      "upstream429s": 0,
+      "peakActive": 32
+    },
+    "moflux": {
+      "interactiveSuccessRate": 0.9886,
+      "interactiveGoodputRps": 5.778,
+      "interactiveP50Ms": 4185.3,
+      "interactiveP95Ms": 9895.9,
+      "interactiveTtftP50Ms": 665,
+      "interactiveTtftP95Ms": 2791.3,
+      "interactiveRetryAmplification": 1.171,
+      "batchSuccessRate": 0.029,
+      "localRejects": 317,
+      "upstream429s": 0,
+      "peakActive": 31
+    }
+  },
+  "versusBaseline": {
+    "staticCap": {
+      "interactiveSuccessPercentagePointChange": 23.95,
+      "interactiveGoodputChangePercent": 36.21,
+      "interactiveP50LatencyChangePercent": -20.8,
+      "interactiveP95LatencyChangePercent": -19.7,
+      "interactiveTtftP50ChangePercent": -50.84,
+      "interactiveTtftP95ChangePercent": -20.09,
+      "batchSuccessPercentagePointChange": -36.23,
+      "retryAmplificationChangePercent": -22.38,
+      "upstream429Reference": 566,
+      "upstream429Candidate": 0
+    },
+    "redis": {
+      "interactiveSuccessPercentagePointChange": 29.66,
+      "interactiveGoodputChangePercent": 44.83,
+      "interactiveP50LatencyChangePercent": -55.4,
+      "interactiveP95LatencyChangePercent": -47.75,
+      "interactiveTtftP50ChangePercent": -86.84,
+      "interactiveTtftP95ChangePercent": -63.94,
+      "batchSuccessPercentagePointChange": -47.82,
+      "retryAmplificationChangePercent": -34.06,
+      "upstream429Reference": 566,
+      "upstream429Candidate": 0
+    },
+    "moflux": {
+      "interactiveSuccessPercentagePointChange": 32.7,
+      "interactiveGoodputChangePercent": 49.43,
+      "interactiveP50LatencyChangePercent": -54.87,
+      "interactiveP95LatencyChangePercent": -42.75,
+      "interactiveTtftP50ChangePercent": -87.52,
+      "interactiveTtftP95ChangePercent": -64.39,
+      "batchSuccessPercentagePointChange": -50.72,
+      "retryAmplificationChangePercent": -47.79,
+      "upstream429Reference": 566,
+      "upstream429Candidate": 0
+    }
+  },
+  "mofluxVersus": {
+    "staticCap": {
+      "interactiveSuccessPercentagePointChange": 8.75,
+      "interactiveGoodputChangePercent": 9.7,
+      "interactiveP50LatencyChangePercent": -43.02,
+      "interactiveP95LatencyChangePercent": -28.7,
+      "interactiveTtftP50ChangePercent": -74.61,
+      "interactiveTtftP95ChangePercent": -55.43,
+      "batchSuccessPercentagePointChange": -14.49,
+      "retryAmplificationChangePercent": -32.74,
+      "upstream429Reference": 0,
+      "upstream429Candidate": 0
+    },
+    "redis": {
+      "interactiveSuccessPercentagePointChange": 3.04,
+      "interactiveGoodputChangePercent": 3.17,
+      "interactiveP50LatencyChangePercent": 1.18,
+      "interactiveP95LatencyChangePercent": 9.58,
+      "interactiveTtftP50ChangePercent": -5.15,
+      "interactiveTtftP95ChangePercent": -1.25,
+      "batchSuccessPercentagePointChange": -2.9,
+      "retryAmplificationChangePercent": -20.82,
+      "upstream429Reference": 0,
+      "upstream429Candidate": 0
+    }
+  }
+}

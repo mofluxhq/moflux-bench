@@ -2,8 +2,8 @@ import { randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
-export const TYR_VERSION = "0.16.0";
-export const LATCHFLO_VERSION = "0.5.0";
+export const TYR_VERSION = "0.17.0";
+export const LATCHFLO_VERSION = "0.5.1";
 export const DEFAULT_TYR_IMAGE = `tyr-admission-controller:${TYR_VERSION}`;
 export const DEFAULT_LATCHFLO_IMAGE = `latchflo-control-plane:${LATCHFLO_VERSION}`;
 
@@ -45,6 +45,16 @@ function migrateExistingEnv(file, { quiet }) {
   );
   changed ||= updatedText !== text;
   text = updatedText;
+
+  if (!/^TYR_ROUTING_SECRET=/m.test(text)) {
+    const routingSecret = process.env.TYR_ROUTING_SECRET || token("moflux-demo-routing");
+    const line = `TYR_ROUTING_SECRET=${routingSecret}`;
+    const bootstrapLine = /^LATCHFLO_AGENT_BOOTSTRAP_TOKEN=[^\r\n]+$/m;
+    text = bootstrapLine.test(text)
+      ? text.replace(bootstrapLine, (value) => `${value}\n${line}`)
+      : `${text.replace(/\s*$/, "")}\n${line}\n`;
+    changed = true;
+  }
   if (changed) {
     writeFileSync(file, text, { mode: 0o600 });
     try { chmodSync(file, 0o600); } catch { /* best effort on non-POSIX filesystems */ }
@@ -62,6 +72,7 @@ export function ensureDemoEnv(file, { quiet = false } = {}) {
     LATCHFLO_ADMIN_TOKEN: process.env.LATCHFLO_ADMIN_TOKEN || token("moflux-demo-admin"),
     LATCHFLO_AGENT_BOOTSTRAP_TOKEN:
       process.env.LATCHFLO_AGENT_BOOTSTRAP_TOKEN || token("moflux-demo-bootstrap"),
+    TYR_ROUTING_SECRET: process.env.TYR_ROUTING_SECRET || token("moflux-demo-routing"),
     MOFLUX_TYR_USER: process.env.MOFLUX_TYR_USER || "0:0",
   };
 
@@ -73,6 +84,7 @@ export function ensureDemoEnv(file, { quiet = false } = {}) {
     `MOFLUX_LATCHFLO_IMAGE=${values.MOFLUX_LATCHFLO_IMAGE}`,
     `LATCHFLO_ADMIN_TOKEN=${values.LATCHFLO_ADMIN_TOKEN}`,
     `LATCHFLO_AGENT_BOOTSTRAP_TOKEN=${values.LATCHFLO_AGENT_BOOTSTRAP_TOKEN}`,
+    `TYR_ROUTING_SECRET=${values.TYR_ROUTING_SECRET}`,
     `MOFLUX_TYR_USER=${values.MOFLUX_TYR_USER}`,
     "",
   ].join("\n");

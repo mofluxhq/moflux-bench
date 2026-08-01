@@ -339,10 +339,11 @@ try {
   writeFileSync(
     ENV_FILE,
     [
-      "MOFLUX_TYR_IMAGE=test-tyr:0.16.0",
-      "MOFLUX_LATCHFLO_IMAGE=test-latchflo:0.5.0",
+      "MOFLUX_TYR_IMAGE=test-tyr:0.17.0",
+      "MOFLUX_LATCHFLO_IMAGE=test-latchflo:0.5.1",
       "LATCHFLO_ADMIN_TOKEN=test-admin",
       "LATCHFLO_AGENT_BOOTSTRAP_TOKEN=test-bootstrap",
+      "TYR_ROUTING_SECRET=test-routing-secret-with-at-least-32-chars",
       "MOFLUX_TYR_USER=0:0",
       "",
     ].join("\n"),
@@ -455,7 +456,7 @@ ${run.stderr}`);
     if (history.length !== 2) throw new Error(`${pool} was configured ${history.length} times, expected 2`);
     for (const body of history) {
       if (body.minimumGrantMaxConcurrent !== 1) {
-        throw new Error(`${pool} omitted Latchflo 0.5.0 minimumGrantMaxConcurrent=1`);
+        throw new Error(`${pool} omitted Latchflo 0.5.1 minimumGrantMaxConcurrent=1`);
       }
       if (body.minimumGrantTokenBudget !== expectedMinimumTokens[pool]) {
         throw new Error(

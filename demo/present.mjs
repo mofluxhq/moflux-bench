@@ -121,6 +121,29 @@ const OPT = Object.freeze({
    * cannot, which is what makes the two distinguishable.
    */
   lending: str("lending", "false") !== "false",
+  /**
+   * "uniform" reproduces the version-1 trace exactly, so every result recorded
+   * before this option existed stays reproducible. "lognormal" draws a size
+   * per request.
+   *
+   * This is the difference between a benchmark that can distinguish token-aware
+   * admission from a concurrency semaphore and one that cannot: with a single
+   * fixed size per class, the two policies are the same algorithm and no
+   * result can be attributed to token awareness.
+   */
+  /**
+   * Simulated network distance to the coordination service, per round trip.
+   *
+   * Only the Redis control arm consults a coordinator on the admission path,
+   * so only it pays this per request. Running Redis on loopback measures a
+   * coordinator that is effectively free to consult — the most favourable
+   * condition a per-request design can be given, and one that does not exist
+   * in production.
+   */
+  coordinatorLatencyMs: num("coordinator-latency-ms", 0),
+  sizeDistribution: str("size-distribution", "uniform"),
+  interactiveSizeSigma: num("interactive-size-sigma", 0.75),
+  batchSizeSigma: num("batch-size-sigma", 0),
   sigma: num("sigma", 0.25),
   kappa: num("kappa", 0),
   r1: num("r1", 400),
@@ -165,6 +188,7 @@ const CONTROL_ARM_SPECS = {
       "--max-queue=0",
       `--token-budget=${opt.tokenBudget}`,
       "--lease-ttl-ms=15000",
+      `--coordinator-latency-ms=${opt.coordinatorLatencyMs}`,
     ],
   },
 };
@@ -193,6 +217,18 @@ if (!new Set(["compare", "baseline", "moflux", "doctor"]).has(OPT.mode)) {
 }
 if (!Number.isFinite(OPT.phaseMs) || OPT.phaseMs < 10000) {
   throw new Error("--phase-ms must be at least 10000");
+}
+const SIZE_DISTRIBUTION_VALUES = new Set(["uniform", "lognormal"]);
+const SIZE_DISTRIBUTION = OPT.sizeDistribution;
+if (!SIZE_DISTRIBUTION_VALUES.has(SIZE_DISTRIBUTION)) {
+  throw new Error(
+    `--size-distribution must be one of ${[...SIZE_DISTRIBUTION_VALUES].join(", ")}, got "${SIZE_DISTRIBUTION}"`,
+  );
+}
+if (SIZE_DISTRIBUTION === "uniform" && (OPT.interactiveSizeSigma !== 0.75 || OPT.batchSizeSigma !== 0)) {
+  // Silently ignoring a spread the operator asked for would make a uniform run
+  // look heterogeneous in the command line and not in the data.
+  throw new Error("size sigmas have no effect with --size-distribution=uniform; set --size-distribution=lognormal");
 }
 if (OPT.lending && OPT.mode !== "compare") {
   throw new Error("--lending requires --mode=compare; the idle window is only meaningful against a control arm");
@@ -253,6 +289,9 @@ const WORKLOAD = Object.freeze({
   batchMaxTokens: 3000,
   maxAttempts: 4,
   backoffBaseMs: 250,
+  sizeDistribution: OPT.sizeDistribution,
+  interactiveSizeSigma: OPT.interactiveSizeSigma,
+  batchSizeSigma: OPT.batchSizeSigma,
   inFlightCeiling: 3000,
   windowMs: 30000,
 });
@@ -326,7 +365,17 @@ const RESERVATIONS = Object.freeze({
   ),
 });
 const RESOLVED_CAPACITY = Object.freeze(
-  validateCapacityPlan({ pools: CAPACITY.pools, requirements: RESERVATIONS }).map(Object.freeze),
+  validateCapacityPlan({
+    pools: CAPACITY.pools,
+    requirements: RESERVATIONS,
+    // Under heterogeneous sizes, sizing every concurrency slot for the largest
+    // possible request is neither achievable nor desirable: it would provision
+    // for a tail that most requests never reach. Tokens are expected to bind
+    // sometimes, and that is the property being measured. The floor still
+    // holds — a grant must fund at least one worst-case request, or that
+    // request could never be admitted anywhere.
+    requireFullyFundedConcurrency: SIZE_DISTRIBUTION === "uniform",
+  }).map(Object.freeze),
 );
 
 const PROVIDER = Object.freeze({
@@ -983,6 +1032,13 @@ function loadgenArgs({ interactiveTargets, batchTargets, armLabel, outFile }) {
     `--batch-max-tokens=${WORKLOAD.batchMaxTokens}`,
     `--max-attempts=${WORKLOAD.maxAttempts}`,
     `--backoff-base-ms=${WORKLOAD.backoffBaseMs}`,
+    // Trace-shaping options must reach the generator or it will build its
+    // config from different values than the trace it is handed, and reject a
+    // trace this presenter just wrote. Anything included in traceWorkload()
+    // has to be forwarded here; verify-loadgen-args.mjs enforces that.
+    `--size-distribution=${WORKLOAD.sizeDistribution}`,
+    `--interactive-size-sigma=${WORKLOAD.interactiveSizeSigma}`,
+    `--batch-size-sigma=${WORKLOAD.batchSizeSigma}`,
     `--in-flight-ceiling=${WORKLOAD.inFlightCeiling}`,
     `--window-ms=${WORKLOAD.windowMs}`,
     `--trace-file=${TRACE_FILE}`,
@@ -994,6 +1050,7 @@ function loadgenArgs({ interactiveTargets, batchTargets, armLabel, outFile }) {
 }
 
 function attachScenario(summary) {
+  summary.coordinatorLatencyMs = OPT.coordinatorLatencyMs;
   summary.scenario = {
     id: SCENARIO_ID,
     workload: WORKLOAD,

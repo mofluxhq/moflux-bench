@@ -1,0 +1,70 @@
+{
+  "generatedAt": "2026-08-01T19:13:27.186Z",
+  "scenario": {
+    "id": "78de68162ce1",
+    "workload": {
+      "durationMs": 45000,
+      "seed": 2,
+      "interactiveRps": 6,
+      "interactiveInputChars": 1200,
+      "interactiveMaxTokens": 400,
+      "batchStartMs": 15750,
+      "batchDurationMs": 22500,
+      "batchRps": 3,
+      "batchInputChars": 24000,
+      "batchMaxTokens": 3000,
+      "maxAttempts": 4,
+      "backoffBaseMs": 250,
+      "sizeDistribution": "lognormal",
+      "interactiveSizeSigma": 0.75,
+      "batchSizeSigma": 0,
+      "inFlightCeiling": 3000,
+      "windowMs": 30000
+    },
+    "provider": {
+      "envelope": 32,
+      "queue": 8,
+      "sigma": 0.25,
+      "kappa": 0,
+      "r1": 400,
+      "inputCharRatio": 3.6,
+      "inputJitter": 0.04,
+      "seed": 2
+    },
+    "trace": {
+      "version": 2,
+      "hash": "f921ca242b87a03e28406a865b51e9d4e1bedb1d152dfd1568d9345061d29b17",
+      "planned": {
+        "interactive": 268,
+        "batch": 76,
+        "total": 344
+      },
+      "evidence": "results/scenario-trace.json"
+    },
+    "routing": {
+      "interactiveReplicas": [
+        "http://127.0.0.1:8101",
+        "http://127.0.0.1:8102",
+        "http://127.0.0.1:8103",
+        "http://127.0.0.1:8104"
+      ],
+      "batchReplicas": [
+        "http://127.0.0.1:8104"
+      ]
+    }
+  },
+  "arms": {
+    "baseline": "results/baseline.json",
+    "moflux": "results/moflux-enforce.json"
+  },
+  "metrics": {
+    "interactiveSuccessPercentagePointChange": 33.96,
+    "interactiveGoodputChangePercent": 54.82,
+    "interactiveP95LatencyChangePercent": -48.41,
+    "interactiveTailRatioBaseline": 2.0066,
+    "interactiveTailRatioMoflux": 2.431,
+    "interactiveTailInflationChangePercent": 21.15,
+    "upstream429Baseline": 666,
+    "upstream429Moflux": 0
+  }
+}

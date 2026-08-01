@@ -46,6 +46,22 @@ pools:
       maxCorrection: 2
       maxModels: 16
 
+routing:
+  capacityAware:
+    instanceId: tyr-r3
+    sharedSecretEnv: TYR_ROUTING_SECRET
+    pollIntervalMs: 100
+    staleAfterMs: 1000
+    probeTimeoutMs: 250
+    forwardTimeoutMs: 30000
+    peers:
+      - id: tyr-r1
+        baseUrl: http://tyr-r1:8787
+      - id: tyr-r2
+        baseUrl: http://tyr-r2:8787
+      - id: tyr-r4
+        baseUrl: http://tyr-r4:8787
+
 controlPlane:
   type: latchflo
   url: http://latchflo:8080
@@ -59,7 +75,7 @@ controlPlane:
   metadata:
     region: local
     zone: demo-3
-    version: 0.16.0
+    version: 0.17.0
     endpoint: http://tyr-r3:8787
     labels:
       environment: benchmark

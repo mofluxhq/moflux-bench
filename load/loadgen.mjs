@@ -57,6 +57,15 @@ const CONFIG = Object.freeze({
 
   interactiveRps: num("interactive-rps", 12),
   interactiveInputChars: num("interactive-input-chars", 1200),
+  /**
+   * "uniform" reproduces the version-1 trace exactly. "lognormal" draws a size
+   * per request, which is what makes token-aware admission distinguishable
+   * from a plain concurrency semaphore: with one fixed size per class the two
+   * are the same algorithm.
+   */
+  sizeDistribution: str("size-distribution", "uniform"),
+  interactiveSizeSigma: num("interactive-size-sigma", 0.75),
+  batchSizeSigma: num("batch-size-sigma", 0),
   interactiveMaxTokens: num("interactive-max-tokens", 400),
 
   batchStartMs: num("batch-start-ms", 20000),
@@ -212,6 +221,43 @@ function percentile(values, p) {
  * `samples` array would lose the idle window entirely on any run longer than
  * `windowMs`, and would report zero idle goodput rather than failing.
  */
+/** Realised per-request sizes for this class, from the replayed trace. */
+function sizeSummary(cls) {
+  const sizes = TRACE.entries.filter((entry) => entry.class === cls && entry.inputChars !== undefined)
+    .map((entry) => entry.inputChars)
+    .sort((a, b) => a - b);
+  if (sizes.length === 0) return null;
+  const at = (p) => sizes[Math.min(sizes.length - 1, Math.max(0, Math.ceil(p * sizes.length) - 1))];
+  return {
+    n: sizes.length,
+    min: sizes[0],
+    p50: at(0.5),
+    p95: at(0.95),
+    max: sizes[sizes.length - 1],
+    spread: +(sizes[sizes.length - 1] / sizes[0]).toFixed(1),
+  };
+}
+
+/**
+ * Splits local rejections into the limit that caused them.
+ *
+ * `tokenBoundShare` is the fraction of refusals a concurrency-only limiter
+ * could not have made. A share of zero means the benchmark did not exercise
+ * token-aware admission at all, whatever the configuration says.
+ */
+function bindingConstraint(s) {
+  const reasons = s.localRejectReasons ?? {};
+  const budget = reasons.budget_limit ?? 0;
+  const concurrency = (reasons.concurrency_limit ?? 0) + (reasons.queue_limit ?? 0);
+  const total = budget + concurrency;
+  return {
+    budgetLimited: budget,
+    concurrencyLimited: concurrency,
+    tokenBoundShare: total > 0 ? +(budget / total).toFixed(4) : null,
+    exercisedTokenAwareness: budget > 0,
+  };
+}
+
 function phaseWindows(s) {
   const boundaryMs = CONFIG.batchStartMs;
   const endMs = CONFIG.durationMs;
@@ -282,9 +328,16 @@ async function issue(entry) {
   const baseBody = {
     model: isBatch ? CONFIG.batchModel : CONFIG.interactiveModel,
     stream: true,
-    max_tokens: isBatch ? CONFIG.batchMaxTokens : CONFIG.interactiveMaxTokens,
+    // Version-2 traces carry a size per request; version-1 traces fall back to
+    // the class constant, so an old trace replays byte-identically.
+    max_tokens: entry.maxTokens ?? (isBatch ? CONFIG.batchMaxTokens : CONFIG.interactiveMaxTokens),
     messages: [
-      { role: "user", content: prompt(isBatch ? CONFIG.batchInputChars : CONFIG.interactiveInputChars) },
+      {
+        role: "user",
+        content: prompt(
+          entry.inputChars ?? (isBatch ? CONFIG.batchInputChars : CONFIG.interactiveInputChars),
+        ),
+      },
     ],
   };
   const logicalStart = performance.now();
@@ -648,6 +701,16 @@ for (const cls of classes) {
     serverError: s.serverError,
     transportError: s.transportError,
     exhausted: s.exhausted,
+    requestSizes: sizeSummary(cls),
+    /**
+     * Which limit actually refused work.
+     *
+     * The question this answers: did the token budget ever decide an
+     * admission, or did concurrency decide every one? If `budget_limit` is
+     * zero, token-aware admission made no decision a plain semaphore could not
+     * have made, and any advantage claimed over one is not attributable to it.
+     */
+    bindingConstraint: bindingConstraint(s),
     firstAttemptAtMs: s.firstAttemptAtMs,
     firstSuccessAtMs: s.firstSuccessAtMs,
     /**

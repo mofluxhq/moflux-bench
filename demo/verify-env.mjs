@@ -22,6 +22,7 @@ try {
   assert.match(text, new RegExp(`^MOFLUX_LATCHFLO_IMAGE=${DEFAULT_LATCHFLO_IMAGE}$`, "m"));
   assert.match(text, /^LATCHFLO_ADMIN_TOKEN=moflux-demo-admin-[A-Za-z0-9_-]{40,}$/m);
   assert.match(text, /^LATCHFLO_AGENT_BOOTSTRAP_TOKEN=moflux-demo-bootstrap-[A-Za-z0-9_-]{40,}$/m);
+  assert.match(text, /^TYR_ROUTING_SECRET=moflux-demo-routing-[A-Za-z0-9_-]{40,}$/m);
   if (process.platform !== "win32") assert.equal(statSync(file).mode & 0o777, 0o600);
   assert.equal(imageMatchesVersion(DEFAULT_TYR_IMAGE, TYR_VERSION), true);
   assert.equal(imageMatchesVersion(DEFAULT_LATCHFLO_IMAGE, LATCHFLO_VERSION), true);
@@ -48,6 +49,7 @@ try {
   assert.match(migratedText, new RegExp(`^MOFLUX_LATCHFLO_IMAGE=${DEFAULT_LATCHFLO_IMAGE}$`, "m"));
   assert.match(migratedText, /^LATCHFLO_ADMIN_TOKEN=preserve-admin$/m);
   assert.match(migratedText, /^LATCHFLO_AGENT_BOOTSTRAP_TOKEN=preserve-bootstrap$/m);
+  assert.match(migratedText, /^TYR_ROUTING_SECRET=moflux-demo-routing-[A-Za-z0-9_-]{40,}$/m);
 
   writeFileSync(
     file,
@@ -56,13 +58,14 @@ try {
       "MOFLUX_LATCHFLO_IMAGE=registry.example/latchflo@sha256:def",
       "LATCHFLO_ADMIN_TOKEN=custom-admin",
       "LATCHFLO_AGENT_BOOTSTRAP_TOKEN=custom-bootstrap",
+      "TYR_ROUTING_SECRET=custom-routing-secret-with-at-least-32-chars",
       "",
     ].join("\n"),
   );
   const custom = ensureDemoEnv(file, { quiet: true });
   assert.equal(custom.updated, false);
   assert.match(readFileSync(file, "utf8"), /registry\.example\/latchflo@sha256:def/);
-  console.log("PASS  demo environment is generated safely and migrates only local default image tags");
+  console.log("PASS  demo environment is generated safely, migrates local runtime defaults, and provisions routing credentials");
 } finally {
   rmSync(temp, { recursive: true, force: true });
 }

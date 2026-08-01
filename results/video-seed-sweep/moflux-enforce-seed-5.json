@@ -1,0 +1,525 @@
+{
+  "arm": "moflux-enforce",
+  "seed": 5,
+  "config": {
+    "targets": [
+      "http://127.0.0.1:8101",
+      "http://127.0.0.1:8102",
+      "http://127.0.0.1:8103",
+      "http://127.0.0.1:8104"
+    ],
+    "interactiveTargets": [
+      "http://127.0.0.1:8101",
+      "http://127.0.0.1:8102",
+      "http://127.0.0.1:8103",
+      "http://127.0.0.1:8104"
+    ],
+    "batchTargets": [
+      "http://127.0.0.1:8104"
+    ],
+    "metricsPort": 0,
+    "metricsRelayUrl": "http://127.0.0.1:8200/ingest",
+    "metricsPushIntervalMs": 1000,
+    "metricsRelayRequired": true,
+    "armLabel": "moflux-enforce",
+    "durationMs": 45000,
+    "seed": 5,
+    "interactiveModel": "sim-model-interactive",
+    "batchModel": "sim-model-batch",
+    "interactiveRps": 6,
+    "interactiveInputChars": 1200,
+    "sizeDistribution": "lognormal",
+    "interactiveSizeSigma": 0.75,
+    "batchSizeSigma": 0,
+    "interactiveMaxTokens": 400,
+    "batchStartMs": 15750,
+    "batchDurationMs": 22500,
+    "batchRps": 3,
+    "batchInputChars": 24000,
+    "batchMaxTokens": 3000,
+    "maxAttempts": 4,
+    "backoffBaseMs": 250,
+    "honorRetryHints": true,
+    "inFlightCeiling": 3000,
+    "windowMs": 30000,
+    "traceFile": "provided",
+    "traceOut": "",
+    "out": "requested"
+  },
+  "generatorSaturated": 0,
+  "wallClockMs": 52163,
+  "trace": {
+    "version": 2,
+    "hash": "24a0370ec424dedbe1dde0822ea30299efcbb5ae4585fbed4f2bb576892688d8",
+    "planned": {
+      "interactive": 263,
+      "batch": 69,
+      "total": 332
+    },
+    "source": "provided"
+  },
+  "classes": {
+    "interactive": {
+      "logical": 263,
+      "attempts": 308,
+      "success": 260,
+      "successRate": 0.9886,
+      "retryAmplification": 1.171,
+      "localReject": 48,
+      "localRejectReasons": {
+        "budget_limit": 47,
+        "concurrency_limit": 1
+      },
+      "localRejectPools": {
+        "sim-interactive": 48
+      },
+      "localRejectDetails": [
+        {
+          "pool": "sim-interactive",
+          "reason": "budget_limit",
+          "count": 47,
+          "requestedMin": 256,
+          "requestedMax": 2660,
+          "availableMin": 75,
+          "availableMax": 2566,
+          "budgetMin": 7500,
+          "budgetMax": 7500
+        },
+        {
+          "pool": "sim-interactive",
+          "reason": "concurrency_limit",
+          "count": 1,
+          "requestedMin": 600,
+          "requestedMax": 600,
+          "availableMin": 1131,
+          "availableMax": 1131,
+          "budgetMin": 7500,
+          "budgetMax": 7500
+        }
+      ],
+      "upstreamReject": 0,
+      "serverError": 0,
+      "transportError": 0,
+      "exhausted": 3,
+      "requestSizes": {
+        "n": 263,
+        "min": 150,
+        "p50": 1219,
+        "p95": 3917,
+        "max": 4800,
+        "spread": 32
+      },
+      "bindingConstraint": {
+        "budgetLimited": 47,
+        "concurrencyLimited": 1,
+        "tokenBoundShare": 0.9792,
+        "exercisedTokenAwareness": true
+      },
+      "firstAttemptAtMs": 133.3,
+      "firstSuccessAtMs": 1047.3,
+      "admissionGapMs": 914,
+      "windows": {
+        "boundaryMs": 15750,
+        "endMs": 45000,
+        "idle": {
+          "completed": 77,
+          "goodputRps": 4.889,
+          "p50Ms": 1397.962375000001,
+          "p95Ms": 4332.928458,
+          "ttftP50Ms": 375.5074159999999,
+          "ttftP95Ms": 938.6299999999992
+        },
+        "contended": {
+          "completed": 148,
+          "goodputRps": 5.06,
+          "p50Ms": 3771.662209000002,
+          "p95Ms": 9168.888957999996,
+          "ttftP50Ms": 538.153459000001,
+          "ttftP95Ms": 1980.0263339999983
+        },
+        "drainCompleted": 35
+      },
+      "retryHints": {
+        "received": 48,
+        "applied": 30,
+        "blindSleepMs": 0,
+        "hintedSleepMs": 60609,
+        "totalSleepMs": 60609
+      },
+      "outputTokens": 53015,
+      "latencyMs": {
+        "p50": 4185.3,
+        "p95": 9895.9,
+        "p99": 12274.4
+      },
+      "ttftMs": {
+        "p50": 665,
+        "p95": 2791.3,
+        "p99": 7089.1
+      }
+    },
+    "batch": {
+      "logical": 69,
+      "attempts": 271,
+      "success": 2,
+      "successRate": 0.029,
+      "retryAmplification": 3.928,
+      "localReject": 269,
+      "localRejectReasons": {
+        "budget_limit": 269
+      },
+      "localRejectPools": {
+        "sim-batch": 269
+      },
+      "localRejectDetails": [
+        {
+          "pool": "sim-batch",
+          "reason": "budget_limit",
+          "count": 269,
+          "requestedMin": 9008,
+          "requestedMax": 9008,
+          "availableMin": 992,
+          "availableMax": 992,
+          "budgetMin": 10000,
+          "budgetMax": 10000
+        }
+      ],
+      "upstreamReject": 0,
+      "serverError": 0,
+      "transportError": 0,
+      "exhausted": 67,
+      "requestSizes": {
+        "n": 69,
+        "min": 24000,
+        "p50": 24000,
+        "p95": 24000,
+        "max": 24000,
+        "spread": 1
+      },
+      "bindingConstraint": {
+        "budgetLimited": 269,
+        "concurrencyLimited": 0,
+        "tokenBoundShare": 1,
+        "exercisedTokenAwareness": true
+      },
+      "firstAttemptAtMs": 16250.9,
+      "firstSuccessAtMs": 27212.9,
+      "admissionGapMs": 10962,
+      "windows": {
+        "boundaryMs": 15750,
+        "endMs": 45000,
+        "idle": {
+          "completed": 0,
+          "goodputRps": 0,
+          "p50Ms": 0,
+          "p95Ms": 0,
+          "ttftP50Ms": 0,
+          "ttftP95Ms": 0
+        },
+        "contended": {
+          "completed": 2,
+          "goodputRps": 0.068,
+          "p50Ms": 12850.965209000002,
+          "p95Ms": 12850.965209000002,
+          "ttftP50Ms": 12059.254459000003,
+          "ttftP95Ms": 12059.254459000003
+        },
+        "drainCompleted": 0
+      },
+      "retryHints": {
+        "received": 0,
+        "applied": 0,
+        "blindSleepMs": 253444,
+        "hintedSleepMs": 0,
+        "totalSleepMs": 253444
+      },
+      "outputTokens": 142,
+      "latencyMs": {
+        "p50": 12851,
+        "p95": 12851,
+        "p99": 12851
+      },
+      "ttftMs": {
+        "p50": 12059.3,
+        "p95": 12059.3,
+        "p99": 12059.3
+      }
+    }
+  },
+  "simCounters": {
+    "received": 262,
+    "admitted": 262,
+    "rejected429": 0,
+    "failed500": 0,
+    "completed": 262,
+    "disconnected": 0,
+    "trueInputTokens": 123847,
+    "trueOutputTokens": 53157,
+    "peakActive": 31,
+    "peakQueue": 1,
+    "peakActiveBySecond": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      7,
+      7,
+      13,
+      11,
+      7,
+      9,
+      13,
+      15,
+      17,
+      22,
+      23,
+      15,
+      10,
+      12,
+      20,
+      20,
+      20,
+      23,
+      24,
+      23,
+      22,
+      22,
+      21,
+      19,
+      24,
+      26,
+      23,
+      22,
+      27,
+      28,
+      28,
+      27,
+      30,
+      30,
+      29,
+      31,
+      31,
+      28,
+      23,
+      21,
+      23,
+      28,
+      28,
+      30,
+      28,
+      29,
+      20,
+      11,
+      7,
+      1,
+      1,
+      1
+    ],
+    "emittedTokens": 53157,
+    "ticks": 3017,
+    "tickDtSum": 62.989000000001724
+  },
+  "coordinatorLatencyMs": 0,
+  "scenario": {
+    "id": "b1f2cf443725",
+    "workload": {
+      "durationMs": 45000,
+      "seed": 5,
+      "interactiveRps": 6,
+      "interactiveInputChars": 1200,
+      "interactiveMaxTokens": 400,
+      "batchStartMs": 15750,
+      "batchDurationMs": 22500,
+      "batchRps": 3,
+      "batchInputChars": 24000,
+      "batchMaxTokens": 3000,
+      "maxAttempts": 4,
+      "backoffBaseMs": 250,
+      "sizeDistribution": "lognormal",
+      "interactiveSizeSigma": 0.75,
+      "batchSizeSigma": 0,
+      "inFlightCeiling": 3000,
+      "windowMs": 30000
+    },
+    "provider": {
+      "envelope": 32,
+      "queue": 8,
+      "sigma": 0.25,
+      "kappa": 0,
+      "r1": 400,
+      "inputCharRatio": 3.6,
+      "inputJitter": 0.04,
+      "seed": 5
+    },
+    "trace": {
+      "version": 2,
+      "hash": "24a0370ec424dedbe1dde0822ea30299efcbb5ae4585fbed4f2bb576892688d8",
+      "planned": {
+        "interactive": 263,
+        "batch": 69,
+        "total": 332
+      },
+      "evidence": "results/scenario-trace.json"
+    },
+    "routing": {
+      "interactiveReplicas": [
+        "http://127.0.0.1:8101",
+        "http://127.0.0.1:8102",
+        "http://127.0.0.1:8103",
+        "http://127.0.0.1:8104"
+      ],
+      "batchReplicas": [
+        "http://127.0.0.1:8104"
+      ]
+    }
+  },
+  "runtime": {
+    "tyr": {
+      "version": "0.17.0",
+      "image": "tyr-admission-controller:0.17.0"
+    },
+    "latchflo": {
+      "version": "0.5.1",
+      "image": "latchflo-control-plane:0.5.1"
+    }
+  },
+  "capacity": {
+    "policy": "interactive-first-static",
+    "batchFloorPercent": null,
+    "batchConcurrencySlots": 1,
+    "interactiveConcurrencySlots": 31,
+    "batchConcurrencyPercent": 3.125,
+    "batchTokenPercent": 25,
+    "envelope": 32,
+    "tokenBudget": 40000,
+    "pools": [
+      {
+        "name": "sim-interactive",
+        "maxConcurrent": 31,
+        "tokenBudget": 30000,
+        "agentCount": 4,
+        "minimumLocalConcurrencyGrant": 7,
+        "minimumLocalTokenGrant": 7500,
+        "tokenFundedConcurrency": 31,
+        "strandedConcurrency": 0,
+        "localGrants": [
+          {
+            "index": 0,
+            "maxConcurrent": 8,
+            "tokenBudget": 7500,
+            "tokenFunded": 9,
+            "effective": 8
+          },
+          {
+            "index": 1,
+            "maxConcurrent": 8,
+            "tokenBudget": 7500,
+            "tokenFunded": 9,
+            "effective": 8
+          },
+          {
+            "index": 2,
+            "maxConcurrent": 8,
+            "tokenBudget": 7500,
+            "tokenFunded": 9,
+            "effective": 8
+          },
+          {
+            "index": 3,
+            "maxConcurrent": 7,
+            "tokenBudget": 7500,
+            "tokenFunded": 9,
+            "effective": 7
+          }
+        ],
+        "reservation": {
+          "initial": 708,
+          "adaptiveCeiling": 755,
+          "requiredLocalGrant": 755
+        }
+      },
+      {
+        "name": "sim-batch",
+        "maxConcurrent": 1,
+        "tokenBudget": 10000,
+        "agentCount": 1,
+        "minimumLocalConcurrencyGrant": 1,
+        "minimumLocalTokenGrant": 10000,
+        "tokenFundedConcurrency": 1,
+        "strandedConcurrency": 0,
+        "localGrants": [
+          {
+            "index": 0,
+            "maxConcurrent": 1,
+            "tokenBudget": 10000,
+            "tokenFunded": 1,
+            "effective": 1
+          }
+        ],
+        "reservation": {
+          "initial": 9008,
+          "adaptiveCeiling": 9942,
+          "requiredLocalGrant": 9942
+        }
+      }
+    ],
+    "liveGrants": [
+      {
+        "port": 8101,
+        "pool": "sim-interactive",
+        "tokenBudget": 7500,
+        "maxConcurrent": 8,
+        "expiresAt": "2026-08-01T19:27:00.312Z",
+        "remainingMs": 118925
+      },
+      {
+        "port": 8102,
+        "pool": "sim-interactive",
+        "tokenBudget": 7500,
+        "maxConcurrent": 8,
+        "expiresAt": "2026-08-01T19:27:00.312Z",
+        "remainingMs": 118924
+      },
+      {
+        "port": 8103,
+        "pool": "sim-interactive",
+        "tokenBudget": 7500,
+        "maxConcurrent": 8,
+        "expiresAt": "2026-08-01T19:27:00.312Z",
+        "remainingMs": 118924
+      },
+      {
+        "port": 8104,
+        "pool": "sim-interactive",
+        "tokenBudget": 7500,
+        "maxConcurrent": 7,
+        "expiresAt": "2026-08-01T19:27:00.312Z",
+        "remainingMs": 118924
+      },
+      {
+        "port": 8104,
+        "pool": "sim-batch",
+        "tokenBudget": 10000,
+        "maxConcurrent": 1,
+        "expiresAt": "2026-08-01T19:27:00.312Z",
+        "remainingMs": 118924
+      }
+    ]
+  },
+  "tokenAccounting": {
+    "totalReserved": 258034,
+    "totalConsumed": 177004,
+    "totalRefunded": 85230,
+    "totalOverrun": 4200,
+    "grossRecoveryRate": 0.3303,
+    "netRecovered": 81030,
+    "netRecoveryRate": 0.314
+  }
+}
