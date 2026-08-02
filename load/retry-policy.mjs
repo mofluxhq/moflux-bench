@@ -1,7 +1,7 @@
 /**
  * Shared retry-hint policy for the benchmark load generator.
  *
- * Tyr 0.17.0 emits `x-admission-retry-after-ms` and `Retry-After` on local
+ * Tyr 0.18.0 emits `x-admission-retry-after-ms` and `Retry-After` on local
  * admission rejections. Hints are floors: the client never retries sooner
  * than its ordinary exponential backoff would have allowed.
  */

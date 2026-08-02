@@ -28,6 +28,18 @@ assert.equal(valid[1].minimumLocalTokenGrant, 10000);
 assert.equal(valid[1].tokenFundedConcurrency, 1);
 assert.equal(valid[1].strandedConcurrency, 0);
 
+const lending = validateCapacityPlan({
+  pools: [
+    { name: "sim-interactive", maxConcurrent: 28, tokenBudget: 24000, agentCount: 4 },
+    { name: "sim-batch", maxConcurrent: 4, tokenBudget: 40000, agentCount: 1 },
+  ],
+  requirements: { "sim-interactive": interactive, "sim-batch": batch },
+});
+assert.deepEqual(lending[0].localGrants.map((grant) => grant.maxConcurrent), [7, 7, 7, 7]);
+assert.equal(lending[0].tokenFundedConcurrency, 28);
+assert.equal(lending[1].tokenFundedConcurrency, 4);
+assert.equal(lending[0].strandedConcurrency + lending[1].strandedConcurrency, 0);
+
 assert.throws(
   () => validateCapacityPlan({
     pools: [
@@ -82,4 +94,4 @@ assert.match(
   /cannot be combined/,
 );
 
-console.log("PASS  capacity plan fully funds the canonical 31/1 policy");
+console.log("PASS  capacity plans fully fund both the canonical 31/1 policy and the 28/4 lending policy");

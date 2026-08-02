@@ -138,6 +138,12 @@ export function armMetrics(summary) {
     requestSizeP50: interactive.requestSizes?.p50 ?? null,
     requestSizeP95: interactive.requestSizes?.p95 ?? null,
     requestSizeSpread: interactive.requestSizes?.spread ?? null,
+    borrowedSlots: summary.lending?.idleWindow?.borrowedSlots ?? null,
+    occupancyLendingObserved: summary.lending?.idleWindow?.borrowed ?? null,
+    controllerLendingObserved: summary.lending?.controlPlane?.lendingObserved ?? null,
+    floorRestored: summary.lending?.controlPlane?.floorRestored ?? null,
+    floorRestorationDurationMs: summary.lending?.controlPlane?.restorationDurationMs ?? null,
+    batchFloorAdmissionGapMs: summary.lending?.floorReassertion?.admissionGapMs ?? null,
   };
 }
 
@@ -161,6 +167,8 @@ function capacityPolicy(summary) {
     batchTokenPercent: capacity.batchTokenPercent,
     envelope: capacity.envelope,
     tokenBudget: capacity.tokenBudget,
+    capacityGroup: capacity.capacityGroup ?? null,
+    demandPolicy: capacity.demandPolicy ?? null,
     pools: capacity.pools,
   };
 }
@@ -288,6 +296,7 @@ export function buildSweepSummary({ mode, fault, seeds, records }) {
       arms: record.arms,
       metrics: record.comparison?.metrics ?? null,
       tokenAccounting: record.moflux?.tokenAccounting ?? null,
+      lending: record.moflux?.lending ?? null,
     })),
     controlArms: controlArmKeys,
     /**
@@ -311,6 +320,20 @@ export function buildSweepSummary({ mode, fault, seeds, records }) {
       // MoFlux against each alternative. Answers "is this worth deploying".
       mofluxVersus: controlArmKeys.length > 0 ? headToHead : null,
       tokenAccounting: tokenMetrics.length > 0 ? aggregateMetricObjects(tokenMetrics) : null,
+      lending: mofluxMetrics.some((metrics) => metrics.controllerLendingObserved !== null)
+        ? {
+            borrowedSlots: summarize(mofluxMetrics.map((metrics) => metrics.borrowedSlots)),
+            occupancyObservedSeeds: mofluxMetrics.filter((metrics) => metrics.occupancyLendingObserved === true).length,
+            controllerObservedSeeds: mofluxMetrics.filter((metrics) => metrics.controllerLendingObserved === true).length,
+            floorRestoredSeeds: mofluxMetrics.filter((metrics) => metrics.floorRestored === true).length,
+            floorRestorationDurationMs: summarize(
+              mofluxMetrics.map((metrics) => metrics.floorRestorationDurationMs),
+            ),
+            batchFloorAdmissionGapMs: summarize(
+              mofluxMetrics.map((metrics) => metrics.batchFloorAdmissionGapMs),
+            ),
+          }
+        : null,
     },
   };
 }

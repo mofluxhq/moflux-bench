@@ -24,10 +24,11 @@
  * Start with fewer rungs and fewer seeds to size it before committing.
  */
 import { spawn } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { armSensitivity, crossover, isCoordinatorIndependent } from "./coordination-lib.mjs";
+import { latestPointerFile } from "./evidence-paths-lib.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const RESULTS = path.join(ROOT, "results");
@@ -77,9 +78,16 @@ function runSweep(latencyMs) {
 
 /** One rung's medians, per arm, from the sweep summary it just wrote. */
 function readRung(latencyMs) {
-  const summary = JSON.parse(
-    readFileSync(path.join(RESULTS, "video-seed-sweep.json"), "utf8"),
-  );
+  // The sweep writes to a generated run directory and leaves reviewed evidence
+  // alone, so follow its latest-run pointer rather than reading
+  // results/video-seed-sweep.json — which would silently report whatever was
+  // last published instead of the rung that just ran.
+  const pointer = latestPointerFile(RESULTS, "video-seed-sweep");
+  if (!existsSync(pointer)) {
+    throw new Error(`sweep at ${latencyMs}ms did not write ${path.relative(ROOT, pointer)}`);
+  }
+  const { summary: summaryPath } = JSON.parse(readFileSync(pointer, "utf8"));
+  const summary = JSON.parse(readFileSync(path.resolve(ROOT, summaryPath), "utf8"));
   const arms = summary.aggregate?.arms ?? {};
   const rung = {};
   for (const [name, metrics] of Object.entries(arms)) {

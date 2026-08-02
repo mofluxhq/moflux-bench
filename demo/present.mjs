@@ -31,7 +31,12 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { RedisClient } from "../arms/redis-client.mjs";
 import { lendingComparison, lendingMetrics } from "./lending-lib.mjs";
-import { dividedStaticCap } from "./control-arm-lib.mjs";
+import {
+  DEFAULT_CAPACITY_GROUP_NAME,
+  buildDemandAwareCapacityGroup,
+  summarizeControllerLending,
+} from "./lending-evidence-lib.mjs";
+import { dividedStaticCap, partitionStaticCap } from "./control-arm-lib.mjs";
 import { buildTrace } from "../load/trace-lib.mjs";
 import { reservationBounds, validateCapacityPlan } from "./capacity-lib.mjs";
 import {
@@ -40,6 +45,7 @@ import {
   ensureDemoEnv,
   imageMatchesVersion,
 } from "./env-lib.mjs";
+import { assertSafeResultsDir } from "./evidence-paths-lib.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const RESULTS = process.env.MOFLUX_BENCH_RESULTS_DIR
@@ -56,6 +62,15 @@ const BATCH_PORTS = [8104];
 const LOCAL_REPLICA_COUNT = TYR_PORTS.length;
 const TYR_SERVICES = ["tyr-r1", "tyr-r2", "tyr-r3", "tyr-r4"];
 const POOL_AGENT_COUNTS = Object.freeze({ "sim-interactive": 4, "sim-batch": 1 });
+// The presenter writes fixed scratch filenames into whatever directory it is
+// given. Pointed at a reviewed-evidence directory it would silently replace
+// published results, so refuse before creating anything.
+try {
+  assertSafeResultsDir(RESULTS, ROOT, "presenter results directory");
+} catch (error) {
+  console.error(`\nRefusing to run: ${error instanceof Error ? error.message : String(error)}`);
+  process.exit(1);
+}
 mkdirSync(RESULTS, { recursive: true });
 const TRACE_FILE = path.join(RESULTS, "scenario-trace.json");
 
@@ -66,9 +81,11 @@ for (const arg of process.argv.slice(2)) {
   else if (arg.startsWith("--")) rawArgs.set(arg.slice(2), "true");
 }
 const flag = (name) => rawArgs.get(name) === "true";
+const bool = (name, fallback) => (rawArgs.has(name) ? rawArgs.get(name) === "true" : fallback);
 const num = (name, fallback) => (rawArgs.has(name) ? Number(rawArgs.get(name)) : fallback);
 const str = (name, fallback) => rawArgs.get(name) ?? fallback;
 
+const lendingRequested = str("lending", "false") !== "false";
 const hasLegacyBatchFloor = rawArgs.has("batch-floor-percent");
 const hasBatchConcurrencyPercent = rawArgs.has("batch-concurrency-percent");
 const hasBatchConcurrencySlots = rawArgs.has("batch-concurrency-slots");
@@ -77,18 +94,28 @@ if (hasBatchConcurrencySlots && (hasLegacyBatchFloor || hasBatchConcurrencyPerce
     "--batch-concurrency-slots cannot be combined with --batch-concurrency-percent or --batch-floor-percent",
   );
 }
+
+// Normal benchmark runs retain the historical 31/1, 40k-token policy. The
+// dedicated lending scenario uses a meaningful 28/4 protected split. Four
+// current batch requests can reserve up to 4 × 9,942 tokens, so that scenario
+// needs a 64k-token group envelope with 24k/40k protected token guarantees.
+// Without this adjustment the four-slot batch floor would be nominal: token
+// admission could fund only one batch request at a time.
+const defaultBatchConcurrencySlots = lendingRequested ? 4 : 1;
+const defaultTokenBudget = lendingRequested ? 64_000 : 40_000;
+const defaultBatchTokenPercent = lendingRequested ? 62.5 : 25;
 const legacyBatchFloorPercent = hasLegacyBatchFloor ? num("batch-floor-percent", 25) : null;
 const configuredBatchConcurrencyPercent = hasBatchConcurrencyPercent
   ? num("batch-concurrency-percent", 0)
   : legacyBatchFloorPercent;
 const configuredBatchConcurrencySlots = hasBatchConcurrencySlots
-  ? num("batch-concurrency-slots", 1)
+  ? num("batch-concurrency-slots", defaultBatchConcurrencySlots)
   : configuredBatchConcurrencyPercent === null
-    ? 1
+    ? defaultBatchConcurrencySlots
     : null;
 const configuredBatchTokenPercent = rawArgs.has("batch-token-percent")
-  ? num("batch-token-percent", 25)
-  : legacyBatchFloorPercent ?? 25;
+  ? num("batch-token-percent", defaultBatchTokenPercent)
+  : legacyBatchFloorPercent ?? defaultBatchTokenPercent;
 
 const OPT = Object.freeze({
   mode: str("mode", "compare"), // compare | baseline | moflux | doctor
@@ -101,13 +128,13 @@ const OPT = Object.freeze({
   openGrafana: !flag("no-open"),
   resetState: !flag("reuse-state"),
   envelope: num("envelope", 32),
-  tokenBudget: num("token-budget", 40000),
+  tokenBudget: num("token-budget", defaultTokenBudget),
   batchFloorPercent: legacyBatchFloorPercent,
   batchConcurrencySlots: configuredBatchConcurrencySlots,
   batchConcurrencyPercent: configuredBatchConcurrencyPercent,
   batchTokenPercent: configuredBatchTokenPercent,
-  grantTtlMs: num("grant-ttl-ms", 120000),
-  enrollmentGrantTtlMs: num("enrollment-grant-ttl-ms", 5000),
+  grantTtlMs: num("grant-ttl-ms", lendingRequested ? 6000 : 120000),
+  enrollmentGrantTtlMs: num("enrollment-grant-ttl-ms", lendingRequested ? 2000 : 5000),
   seed: num("seed", 7),
   // Comma-separated control arms replayed on the same trace between the
   // baseline and MoFlux: "static-cap", "redis", or "all". These are the
@@ -120,7 +147,10 @@ const OPT = Object.freeze({
    * demonstrably exceed the interactive pool's own ceiling. A static split
    * cannot, which is what makes the two distinguishable.
    */
-  lending: str("lending", "false") !== "false",
+  lending: lendingRequested,
+  lendingReportStaleAfterMs: num("lending-report-stale-after-ms", 6000),
+  lendingIdleAfterMs: num("lending-idle-after-ms", 3000),
+  lendingMaxStarvationMs: num("lending-max-starvation-ms", 5000),
   /**
    * "uniform" reproduces the version-1 trace exactly, so every result recorded
    * before this option existed stays reproducible. "lognormal" draws a size
@@ -141,6 +171,20 @@ const OPT = Object.freeze({
    * in production.
    */
   coordinatorLatencyMs: num("coordinator-latency-ms", 0),
+  /**
+   * Honor `Retry-After` / `x-admission-retry-after-ms` from a local admission
+   * rejection. Default true, matching the load generator.
+   *
+   * MoFlux is the only local-admission arm that emits these headers, so it is
+   * the only arm whose measured TTFT includes hint-imposed waiting. Setting
+   * this false forces blind exponential backoff everywhere; the trace is
+   * identical either way, so the pair of runs is an exact A/B that separates
+   * the hint's contribution from token-aware admission itself.
+   *
+   *   npm run demo:hetero
+   *   npm run demo:hetero:blind
+   */
+  honorRetryHints: bool("honor-retry-hints", true),
   sizeDistribution: str("size-distribution", "uniform"),
   interactiveSizeSigma: num("interactive-size-sigma", 0.75),
   batchSizeSigma: num("batch-size-sigma", 0),
@@ -175,6 +219,29 @@ const CONTROL_ARM_SPECS = {
       "--token-budget=0",
     ],
   },
+  "static-partition": {
+    key: "staticPartition",
+    file: "static-partition.json",
+    armLabel: (opt) => `static-partition-${opt.envelope - opt.batchConcurrencySlots}-${opt.batchConcurrencySlots}`,
+    title: (opt) => `Static ${opt.envelope - opt.batchConcurrencySlots}/${opt.batchConcurrencySlots} partition`,
+    caption: (opt) =>
+      `Lending control — the same protected ${opt.envelope - opt.batchConcurrencySlots}/${opt.batchConcurrencySlots} split, but idle batch capacity cannot be borrowed`,
+    replicaArm: "static-partition",
+    needsRedis: false,
+    replicaFlags: (opt, index) => {
+      const interactive = partitionStaticCap({
+        envelope: opt.envelope - opt.batchConcurrencySlots,
+        replicaCount: LOCAL_REPLICA_COUNT,
+      });
+      return [
+        `--max-concurrent=${opt.envelope}`,
+        `--interactive-max-concurrent=${interactive[index]}`,
+        `--batch-max-concurrent=${opt.batchConcurrencySlots}`,
+        "--max-queue=4",
+        "--token-budget=0",
+      ];
+    },
+  },
   redis: {
     key: "redis",
     file: "redis-coordinated.json",
@@ -204,7 +271,13 @@ const CONTROL_ARMS = (() => {
         `unsupported --control-arms entry "${name}"; expected ${Object.keys(CONTROL_ARM_SPECS).join(", ")} or all`,
       );
     }
-    return spec;
+    const resolve = (value) => typeof value === "function" ? value(OPT) : value;
+    return {
+      ...spec,
+      armLabel: resolve(spec.armLabel),
+      title: resolve(spec.title),
+      caption: resolve(spec.caption),
+    };
   });
 })();
 
@@ -265,11 +338,28 @@ if (!Number.isSafeInteger(OPT.enrollmentGrantTtlMs) || OPT.enrollmentGrantTtlMs 
 if (!Number.isSafeInteger(OPT.grantTtlMs) || OPT.grantTtlMs <= OPT.enrollmentGrantTtlMs) {
   throw new Error("--grant-ttl-ms must be an integer greater than --enrollment-grant-ttl-ms");
 }
+for (const [flagName, value, minimum] of [
+  ["--lending-report-stale-after-ms", OPT.lendingReportStaleAfterMs, 1000],
+  ["--lending-idle-after-ms", OPT.lendingIdleAfterMs, 0],
+  ["--lending-max-starvation-ms", OPT.lendingMaxStarvationMs, 1000],
+]) {
+  if (!Number.isSafeInteger(value) || value < minimum) {
+    throw new Error(`${flagName} must be an integer of at least ${minimum}`);
+  }
+}
 const REQUIRED_GRANT_RUNWAY_MS = OPT.phaseMs + 10000;
-if (OPT.mode !== "baseline" && OPT.grantTtlMs < REQUIRED_GRANT_RUNWAY_MS + 5000) {
+const REQUIRED_INITIAL_GRANT_RUNWAY_MS = OPT.lending
+  ? Math.max(1000, Math.min(2500, Math.floor(OPT.grantTtlMs / 2)))
+  : REQUIRED_GRANT_RUNWAY_MS;
+if (!OPT.lending && OPT.mode !== "baseline" && OPT.grantTtlMs < REQUIRED_GRANT_RUNWAY_MS + 5000) {
   throw new Error(
     `--grant-ttl-ms must be at least ${REQUIRED_GRANT_RUNWAY_MS + 5000} for a ` +
       `${OPT.phaseMs}ms MoFlux phase`,
+  );
+}
+if (OPT.lending && OPT.grantTtlMs > Math.floor(OPT.phaseMs * 0.25)) {
+  throw new Error(
+    "--grant-ttl-ms is too long for the lending scenario; floor restoration must fit inside the contended window",
   );
 }
 
@@ -294,13 +384,17 @@ const WORKLOAD = Object.freeze({
   batchSizeSigma: OPT.batchSizeSigma,
   inFlightCeiling: 3000,
   windowMs: 30000,
+  // Not part of traceWorkload(), so recording it here leaves every trace hash
+  // bit-identical while making the run's retry-hint mode visible in the
+  // scenario a result claims to have measured.
+  honorRetryHints: OPT.honorRetryHints,
 });
 
-// The canonical benchmark policy is intentionally interactive-first: one
-// batch slot is guaranteed and funded, while the remaining 31 provider slots
-// remain available to interactive traffic. This is still a static partition,
-// not Latchflo's future borrowable-capacity policy; the benchmark must never
-// simulate a product capability that the running control plane does not expose.
+// Normal runs keep the historical one-slot batch guarantee. The lending run
+// uses a 28/4 protected split and raises both pool ceilings to the full shared
+// envelope, letting Latchflo 0.6 release only an actually idle member's
+// guarantee. This is a real control-plane policy, not a benchmark-side
+// simulation.
 const CAPACITY = (() => {
   const batchConcurrent = OPT.batchConcurrencySlots ?? Math.max(
     OPT.batchConcurrencyPercent > 0 ? 1 : 0,
@@ -319,8 +413,11 @@ const CAPACITY = (() => {
     );
   }
   const resolvedConcurrencyPercent = (batchConcurrent / OPT.envelope) * 100;
+  const ceilingConcurrent = OPT.lending ? OPT.envelope : null;
+  const ceilingTokens = OPT.lending ? OPT.tokenBudget : null;
   return Object.freeze({
-    policy: "interactive-first-static",
+    policy: OPT.lending ? "interactive-first-demand-aware" : "interactive-first-static",
+    capacityGroup: OPT.lending ? DEFAULT_CAPACITY_GROUP_NAME : null,
     batchFloorPercent:
       OPT.batchFloorPercent !== null &&
       Math.abs(resolvedConcurrencyPercent - OPT.batchTokenPercent) < 1e-9
@@ -330,17 +427,31 @@ const CAPACITY = (() => {
     interactiveConcurrencySlots: interactiveConcurrent,
     batchConcurrencyPercent: resolvedConcurrencyPercent,
     batchTokenPercent: OPT.batchTokenPercent,
+    demandPolicy: OPT.lending
+      ? Object.freeze({
+          enabled: true,
+          reportStaleAfterMs: OPT.lendingReportStaleAfterMs,
+          idleAfterMs: OPT.lendingIdleAfterMs,
+          maxStarvationMs: OPT.lendingMaxStarvationMs,
+        })
+      : null,
     pools: Object.freeze([
       Object.freeze({
         name: "sim-interactive",
-        maxConcurrent: interactiveConcurrent,
-        tokenBudget: interactiveTokens,
+        maxConcurrent: ceilingConcurrent ?? interactiveConcurrent,
+        tokenBudget: ceilingTokens ?? interactiveTokens,
+        guaranteedMaxConcurrent: interactiveConcurrent,
+        guaranteedTokenBudget: interactiveTokens,
+        priority: 100,
         agentCount: POOL_AGENT_COUNTS["sim-interactive"],
       }),
       Object.freeze({
         name: "sim-batch",
-        maxConcurrent: batchConcurrent,
-        tokenBudget: batchTokens,
+        maxConcurrent: ceilingConcurrent ?? batchConcurrent,
+        tokenBudget: ceilingTokens ?? batchTokens,
+        guaranteedMaxConcurrent: batchConcurrent,
+        guaranteedTokenBudget: batchTokens,
+        priority: 10,
         agentCount: POOL_AGENT_COUNTS["sim-batch"],
       }),
     ]),
@@ -366,17 +477,55 @@ const RESERVATIONS = Object.freeze({
 });
 const RESOLVED_CAPACITY = Object.freeze(
   validateCapacityPlan({
-    pools: CAPACITY.pools,
+    pools: CAPACITY.pools.map((pool) => ({
+      name: pool.name,
+      maxConcurrent: pool.guaranteedMaxConcurrent,
+      tokenBudget: pool.guaranteedTokenBudget,
+      agentCount: pool.agentCount,
+    })),
     requirements: RESERVATIONS,
     // Under heterogeneous sizes, sizing every concurrency slot for the largest
     // possible request is neither achievable nor desirable: it would provision
     // for a tail that most requests never reach. Tokens are expected to bind
-    // sometimes, and that is the property being measured. The floor still
-    // holds — a grant must fund at least one worst-case request, or that
-    // request could never be admitted anywhere.
+    // sometimes, and that is the property being measured. The protected floor
+    // still has to fund at least one worst-case request on every serving agent.
     requireFullyFundedConcurrency: SIZE_DISTRIBUTION === "uniform",
-  }).map(Object.freeze),
+  }).map((floor) => {
+    const configured = CAPACITY.pools.find((pool) => pool.name === floor.name);
+    if (!configured) throw new Error(`missing configured capacity for ${floor.name}`);
+    return Object.freeze({
+      ...floor,
+      guaranteedMaxConcurrent: floor.maxConcurrent,
+      guaranteedTokenBudget: floor.tokenBudget,
+      ceilingMaxConcurrent: configured.maxConcurrent,
+      ceilingTokenBudget: configured.tokenBudget,
+      priority: configured.priority,
+    });
+  }),
 );
+
+const CAPACITY_GROUP = OPT.lending
+  ? Object.freeze(buildDemandAwareCapacityGroup({
+      name: DEFAULT_CAPACITY_GROUP_NAME,
+      envelope: OPT.envelope,
+      tokenBudget: OPT.tokenBudget,
+      reportStaleAfterMs: OPT.lendingReportStaleAfterMs,
+      idleAfterMs: OPT.lendingIdleAfterMs,
+      maxStarvationMs: OPT.lendingMaxStarvationMs,
+      interactive: {
+        pool: "sim-interactive",
+        priority: 100,
+        guaranteedMaxConcurrent: CAPACITY.interactiveConcurrencySlots,
+        guaranteedTokenBudget: CAPACITY.pools.find((pool) => pool.name === "sim-interactive").guaranteedTokenBudget,
+      },
+      batch: {
+        pool: "sim-batch",
+        priority: 10,
+        guaranteedMaxConcurrent: CAPACITY.batchConcurrencySlots,
+        guaranteedTokenBudget: CAPACITY.pools.find((pool) => pool.name === "sim-batch").guaranteedTokenBudget,
+      },
+    }))
+  : null;
 
 const PROVIDER = Object.freeze({
   envelope: OPT.envelope,
@@ -834,10 +983,10 @@ async function configurePools(token, grantTtlMs, { allowCreate }) {
   const base = "http://127.0.0.1:18080";
   for (const partition of RESOLVED_CAPACITY) {
     const pool = {
-      globalMaxConcurrent: partition.maxConcurrent,
+      globalMaxConcurrent: partition.ceilingMaxConcurrent,
       minimumGrantMaxConcurrent: 1,
       maxQueuePerAgent: 0,
-      globalTokenBudget: partition.tokenBudget,
+      globalTokenBudget: partition.ceilingTokenBudget,
       minimumGrantTokenBudget: partition.reservation.requiredLocalGrant,
       globalHighPriorityReserve: 0,
       safetyReservePercent: 0,
@@ -869,6 +1018,35 @@ async function configurePools(token, grantTtlMs, { allowCreate }) {
       );
     }
   }
+}
+
+async function configureCapacityGroup(token, { allowCreate }) {
+  if (!CAPACITY_GROUP) return null;
+  const base = "http://127.0.0.1:18080";
+  const update = await jsonRequest(`${base}/v1/capacity-groups/${CAPACITY_GROUP.name}`, {
+    method: "PUT",
+    token,
+    body: CAPACITY_GROUP,
+    allowed: [200, 404, 405],
+  });
+  if (update.status === 200) return update.body;
+  if (!allowCreate) {
+    throw new Error(
+      `Latchflo must support PUT /v1/capacity-groups/{name} for the demand-aware lending scenario`,
+    );
+  }
+  const created = await jsonRequest(`${base}/v1/capacity-groups`, {
+    method: "POST",
+    token,
+    body: CAPACITY_GROUP,
+    allowed: [200, 201, 409],
+  });
+  if (created.status === 409) {
+    throw new Error(
+      `${CAPACITY_GROUP.name} already exists but could not be replaced safely; reset the demo state and retry`,
+    );
+  }
+  return created.body;
 }
 
 async function startControlPlane(env) {
@@ -930,6 +1108,7 @@ async function startControlPlane(env) {
   // long lease to expire. Use a short enrollment lease, then promote the pool
   // definition after all expected agents are visible.
   await configurePools(token, OPT.enrollmentGrantTtlMs, { allowCreate: true });
+  await configureCapacityGroup(token, { allowCreate: true });
 }
 
 async function waitForAgents(token) {
@@ -989,12 +1168,24 @@ async function startTyr(env) {
   await configurePools(env.LATCHFLO_ADMIN_TOKEN, OPT.grantTtlMs, {
     allowCreate: false,
   });
-  for (const partition of CAPACITY.pools) {
-    await jsonRequest(`http://127.0.0.1:18080/v1/pools/${partition.name}/rebalance`, {
-      method: "POST",
-      token: env.LATCHFLO_ADMIN_TOKEN,
-      allowed: [200, 202],
-    });
+  if (CAPACITY_GROUP) {
+    await configureCapacityGroup(env.LATCHFLO_ADMIN_TOKEN, { allowCreate: false });
+    await jsonRequest(
+      `http://127.0.0.1:18080/v1/capacity-groups/${CAPACITY_GROUP.name}/rebalance`,
+      {
+        method: "POST",
+        token: env.LATCHFLO_ADMIN_TOKEN,
+        allowed: [200, 202],
+      },
+    );
+  } else {
+    for (const partition of CAPACITY.pools) {
+      await jsonRequest(`http://127.0.0.1:18080/v1/pools/${partition.name}/rebalance`, {
+        method: "POST",
+        token: env.LATCHFLO_ADMIN_TOKEN,
+        allowed: [200, 202],
+      });
+    }
   }
 
   return waitForUsableTyrFleet();
@@ -1032,6 +1223,10 @@ function loadgenArgs({ interactiveTargets, batchTargets, armLabel, outFile }) {
     `--batch-max-tokens=${WORKLOAD.batchMaxTokens}`,
     `--max-attempts=${WORKLOAD.maxAttempts}`,
     `--backoff-base-ms=${WORKLOAD.backoffBaseMs}`,
+    // Not a trace-shaping option, but it changes what every arm measures, so
+    // it has to reach the generator explicitly rather than relying on the two
+    // defaults happening to agree.
+    `--honor-retry-hints=${WORKLOAD.honorRetryHints}`,
     // Trace-shaping options must reach the generator or it will build its
     // config from different values than the trace it is handed, and reject a
     // trace this presenter just wrote. Anything included in traceWorkload()
@@ -1141,6 +1336,31 @@ async function readTyrStats() {
   );
 }
 
+async function readControllerLendingEvidence(token) {
+  if (!CAPACITY_GROUP) return null;
+  const base = "http://127.0.0.1:18080";
+  const [eventsResponse, demandResponse, rebalanceResponse] = await Promise.all([
+    jsonRequest(`${base}/v1/events?limit=1000`, { token, allowed: [200] }),
+    jsonRequest(`${base}/v1/demand`, { token, allowed: [200] }),
+    jsonRequest(`${base}/v1/capacity-groups/${CAPACITY_GROUP.name}/rebalance`, {
+      method: "POST",
+      token,
+      allowed: [200, 202],
+    }),
+  ]);
+  const batch = CAPACITY_GROUP.members.find((member) => member.pool === "sim-batch");
+  if (!batch) throw new Error("demand-aware capacity group is missing sim-batch");
+  return summarizeControllerLending({
+    groupName: CAPACITY_GROUP.name,
+    events: eventsResponse.body?.events ?? [],
+    demand: demandResponse.body?.demand ?? [],
+    finalRebalance: rebalanceResponse.body?.rebalance ?? rebalanceResponse.body,
+    batchPool: batch.pool,
+    batchGuaranteedMaxConcurrent: batch.guaranteedMaxConcurrent,
+    batchGuaranteedTokenBudget: batch.guaranteedTokenBudget,
+  });
+}
+
 function validateLiveGrantCapacity(statsRows) {
   const grants = [];
   for (let index = 0; index < statsRows.length; index += 1) {
@@ -1174,10 +1394,10 @@ function validateLiveGrantCapacity(statsRows) {
       if (!Number.isFinite(remainingMs)) {
         throw new Error(`${pool.name} on Tyr ${port} has no current Latchflo grant expiration`);
       }
-      if (remainingMs < REQUIRED_GRANT_RUNWAY_MS) {
+      if (remainingMs < REQUIRED_INITIAL_GRANT_RUNWAY_MS) {
         throw new Error(
           `${pool.name} on Tyr ${port} grant has only ${Math.max(0, Math.floor(remainingMs))}ms ` +
-            `remaining; ${REQUIRED_GRANT_RUNWAY_MS}ms is required to finish the benchmark phase`,
+            `remaining; ${REQUIRED_INITIAL_GRANT_RUNWAY_MS}ms is required for a stable start`,
         );
       }
     }
@@ -1286,7 +1506,7 @@ async function runLocalArm({ name, replicaArm, replicaFlags, armLabel, file, nee
         `--id=r${index + 1}`,
         `--arm=${replicaArm}`,
         "--upstream=http://127.0.0.1:9000",
-        ...replicaFlags,
+        ...(typeof replicaFlags === "function" ? replicaFlags(index) : replicaFlags),
       ]);
       replicas.push(replica);
       await waitFor(`http://127.0.0.1:${port}/healthz`, {
@@ -1324,16 +1544,19 @@ async function runLocalArm({ name, replicaArm, replicaFlags, armLabel, file, nee
  * structure at all, so the ceiling is the whole envelope and nothing can be
  * reported as borrowed — which is the correct answer for those arms.
  */
-function attachLending(summary, { interactiveCeiling } = {}) {
+function attachLending(summary, { interactiveCeiling, controlPlane = null } = {}) {
   if (!OPT.lending) return;
-  summary.lending = lendingMetrics({
-    summary,
-    peakActiveBySecond: summary.simCounters?.peakActiveBySecond ?? [],
-    batchArrivalMs: WORKLOAD.batchStartMs,
-    runEndMs: WORKLOAD.durationMs,
-    interactiveCeiling: interactiveCeiling ?? OPT.envelope,
-    envelope: OPT.envelope,
-  });
+  summary.lending = {
+    ...lendingMetrics({
+      summary,
+      peakActiveBySecond: summary.simCounters?.peakActiveBySecond ?? [],
+      batchArrivalMs: WORKLOAD.batchStartMs,
+      runEndMs: WORKLOAD.durationMs,
+      interactiveCeiling: interactiveCeiling ?? OPT.envelope,
+      envelope: OPT.envelope,
+    }),
+    controlPlane,
+  };
 }
 
 /**
@@ -1444,6 +1667,7 @@ async function runMoflux(env) {
     }
   }
   const after = aggregateTokenAccounting(afterRows);
+  const controlPlaneLending = await readControllerLendingEvidence(env.LATCHFLO_ADMIN_TOKEN);
   const tokenAccounting = subtractAccounting(after, before);
   const grossRecoveryRate =
     tokenAccounting.totalReserved > 0
@@ -1458,7 +1682,10 @@ async function runMoflux(env) {
   // MoFlux is the only arm with a real pool structure, so it is the only arm
   // whose interactive ceiling is narrower than the envelope — and therefore
   // the only one where borrowing is even expressible.
-  attachLending(summary, { interactiveCeiling: CAPACITY.interactiveConcurrencySlots });
+  attachLending(summary, {
+    interactiveCeiling: CAPACITY.interactiveConcurrencySlots,
+    controlPlane: controlPlaneLending,
+  });
   summary.runtime = {
     tyr: { version: TYR_VERSION, image: env.MOFLUX_TYR_IMAGE },
     latchflo: { version: LATCHFLO_VERSION, image: env.MOFLUX_LATCHFLO_IMAGE },
@@ -1472,6 +1699,8 @@ async function runMoflux(env) {
     batchTokenPercent: CAPACITY.batchTokenPercent,
     envelope: OPT.envelope,
     tokenBudget: OPT.tokenBudget,
+    capacityGroup: CAPACITY_GROUP,
+    demandPolicy: CAPACITY.demandPolicy,
     pools: RESOLVED_CAPACITY,
     liveGrants,
   };
@@ -1621,7 +1850,7 @@ function armRecord(summary) {
  * ceiling while batch is idle, so any gain over it is observed borrowing.
  */
 function printLending(baseline, controlResults, moflux) {
-  const reference = controlResults.get("staticCap") ?? baseline;
+  const reference = controlResults.get("staticPartition") ?? controlResults.get("staticCap") ?? baseline;
   if (!reference?.lending || !moflux?.lending) return;
   const comparison = lendingComparison(reference.lending, moflux.lending);
   console.log(`\n${BOLD}   Capacity lending — idle batch window, then batch arrival${OFF}`);
@@ -1639,15 +1868,23 @@ function printLending(baseline, controlResults, moflux) {
       borrowed: "—",
     },
   ]);
+  const controller = moflux.lending.controlPlane;
+  const lendingProven = comparison.lendingObserved && controller?.lendingObserved === true;
   console.log(
-    comparison.lendingObserved
-      ? `${GREEN}   Lending observed: idle occupancy exceeded the static reference by ${comparison.idlePeakActiveGain} slot(s).${OFF}`
-      : `${YELLOW}   No lending observed: idle occupancy did not exceed the static reference. The policy behaved like a static split.${OFF}`,
+    lendingProven
+      ? `${GREEN}   Lending proven twice: idle occupancy gained ${comparison.idlePeakActiveGain} slot(s), and Latchflo recorded capacity_group.lending_observed.${OFF}`
+      : comparison.lendingObserved
+        ? `${YELLOW}   Occupancy suggests lending, but no matching Latchflo lending event was captured. Treat the run as inconclusive.${OFF}`
+        : `${YELLOW}   No lending observed: idle occupancy did not exceed the static reference.${OFF}`,
   );
+  const batchServed = moflux.lending.floorReassertion.reasserted;
+  const controllerRestored = controller?.floorRestored === true;
   console.log(
-    moflux.lending.floorReassertion.reasserted
-      ? `${GREEN}   Floor reasserted: batch was served ${moflux.lending.floorReassertion.admissionGapMs}ms after first asking.${OFF}`
-      : `${RED}   Floor NOT reasserted: batch was never served. Borrowed capacity was not returned.${OFF}`,
+    batchServed && controllerRestored
+      ? `${GREEN}   Floor restored: Latchflo restored the batch guarantee and batch completed work after ${moflux.lending.floorReassertion.admissionGapMs}ms.${OFF}`
+      : batchServed
+        ? `${YELLOW}   Batch completed work, but the Latchflo event stream did not prove floor restoration.${OFF}`
+        : `${RED}   Floor NOT restored: batch was never served.${OFF}`,
   );
   const outFile = path.join(RESULTS, "lending.json");
   writeFileSync(
@@ -1657,7 +1894,11 @@ function printLending(baseline, controlResults, moflux) {
         generatedAt: new Date().toISOString(),
         scenario: moflux.scenario,
         batchArrivalMs: WORKLOAD.batchStartMs,
-        referenceArm: controlResults.has("staticCap") ? "staticCap" : "baseline",
+        referenceArm: controlResults.has("staticPartition")
+          ? "staticPartition"
+          : controlResults.has("staticCap")
+            ? "staticCap"
+            : "baseline",
         reference: reference.lending,
         moflux: moflux.lending,
         comparison,
@@ -1815,7 +2056,7 @@ ${GREEN}${BOLD}   Baseline complete.${OFF}`);
     const summary = await runLocalArm({
       name: spec.key,
       replicaArm: spec.replicaArm,
-      replicaFlags: spec.replicaFlags(OPT),
+      replicaFlags: (index) => spec.replicaFlags(OPT, index),
       armLabel: spec.armLabel,
       file: spec.file,
       needsRedis: spec.needsRedis,

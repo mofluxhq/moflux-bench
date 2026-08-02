@@ -52,29 +52,31 @@ four agents are visible, the presenter promotes both pools to the long run lease
 and waits for one simultaneously ready, correctly sized fleet-wide grant set.
 Each accepted grant must also have enough remaining lifetime to finish the
 configured MoFlux phase. Startup fails if any live local grant is too small or
-too close to expiration. Pool creation also sends Latchflo 0.5.1's durable
+too close to expiration. Pool creation also sends Latchflo 0.6.0's durable
 minimum-grant invariants: one concurrency slot, 755 tokens for interactive, and
 9,942 tokens for batch. Latchflo therefore rejects an unusable split before it
 can issue a zero-capacity or sub-request grant.
 
-The licensed path is pinned to **Tyr 0.17.0** and **Latchflo 0.5.1**. The
+The licensed path is pinned to **Tyr 0.18.0** and **Latchflo 0.6.0**. The
 single canonical command can use images that already exist, pull configured
 registry images, or build missing images from local source directories. Place
 `tyr-admission-controller` and `latchflo-control-plane` beside this repository,
 or set `MOFLUX_TYR_SOURCE_DIR` and `MOFLUX_LATCHFLO_SOURCE_DIR` in the local
 environment file.
 
-Tyr 0.17.0 capacity-aware routing is enabled for the licensed four-replica
+Tyr 0.18.0 capacity-aware routing is enabled for the licensed four-replica
 MoFlux arm. Each Tyr polls the private capacity snapshots of the other three
 replicas and may forward a request once to the peer with better headroom for
-that request's concurrency and token reservation. The benchmark generates one
-local-only shared routing secret in `demo/moflux/.env`; the secret is never
-committed. Latchflo 0.5.1 still owns capacity grants and lease safety. It does
-not distribute peer topology or the routing secret in this release.
+that request's concurrency and token reservation. Tyr also reports bounded
+per-pool demand snapshots to Latchflo 0.6.0 on the existing authenticated
+heartbeat. The benchmark generates one local-only shared routing secret in
+`demo/moflux/.env`; the secret is never committed. Latchflo owns grants, demand-
+aware lending, starvation prevention, and lease safety. It does not distribute
+peer topology or the routing secret.
 
 The committed `results/` corpus is deliberately unchanged. Those files are
 historical evidence and retain their recorded Tyr 0.16.0/Latchflo 0.5.0 runtime
-metadata. New licensed runs use Tyr 0.17.0/Latchflo 0.5.1 and should be compared
+metadata. New licensed runs use Tyr 0.18.0/Latchflo 0.6.0 and should be compared
 as a new evidence set rather than silently relabeling the old one.
 
 Run:
@@ -97,12 +99,35 @@ whose scenario fingerprints differ, whose load generator saturates, or whose
 token allocation cannot fund every configured concurrency slot. Use
 `npm run demo:record` for the step-through recording flow.
 
-The aggregate is written to `results/video-seed-sweep.json`; raw evidence is
-written under `results/video-seed-sweep/`. Rehearse the legacy one-pair flow
-with `npm run demo:single`, or choose seeds explicitly:
+The aggregate is written to `results/runs/video-seed-sweep/<run-id>/summary.json`
+and raw evidence alongside it, with `results/runs/video-seed-sweep/latest.json`
+pointing at the newest run. That whole tree is generated and git-ignored.
+Reviewed evidence in `results/video-seed-sweep.json` and
+`results/video-seed-sweep/` is never written by a run — promoting a run to
+reviewed evidence is a separate, deliberate step that refuses to replace an
+existing copy without `--force`:
+
+```bash
+npm run evidence:list
+node demo/publish-evidence.mjs --as=video-seed-sweep
+```
+
+Rehearse the legacy one-pair flow with `npm run demo:single`, or choose seeds
+explicitly:
 
 ```bash
 node demo/seed-sweep.mjs --seeds=3,7,11 --step
+```
+
+MoFlux is the only local-admission arm that returns `Retry-After` /
+`x-admission-retry-after-ms`, so its measured TTFT includes waiting the static
+cap and Redis arms never do. `--honor-retry-hints=false` forces blind
+exponential backoff for every arm; the trace is identical either way, so the
+pair of runs isolates the hint's contribution:
+
+```bash
+npm run demo:hetero        # hints honored (the default for every recorded result)
+npm run demo:hetero:blind  # same trace, blind backoff
 ```
 
 Concurrency slots and in-flight tokens are separate resources. The canonical
@@ -288,38 +313,46 @@ Lending is the claim that justifies one: while batch has no active work,
 interactive borrows batch's reserved slots; when batch arrives, the floor comes
 back. That is a temporal property, and **no cumulative counter can show it**. A
 run-long peak-occupancy high-water mark of 32/32 is equally consistent with
-"borrowed the idle slot throughout" and "sat at 31 until batch arrived, then
+"borrowed all four idle batch slots" and "sat at 28 until batch arrived, then
 hit 32 together". Both policies produce the same headline number.
 
 ```bash
-npm run demo:lending   # idle batch window, then batch arrival, vs the static cap
+npm run demo:lending   # demand-aware MoFlux vs an exact static 28/4 partition
 ```
 
-`--lending` widens the idle window from 35% to 60% of the phase so occupancy has
-time to settle. The run is then split at the configured batch arrival — the
-configured one, not the observed first request, because an observed boundary
-lands differently in each arm and makes the windows incomparable — and three
-things are measured separately:
+`--lending` widens the idle window from 35% to 60% of the phase so Tyr 0.18.0
+can report an idle batch pool and Latchflo 0.6.0 can safely lend its protected
+floor. The presenter creates a demand-aware capacity group with 28/4 protected
+concurrency and 24,000/40,000-token guarantees, while both pools may borrow up
+to the shared 32-slot/64,000-token envelope. The larger token envelope is
+required because four current batch requests can reserve up to 39,768 tokens;
+a 40,000-token group would make the four-slot floor nominal rather than usable.
+The run is split at the configured batch arrival, not the observed first request, because an observed boundary
+lands differently in each arm and makes the windows incomparable.
 
-| Question | Measured by |
+The reference is a dedicated local `static-partition` arm with per-replica
+interactive caps of 7/7/7/7 and a four-slot batch cap. It cannot exceed 28
+interactive requests before batch arrives. The MoFlux arm is judged with two
+independent evidence sources:
+
+| Question | Required evidence |
 |---|---|
-| Did interactive borrow? | Idle-window occupancy above the interactive pool's own ceiling |
-| Did the floor come back? | Batch `admissionGapMs`: first attempt to first success |
-| What did it cost? | Interactive goodput change across the handover |
+| Did interactive borrow? | Idle-window occupancy above 28 **and** a Latchflo `capacity_group.lending_observed` event |
+| Did the floor come back? | A restored batch guarantee in Latchflo's rebalance evidence **and** completed batch work |
+| How long did restoration take? | `floor_restore_pending` to the first grant set that restores the batch guarantee |
+| What did handover cost? | Interactive goodput and latency before and after batch demand |
 
-The static cap is the control. It cannot exceed its ceiling while batch is
-idle, by construction, so any idle-window gain over it is observed borrowing
-rather than an inference. If the lending arm does not beat it there,
-**lending did not happen**, whatever the configuration claims — and
-`lendingObserved` says so rather than reporting the run-long peak and letting a
-reader assume.
+Configuration is not proof. A run-long 32/32 peak can occur under a static
+28/4 split after batch starts, and occupancy without a matching controller
+event can be a measurement artifact. The command reports such a run as
+inconclusive rather than successful. A policy that borrows but never restores
+the batch guarantee is starvation, not lending.
 
-A floor that is never reasserted is a starved pool, not lending. `reasserted`
-is false whenever batch completed nothing, so a policy that borrows and never
-gives back cannot be reported as a success.
-
-Results are written to `results/lending.json`. Two implementation notes that
-are load-bearing:
+Results are written to `results/lending.json`; the seed sweep also aggregates
+borrowed slots, controller proof, floor restoration, and restoration duration.
+Existing copies of that file are historical 31/1 evidence and are not rewritten
+by this source-only policy change. Rerun `npm run demo:lending` to produce 28/4
+evidence. Two implementation notes are load-bearing:
 
 - Phase windows are computed by the load generator from a record that is never
   pruned. The rolling `samples` array exists for the Prometheus percentiles and

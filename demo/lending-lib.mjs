@@ -13,7 +13,7 @@
  * interactive borrows batch's reserved slots; when batch arrives, the floor is
  * returned. That is a temporal property, and no cumulative counter can show
  * it. A run-long peak-occupancy high-water mark of 32 is equally consistent
- * with "borrowed the idle slot all along" and "sat at 31 until batch arrived
+ * with "borrowed the four idle batch slots" and "sat at 28 until batch arrived
  * and then hit 32 together".
  *
  * So the measurement splits the run at batch arrival and asks three things:

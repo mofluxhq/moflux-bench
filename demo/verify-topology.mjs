@@ -10,7 +10,7 @@ const registrations = { "sim-interactive": 0, "sim-batch": 0 };
 for (let replica = 1; replica <= 4; replica += 1) {
   const file = path.join(ROOT, "demo", "moflux", `tyr-r${replica}.yaml`);
   const yaml = readFileSync(file, "utf8");
-  assert.match(yaml, /^    version: 0\.17\.0$/m, `${path.basename(file)} must advertise Tyr 0.17.0`);
+  assert.match(yaml, /^    version: 0\.18\.0$/m, `${path.basename(file)} must advertise Tyr 0.18.0`);
   assert.doesNotMatch(yaml, /0\.16\.0/, `${path.basename(file)} contains stale Tyr 0.16.0 metadata`);
   assert.match(yaml, new RegExp(`^    instanceId: tyr-r${replica}$`, "m"), `${path.basename(file)} routing instanceId differs`);
   assert.match(yaml, /^    sharedSecretEnv: TYR_ROUTING_SECRET$/m, `${path.basename(file)} must use the shared routing secret`);

@@ -110,8 +110,13 @@ try {
   });
   assert.equal(run.code, 0, `${run.stdout}\n${run.stderr}`);
   assert.doesNotMatch(run.stdout, /\[enter\]/);
-  const summaryFile = path.join(results, "video-seed-sweep.json");
+  const pointerFile = path.join(results, "runs", "video-seed-sweep", "latest.json");
+  assert.equal(existsSync(pointerFile), true);
+  const pointer = JSON.parse(readFileSync(pointerFile, "utf8"));
+  const summaryFile = path.join(results, "runs", "video-seed-sweep", pointer.runId, "summary.json");
   assert.equal(existsSync(summaryFile), true);
+  // npm run demo must not touch reviewed evidence.
+  assert.equal(existsSync(path.join(results, "video-seed-sweep.json")), false);
   const summary = JSON.parse(readFileSync(summaryFile, "utf8"));
   assert.deepEqual(summary.seeds, [1, 2, 3, 4, 5]);
   assert.equal(summary.capacityPolicy.interactiveConcurrencySlots, 31);

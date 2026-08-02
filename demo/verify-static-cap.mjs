@@ -12,7 +12,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { dividedStaticCap } from "./control-arm-lib.mjs";
+import { dividedStaticCap, partitionStaticCap } from "./control-arm-lib.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -29,6 +29,16 @@ assert.throws(
 console.log("PASS  Arm 2 divides a 32-slot envelope into four 8-slot local caps");
 console.log("PASS  Arm 2 rejects missing and zero-slot topology inputs");
 
+assert.deepEqual(partitionStaticCap({ envelope: 31, replicaCount: 4 }), [8, 8, 8, 7]);
+assert.equal(partitionStaticCap({ envelope: 31, replicaCount: 4 }).reduce((sum, value) => sum + value, 0), 31);
+assert.deepEqual(partitionStaticCap({ envelope: 28, replicaCount: 4 }), [7, 7, 7, 7]);
+assert.equal(partitionStaticCap({ envelope: 28, replicaCount: 4 }).reduce((sum, value) => sum + value, 0), 28);
+assert.throws(
+  () => partitionStaticCap({ envelope: 3, replicaCount: 4 }),
+  /cannot give 4 replicas a usable share/,
+);
+console.log("PASS  static controls partition both the 31-slot historical floor and 28-slot lending floor exactly");
+
 const invalid = spawnSync(
   process.execPath,
   [
@@ -42,5 +52,21 @@ const invalid = spawnSync(
 assert.equal(invalid.status, 2);
 assert.match(`${invalid.stdout}\n${invalid.stderr}`, /invalid --max-concurrent=NaN/);
 console.log("PASS  the Arm 2 replica fails fast on a non-finite concurrency cap");
+
+const invalidPartition = spawnSync(
+  process.execPath,
+  [
+    path.join(ROOT, "arms", "replica.mjs"),
+    "--arm=static-partition",
+    "--port=65534",
+    "--interactive-max-concurrent=NaN",
+    "--batch-max-concurrent=1",
+  ],
+  { cwd: ROOT, encoding: "utf8" },
+);
+assert.equal(invalidPartition.status, 2);
+assert.match(`${invalidPartition.stdout}
+${invalidPartition.stderr}`, /invalid --interactive-max-concurrent=NaN/);
+console.log("PASS  the static-partition arm fails fast on an invalid class ceiling");
 
 console.log("All checks passed.");

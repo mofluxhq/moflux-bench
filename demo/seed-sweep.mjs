@@ -8,6 +8,13 @@
  * the next seed starts, then the paired observations are summarized as medians
  * with min/max spread.
  *
+ * Output goes to `results/runs/<sweep-name>/<run-id>/` and nowhere else. That
+ * directory is generated, git-ignored and safe to delete. Reviewed evidence in
+ * `results/` is never touched by a run; promoting a run to reviewed evidence is
+ * a separate, explicit step:
+ *
+ *   node demo/publish-evidence.mjs --as=video-seed-sweep
+ *
  * Usage:
  *   npm run demo                         # automatic seeds 1-5 comparison
  *   npm run demo:auto                    # seeds 1-5, timed transitions
@@ -28,6 +35,15 @@ import {
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { buildSweepSummary, parseSeedSpec } from "./seed-sweep-lib.mjs";
+import {
+  assertSafeResultsDir,
+  assertSafeRunDir,
+  latestPointerFile,
+  repoRelative,
+  runDir as runDirFor,
+  runId as newRunId,
+} from "./evidence-paths-lib.mjs";
+import { publishRun } from "./publish-evidence-lib.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const RESULTS = process.env.MOFLUX_BENCH_RESULTS_DIR
@@ -36,6 +52,17 @@ const RESULTS = process.env.MOFLUX_BENCH_RESULTS_DIR
 const PRESENTER = process.env.MOFLUX_BENCH_PRESENTER
   ? path.resolve(process.env.MOFLUX_BENCH_PRESENTER)
   : path.join(ROOT, "demo", "present.mjs");
+/** Configuration errors are the user's problem to fix, not a stack trace to read. */
+function refuse(error) {
+  console.error(`\nRefusing to run: ${error instanceof Error ? error.message : String(error)}`);
+  process.exit(1);
+}
+
+try {
+  assertSafeResultsDir(RESULTS, ROOT, "sweep results root");
+} catch (error) {
+  refuse(error);
+}
 mkdirSync(RESULTS, { recursive: true });
 
 const rawArgs = new Map();
@@ -60,6 +87,7 @@ const mode = str("mode", "compare");
  */
 const CONTROL_ARM_FILES = {
   staticCap: "static-cap.json",
+  staticPartition: "static-partition.json",
   redis: "redis-coordinated.json",
 };
 const controlArmsRaw = str("control-arms", "").trim();
@@ -69,9 +97,13 @@ const CONTROL_ARM_KEYS =
     : (controlArmsRaw === "all" ? ["static-cap", "redis"] : controlArmsRaw.split(",").map((n) => n.trim()))
         .filter(Boolean)
         .map((name) => {
-          const key = name === "static-cap" ? "staticCap" : name;
+          const key = name === "static-cap"
+            ? "staticCap"
+            : name === "static-partition"
+              ? "staticPartition"
+              : name;
           if (!CONTROL_ARM_FILES[key]) {
-            throw new Error(`unsupported --control-arms entry "${name}"; expected static-cap, redis, or all`);
+            throw new Error(`unsupported --control-arms entry "${name}"; expected static-cap, static-partition, redis, or all`);
           }
           return key;
         });
@@ -113,14 +145,14 @@ async function cue(text) {
 
 function scratchPaths() {
   return {
-    baseline: path.join(RESULTS, "baseline.json"),
-    moflux: path.join(RESULTS, fault ? "moflux-enforce-fault.json" : "moflux-enforce.json"),
-    armComparisons: path.join(RESULTS, "arm-comparisons.json"),
+    baseline: path.join(SCRATCH, "baseline.json"),
+    moflux: path.join(SCRATCH, fault ? "moflux-enforce-fault.json" : "moflux-enforce.json"),
+    armComparisons: path.join(SCRATCH, "arm-comparisons.json"),
     ...Object.fromEntries(
-      CONTROL_ARM_KEYS.map((key) => [key, path.join(RESULTS, CONTROL_ARM_FILES[key])]),
+      CONTROL_ARM_KEYS.map((key) => [key, path.join(SCRATCH, CONTROL_ARM_FILES[key])]),
     ),
-    comparison: path.join(RESULTS, fault ? "video-comparison-fault.json" : "video-comparison.json"),
-    trace: path.join(RESULTS, "scenario-trace.json"),
+    comparison: path.join(SCRATCH, fault ? "video-comparison-fault.json" : "video-comparison.json"),
+    trace: path.join(SCRATCH, "scenario-trace.json"),
   };
 }
 
@@ -146,9 +178,25 @@ function sweepName() {
   return fault ? "video-seed-sweep-fault" : "video-seed-sweep";
 }
 
-const sweepDir = path.join(RESULTS, sweepName());
-const summaryFile = path.join(RESULTS, `${sweepName()}.json`);
-const relativePath = (file) => path.relative(ROOT, file).split(path.sep).join("/");
+/**
+ * Every artifact of this run lives under one generated directory.
+ *
+ * Nothing here is ever `results/<sweep-name>.json` or `results/<sweep-name>/`.
+ * Those hold reviewed evidence and are written only by publish-evidence.mjs.
+ */
+const RUN_ID = str("run-id", newRunId());
+const SWEEP_NAME = sweepName();
+let sweepDir;
+try {
+  sweepDir = assertSafeRunDir(runDirFor(RESULTS, SWEEP_NAME, RUN_ID), ROOT, "sweep run directory");
+} catch (error) {
+  refuse(error);
+}
+const summaryFile = path.join(sweepDir, "summary.json");
+const SCRATCH = path.join(sweepDir, "scratch");
+const pointerFile = latestPointerFile(RESULTS, SWEEP_NAME);
+const publishAs = str("publish-as", "").trim();
+const relativePath = (file) => repoRelative(file, ROOT);
 
 function childArgs(seed, index) {
   const wrapperOnly = new Set([
@@ -159,6 +207,9 @@ function childArgs(seed, index) {
     "mode",
     "cleanup",
     "no-open",
+    "run-id",
+    "publish-as",
+    "force-publish",
   ]);
   const forwarded = originalArgs.filter((arg) => {
     const match = /^--([^=]+)(?:=.*)?$/.exec(arg);
@@ -177,6 +228,10 @@ async function runPresenter(seed, index) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [PRESENTER, ...childArgs(seed, index)], {
       cwd: ROOT,
+      // The presenter writes its scratch files into whatever results directory
+      // it is given. Handing it this run's scratch directory is what keeps
+      // per-seed output out of `results/` entirely.
+      env: { ...process.env, MOFLUX_BENCH_RESULTS_DIR: SCRATCH },
       stdio: "inherit",
     });
     activePresenter = child;
@@ -312,6 +367,7 @@ const count = (value) => Math.round(value).toString();
 const ARM_TITLES = {
   baseline: "No control",
   staticCap: "Static cap (arm 2)",
+  staticPartition: "Static protected partition",
   redis: "Redis coord (arm 4)",
   moflux: "MoFlux",
 };
@@ -423,6 +479,46 @@ function printAggregate(summary) {
       },
     ]);
   }
+
+  const lending = summary.aggregate.lending;
+  if (lending) {
+    console.log(`${BOLD}   Demand-aware lending proof${OFF}`);
+    console.table([
+      {
+        "occupancy proof": `${lending.occupancyObservedSeeds}/${summary.seeds.length} seeds`,
+        "controller proof": `${lending.controllerObservedSeeds}/${summary.seeds.length} seeds`,
+        "floor restored": `${lending.floorRestoredSeeds}/${summary.seeds.length} seeds`,
+        "borrowed slots": range(lending.borrowedSlots, count),
+        "restore duration": range(lending.floorRestorationDurationMs, (value) => `${value.toFixed(0)}ms`),
+        "batch first-service gap": range(lending.batchFloorAdmissionGapMs, (value) => `${value.toFixed(0)}ms`),
+      },
+    ]);
+  }
+}
+
+/**
+ * Opt-in promotion. Absent `--publish-as`, a sweep leaves reviewed evidence
+ * exactly as it found it — which is the whole point of the run directory.
+ */
+async function promote(name) {
+  const report = publishRun({
+    root: ROOT,
+    resultsRoot: RESULTS,
+    runDir: sweepDir,
+    name,
+    force: flag("force-publish"),
+  });
+  console.log(
+    `\n${GREEN}${BOLD}   ${report.replaced ? "Replaced" : "Published"} evidence "${report.name}"${OFF}`,
+  );
+  console.log(`   summary:  ${report.summary}`);
+  console.log(`   per-seed: ${report.directory}/ (${report.files} files)`);
+  if (report.replaced) {
+    console.log(
+      `${YELLOW}   Previous evidence was overwritten. Review before committing:${OFF}`,
+    );
+    console.log(`${YELLOW}   git diff --stat -- ${report.summary} ${report.directory}${OFF}`);
+  }
 }
 
 let interrupted = false;
@@ -440,12 +536,16 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
 }
 
 try {
+  // A fresh run identifier means this directory should not exist. If it does,
+  // an explicit --run-id was reused; clearing it is safe because
+  // assertSafeRunDir has already proved it holds no reviewed evidence.
   rmSync(sweepDir, { recursive: true, force: true });
-  rmSync(summaryFile, { force: true });
   mkdirSync(sweepDir, { recursive: true });
+  mkdirSync(SCRATCH, { recursive: true });
 
   console.log(`${BOLD}MoFlux licensed demo — ${mode === "compare" ? "paired " : ""}seed sweep${OFF}`);
   say(
+    `run: ${relativePath(sweepDir)}/`,
     `seeds: ${seeds.join(", ")}`,
     `mode: ${mode}${fault ? " with replica fault" : ""}`,
     mode === "compare"
@@ -469,19 +569,48 @@ try {
 
   const summary = buildSweepSummary({ mode, fault, seeds, records });
   writeFileSync(summaryFile, JSON.stringify(summary, null, 2));
+
+  // A stable path to the newest run, so tooling never has to guess a run id
+  // and never has to fall back to reading reviewed evidence.
+  writeFileSync(
+    pointerFile,
+    `${JSON.stringify(
+      {
+        sweep: SWEEP_NAME,
+        runId: RUN_ID,
+        generatedAt: summary.generatedAt,
+        seeds: summary.seeds,
+        run: relativePath(sweepDir),
+        summary: relativePath(summaryFile),
+      },
+      null,
+      2,
+    )}\n`,
+  );
   printAggregate(summary);
 
   console.log(`\n${GREEN}${BOLD}   Seed sweep complete.${OFF}`);
   console.log(`   summary: ${relativePath(summaryFile)}`);
   console.log(`   raw runs: ${relativePath(sweepDir)}/`);
-  say(
-    "Report the aggregate, not the last seed's scratch files.",
-    keepStack ? "Stop the demo later with: npm run demo:down" : "The demo stack was stopped after the final seed.",
-  );
+  console.log(`   latest:  ${relativePath(pointerFile)}`);
 
   // The single-pair presenter uses these names as scratch space. Remove them so
   // the last seed cannot be mistaken for the sweep result.
   for (const file of Object.values(scratchPaths())) rmSync(file, { force: true });
+  rmSync(SCRATCH, { recursive: true, force: true });
+
+  if (publishAs) {
+    await promote(publishAs);
+  } else {
+    say(
+      "This run did not modify any reviewed evidence.",
+      `Promote it deliberately with: node demo/publish-evidence.mjs --as=${SWEEP_NAME}`,
+    );
+  }
+  say(
+    "Report the aggregate, not the last seed's scratch files.",
+    keepStack ? "Stop the demo later with: npm run demo:down" : "The demo stack was stopped after the final seed.",
+  );
 } catch (error) {
   if (!interrupted) {
     console.error(`\n${RED}${BOLD}Seed sweep failed:${OFF} ${error instanceof Error ? error.message : String(error)}`);

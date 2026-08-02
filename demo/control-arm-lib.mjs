@@ -35,3 +35,23 @@ export function dividedStaticCap({ envelope, replicaCount }) {
   }
   return localCap;
 }
+
+/**
+ * Deterministically partition a fleet-wide static ceiling across replicas.
+ * Earlier replicas receive the remainder so the sum is exact and no slot is
+ * fabricated or stranded by integer division.
+ */
+export function partitionStaticCap({ envelope, replicaCount }) {
+  if (!Number.isSafeInteger(envelope) || envelope < 1) {
+    throw new Error(`static partition requires a positive integer envelope; got ${String(envelope)}`);
+  }
+  if (!Number.isSafeInteger(replicaCount) || replicaCount < 1) {
+    throw new Error(`static partition requires a positive integer replica count; got ${String(replicaCount)}`);
+  }
+  if (envelope < replicaCount) {
+    throw new Error(`cannot give ${replicaCount} replicas a usable share of envelope ${envelope}`);
+  }
+  const base = Math.floor(envelope / replicaCount);
+  const remainder = envelope % replicaCount;
+  return Array.from({ length: replicaCount }, (_, index) => base + (index < remainder ? 1 : 0));
+}

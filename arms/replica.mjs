@@ -44,6 +44,8 @@ const CONFIG = Object.freeze({
   arm: str("arm", "passthrough"),
   id: str("id", "r1"),
   maxConcurrent: num("max-concurrent", 8),
+  interactiveMaxConcurrent: num("interactive-max-concurrent", num("max-concurrent", 8)),
+  batchMaxConcurrent: num("batch-max-concurrent", num("max-concurrent", 8)),
   maxQueue: num("max-queue", 0),
   queueTimeoutMs: num("queue-timeout-ms", 2000),
   // redis arm
@@ -67,7 +69,7 @@ const CONFIG = Object.freeze({
   defaultMaxTokens: num("default-max-tokens", 2048),
 });
 
-const VALID_ARMS = new Set(["passthrough", "static-cap", "redis"]);
+const VALID_ARMS = new Set(["passthrough", "static-cap", "static-partition", "redis"]);
 if (!VALID_ARMS.has(CONFIG.arm)) {
   console.error(`unknown --arm=${CONFIG.arm}; expected one of ${[...VALID_ARMS].join(", ")}`);
   process.exit(2);
@@ -96,6 +98,10 @@ if (!Number.isFinite(CONFIG.charRatio) || CONFIG.charRatio <= 0) {
 requireInteger("default-max-tokens", CONFIG.defaultMaxTokens, { minimum: 1 });
 if (CONFIG.arm !== "passthrough") {
   requireInteger("max-concurrent", CONFIG.maxConcurrent, { minimum: 1 });
+}
+if (CONFIG.arm === "static-partition") {
+  requireInteger("interactive-max-concurrent", CONFIG.interactiveMaxConcurrent, { minimum: 1 });
+  requireInteger("batch-max-concurrent", CONFIG.batchMaxConcurrent, { minimum: 1 });
 }
 
 // ── metrics ──────────────────────────────────────────────────────────
@@ -134,13 +140,13 @@ const passthroughPolicy = {
  * No knowledge of any other replica exists here — which is exactly the
  * failure mode arm 3 is built to expose.
  */
-function createStaticCapPolicy() {
+function createStaticCapPolicy(maxConcurrent = CONFIG.maxConcurrent) {
   let held = 0;
   const waiters = [];
 
   const releaseOne = () => {
     held -= 1;
-    while (waiters.length > 0 && held < CONFIG.maxConcurrent) {
+    while (waiters.length > 0 && held < maxConcurrent) {
       const waiter = waiters.shift();
       queueDepth = waiters.length;
       if (waiter.settled) continue;
@@ -153,7 +159,7 @@ function createStaticCapPolicy() {
 
   return {
     acquire() {
-      if (held < CONFIG.maxConcurrent) {
+      if (held < maxConcurrent) {
         held += 1;
         return Promise.resolve({ ok: true, reserved: 0, release: releaseOne });
       }
@@ -316,7 +322,12 @@ const policy =
     ? passthroughPolicy
     : CONFIG.arm === "static-cap"
       ? createStaticCapPolicy()
-      : await createRedisPolicy();
+      : CONFIG.arm === "static-partition"
+        ? {
+            interactive: createStaticCapPolicy(CONFIG.interactiveMaxConcurrent),
+            batch: createStaticCapPolicy(CONFIG.batchMaxConcurrent),
+          }
+        : await createRedisPolicy();
 
 function sendJson(res, status, body, headers = {}) {
   const payload = JSON.stringify(body);
@@ -344,6 +355,10 @@ function renderMetrics() {
   g("replica_in_flight", "Requests currently forwarded upstream.", inFlight);
   g("replica_queue_depth", "Requests waiting for local admission.", queueDepth);
   g("replica_max_concurrent", "Configured local concurrency cap.", CONFIG.maxConcurrent);
+  if (CONFIG.arm === "static-partition") {
+    g("replica_interactive_max_concurrent", "Configured interactive-class local cap.", CONFIG.interactiveMaxConcurrent);
+    g("replica_batch_max_concurrent", "Configured batch-class local cap.", CONFIG.batchMaxConcurrent);
+  }
   g("replica_token_budget", "Configured token budget (0 = disabled).", CONFIG.tokenBudget);
   g(
     "replica_admission_overhead_ms_avg",
@@ -400,9 +415,11 @@ const server = createServer(async (req, res) => {
 
   counters.received += 1;
   const reserved = CONFIG.arm === "redis" ? estimateReservation(body) : 0;
+  const requestClass = body?.model === "sim-model-batch" ? "batch" : "interactive";
+  const requestPolicy = CONFIG.arm === "static-partition" ? policy[requestClass] : policy;
 
   const waitStart = performance.now();
-  const decision = await policy.acquire(reserved);
+  const decision = await requestPolicy.acquire(reserved);
   counters.admissionWaitMsSum += performance.now() - waitStart;
 
   if (!decision.ok) {
@@ -498,7 +515,7 @@ server.listen(CONFIG.port, "0.0.0.0", () => {
 for (const signal of ["SIGINT", "SIGTERM"]) {
   process.on(signal, () => {
     server.close();
-    policy.client?.close();
+    policy.client?.close?.();
     process.exit(0);
   });
 }

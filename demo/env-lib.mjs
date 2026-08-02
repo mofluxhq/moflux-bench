@@ -2,8 +2,8 @@ import { randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
-export const TYR_VERSION = "0.17.0";
-export const LATCHFLO_VERSION = "0.5.1";
+export const TYR_VERSION = "0.18.0";
+export const LATCHFLO_VERSION = "0.6.0";
 export const DEFAULT_TYR_IMAGE = `tyr-admission-controller:${TYR_VERSION}`;
 export const DEFAULT_LATCHFLO_IMAGE = `latchflo-control-plane:${LATCHFLO_VERSION}`;
 

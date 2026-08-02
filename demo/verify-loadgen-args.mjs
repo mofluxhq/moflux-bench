@@ -99,6 +99,46 @@ check(
   "a heterogeneous default would silently invalidate every recorded v1 result",
 );
 
+// Not a trace-shaping option, so the loop above cannot cover it — but it
+// changes what every arm measures. It shipped parsed-but-unforwarded: the
+// generator accepted `--honor-retry-hints`, the presenter never sent it, and
+// the sweep entry points had no way to reach it at all. The exact A/B the flag
+// exists for was therefore unrunnable, and MoFlux — the only local-admission
+// arm that emits the headers — carried their cost in its measured TTFT with no
+// way to isolate it.
+check(
+  "loadgenArgs forwards --honor-retry-hints=",
+  args.includes("--honor-retry-hints="),
+  "the retry-hint A/B cannot be run if the flag never reaches the generator",
+);
+check(
+  "the generator parses --honor-retry-hints",
+  /"honor-retry-hints"/.test(loadgen),
+);
+const presentHint = /honorRetryHints: bool\("honor-retry-hints", (true|false)\)/.exec(present);
+const loadgenHint = /honorRetryHints: bool\("honor-retry-hints", (true|false)\)/.exec(loadgen);
+check("both sides declare a honor-retry-hints default", Boolean(presentHint && loadgenHint));
+check(
+  "the honor-retry-hints defaults agree",
+  presentHint && loadgenHint && presentHint[1] === loadgenHint[1],
+  presentHint && loadgenHint ? `${presentHint[1]} vs ${loadgenHint[1]}` : "",
+);
+check(
+  "honoring hints stays the default",
+  presentHint && presentHint[1] === "true",
+  "every recorded result was measured with hints honored",
+);
+check(
+  "the flag is recorded in the scenario it measured",
+  /honorRetryHints: OPT\.honorRetryHints/.test(present),
+  "a result must say which retry-hint mode produced it",
+);
+check(
+  "the retry-hint mode stays out of the trace fingerprint",
+  !traceKeys.includes("honorRetryHints"),
+  "including it would change every recorded trace hash and break the A/B pairing",
+);
+
 // The Redis arm is the only one that consults a coordinator on the admission
 // path, so it is the only one that may receive this flag. Sending it to the
 // others would make them look sensitive to a coordinator they never call.

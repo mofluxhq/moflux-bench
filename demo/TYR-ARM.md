@@ -8,7 +8,7 @@ independently reproducible.
 
 ## Presenter command
 
-The integrated arm requires Tyr 0.17.0 and Latchflo 0.5.1 licensed images. Once
+The integrated arm requires Tyr 0.18.0 and Latchflo 0.6.0 licensed images. Once
 they are tagged locally or accessible through the configured registry, run:
 
 ```bash
@@ -18,14 +18,18 @@ npm run demo
 The command creates the ignored local env file and random credentials on first
 use. The presenter creates or updates `sim-interactive` and `sim-batch` with a
 short
-enrollment lease before Tyr starts. It sends Latchflo 0.5.1's minimum viable
+enrollment lease before Tyr starts. It sends Latchflo 0.6.0's minimum viable
 grant settings for each request class, so an allocator split below one slot or
-below one request's token reservation fails explicitly. Tyr 0.17.0 also polls
+below one request's token reservation fails explicitly. Tyr 0.18.0 also polls
 private capacity snapshots from the other three replicas and can forward a
 request once to the peer with the best request-specific headroom. The shared
 routing secret is generated in the ignored local `.env`; Latchflo does not
-distribute topology or secrets. All four replicas register for interactive
-traffic, while replica 4 also registers for batch. Once all registrations are
+distribute topology or secrets. Tyr 0.18.0 also reports per-pool in-flight work,
+recent admissions and rejections, and token headroom on its authenticated
+Latchflo heartbeat. `npm run demo:lending` uses those reports to drive a
+Latchflo 0.6.0 demand-aware capacity group with a fully funded 28/4 protected
+split; normal runs retain the static 31/1 policy. All four replicas register for interactive traffic, while replica 4
+also registers for batch. Once all registrations are
 visible, the presenter promotes both pools to the steady-state TTL and waits
 until every endpoint is simultaneously ready with a live local grant that can
 admit one request and has enough remaining TTL for the benchmark phase. It then

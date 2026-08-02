@@ -16,6 +16,10 @@ import {
   percentile,
   windowedInteractive,
 } from "./lending-lib.mjs";
+import {
+  buildDemandAwareCapacityGroup,
+  summarizeControllerLending,
+} from "./lending-evidence-lib.mjs";
 
 const failures = [];
 function check(name, condition, detail = "") {
@@ -28,7 +32,7 @@ function check(name, condition, detail = "") {
 }
 
 const ENVELOPE = 32;
-const INTERACTIVE_CEILING = 31;
+const INTERACTIVE_CEILING = 28;
 const BATCH_ARRIVAL_MS = 15_000;
 const RUN_END_MS = 45_000;
 
@@ -71,11 +75,11 @@ const starvedBatch = { success: 0, firstAttemptAtMs: 15_100, firstSuccessAtMs: n
 
 // ── window arithmetic ────────────────────────────────────────────────
 {
-  const b = buckets(32, 31);
+  const b = buckets(32, 28);
   check("idle window scores only its own seconds", peakActiveInWindow(b, 0, BATCH_ARRIVAL_MS) === 32);
   check(
     "contended window excludes the idle seconds",
-    peakActiveInWindow(b, BATCH_ARRIVAL_MS, RUN_END_MS) === 31,
+    peakActiveInWindow(b, BATCH_ARRIVAL_MS, RUN_END_MS) === 28,
   );
   check("an empty bucket list yields no answer", peakActiveInWindow([], 0, 1000) === null);
   check("a zero-width window yields no answer", peakActiveInWindow(b, 5000, 5000) === null);
@@ -127,7 +131,7 @@ const starvedBatch = { success: 0, firstAttemptAtMs: 15_100, firstSuccessAtMs: n
     envelope: ENVELOPE,
   });
   check("occupancy above the interactive ceiling counts as borrowed", metrics.idleWindow.borrowed === true);
-  check("the borrowed amount is the excess over the ceiling", metrics.idleWindow.borrowedSlots === 1);
+  check("all four idle batch slots are observed as borrowed", metrics.idleWindow.borrowedSlots === 4);
   check("a served batch class marks the floor reasserted", metrics.floorReassertion.reasserted === true);
   check("reassertion cost is the batch admission gap", metrics.floorReassertion.admissionGapMs === 300);
   check("handover cost is reported as a percentage", metrics.handoverCostPercent > 0);
@@ -137,7 +141,7 @@ const starvedBatch = { success: 0, firstAttemptAtMs: 15_100, firstSuccessAtMs: n
 {
   const metrics = lendingMetrics({
     summary: runSummary({ idleRate: 5, contendedRate: 4, batch: servedBatch }),
-    peakActiveBySecond: buckets(31, 32),
+    peakActiveBySecond: buckets(28, 32),
     batchArrivalMs: BATCH_ARRIVAL_MS,
     runEndMs: RUN_END_MS,
     interactiveCeiling: INTERACTIVE_CEILING,
@@ -149,7 +153,7 @@ const starvedBatch = { success: 0, firstAttemptAtMs: 15_100, firstSuccessAtMs: n
   // cannot distinguish this case from the lending case above.
   check(
     "the run-long peak alone cannot tell these apart",
-    peakActiveInWindow(buckets(31, 32), 0, RUN_END_MS) === 32,
+    peakActiveInWindow(buckets(28, 32), 0, RUN_END_MS) === 32,
   );
 }
 
@@ -171,7 +175,7 @@ const starvedBatch = { success: 0, firstAttemptAtMs: 15_100, firstSuccessAtMs: n
 {
   const staticArm = lendingMetrics({
     summary: runSummary({ idleRate: 5, contendedRate: 4, batch: servedBatch }),
-    peakActiveBySecond: buckets(31, 32),
+    peakActiveBySecond: buckets(28, 32),
     batchArrivalMs: BATCH_ARRIVAL_MS,
     runEndMs: RUN_END_MS,
     interactiveCeiling: INTERACTIVE_CEILING,
@@ -187,7 +191,7 @@ const starvedBatch = { success: 0, firstAttemptAtMs: 15_100, firstSuccessAtMs: n
   });
   const comparison = lendingComparison(staticArm, lendingArm);
   check("lending is observed only when idle occupancy actually rose", comparison.lendingObserved === true);
-  check("the gain is one slot", comparison.idlePeakActiveGain === 1);
+  check("the gain is four slots", comparison.idlePeakActiveGain === 4);
   check("idle goodput improvement is reported", comparison.idleGoodputChangePercent > 0);
   check("the reassertion cost of lending is surfaced", comparison.reassertionCostMs === 600);
   check("both policies returned the floor", comparison.bothReasserted === true);
@@ -275,6 +279,127 @@ const starvedBatch = { success: 0, firstAttemptAtMs: 15_100, firstSuccessAtMs: n
     threw = true;
   }
   check("a ceiling above the envelope is rejected as a misconfiguration", threw);
+}
+
+
+// ── Latchflo 0.6 capacity-group contract ─────────────────────────────
+{
+  const group = buildDemandAwareCapacityGroup({
+    envelope: 32,
+    tokenBudget: 64_000,
+    reportStaleAfterMs: 6000,
+    idleAfterMs: 3000,
+    maxStarvationMs: 5000,
+    interactive: {
+      pool: "sim-interactive",
+      priority: 100,
+      guaranteedMaxConcurrent: 28,
+      guaranteedTokenBudget: 24_000,
+    },
+    batch: {
+      pool: "sim-batch",
+      priority: 10,
+      guaranteedMaxConcurrent: 4,
+      guaranteedTokenBudget: 40_000,
+    },
+  });
+  check("demand-aware group owns the full concurrency envelope", group.globalMaxConcurrent === 32);
+  check("demand-aware group owns the full token envelope", group.globalTokenBudget === 64_000);
+  check("batch retains a four-slot protected floor", group.members[1].guaranteedMaxConcurrent === 4);
+  check("demand-aware allocation is explicitly enabled", group.demandPolicy.enabled === true);
+
+  let rejected = false;
+  try {
+    buildDemandAwareCapacityGroup({
+      envelope: 31,
+      tokenBudget: 64_000,
+      reportStaleAfterMs: 6000,
+      idleAfterMs: 3000,
+      maxStarvationMs: 5000,
+      interactive: {
+        pool: "sim-interactive",
+        priority: 100,
+        guaranteedMaxConcurrent: 28,
+        guaranteedTokenBudget: 24_000,
+      },
+      batch: {
+        pool: "sim-batch",
+        priority: 10,
+        guaranteedMaxConcurrent: 4,
+        guaranteedTokenBudget: 40_000,
+      },
+    });
+  } catch {
+    rejected = true;
+  }
+  check("an overcommitted protected floor is rejected", rejected);
+}
+
+// ── controller event proof ───────────────────────────────────────────
+{
+  const events = [
+    {
+      id: 10,
+      type: "capacity_group.lending_observed",
+      entityType: "capacity_group",
+      entityId: "sim-workloads",
+      createdAt: "2026-08-01T20:00:05.000Z",
+      payload: {
+        lenders: [{ pool: "sim-batch", released: { maxConcurrent: 4, tokenBudget: 40_000 } }],
+        borrowers: [{ pool: "sim-interactive", borrowed: { maxConcurrent: 4, tokenBudget: 40_000 } }],
+      },
+    },
+    {
+      id: 11,
+      type: "capacity_group.floor_restore_pending",
+      entityType: "capacity_group",
+      entityId: "sim-workloads",
+      createdAt: "2026-08-01T20:00:27.000Z",
+      payload: {
+        pools: ["sim-batch"],
+        floorRestorationDeadline: "2026-08-01T20:00:32.000Z",
+      },
+    },
+    {
+      id: 12,
+      type: "capacity_group.rebalanced",
+      entityType: "capacity_group",
+      entityId: "sim-workloads",
+      createdAt: "2026-08-01T20:00:31.000Z",
+      payload: {
+        members: [
+          { pool: "sim-interactive", allocated: { maxConcurrent: 28, tokenBudget: 24_000 } },
+          { pool: "sim-batch", allocated: { maxConcurrent: 4, tokenBudget: 40_000 } },
+        ],
+      },
+    },
+  ];
+  const proof = summarizeControllerLending({
+    events,
+    demand: [],
+    finalRebalance: {
+      demandAware: true,
+      members: [
+        { pool: "sim-interactive", allocated: { maxConcurrent: 28, tokenBudget: 24_000 } },
+        { pool: "sim-batch", allocated: { maxConcurrent: 4, tokenBudget: 40_000 } },
+      ],
+    },
+    batchGuaranteedMaxConcurrent: 4,
+    batchGuaranteedTokenBudget: 40_000,
+  });
+  check("controller evidence records lending", proof.lendingObserved === true);
+  check("controller evidence records a pending floor restore", proof.floorRestorePendingObserved === true);
+  check("controller evidence proves the floor was restored", proof.floorRestored === true);
+  check("controller evidence measures restoration duration", proof.restorationDurationMs === 4000);
+
+  const occupancyOnly = summarizeControllerLending({
+    events: [],
+    demand: [],
+    finalRebalance: null,
+    batchGuaranteedMaxConcurrent: 4,
+    batchGuaranteedTokenBudget: 40_000,
+  });
+  check("occupancy without a Latchflo event is not controller proof", occupancyOnly.lendingObserved === false);
 }
 
 console.log();

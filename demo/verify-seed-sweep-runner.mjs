@@ -12,13 +12,17 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { publishRun } from "./publish-evidence-lib.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const temp = mkdtempSync(path.join(tmpdir(), "moflux-seed-sweep-"));
 const results = path.join(temp, "results");
 const fake = path.join(temp, "fake-presenter.mjs");
-const summaryFile = path.join(results, "video-seed-sweep.json");
-const sweepDir = path.join(results, "video-seed-sweep");
+const pointerFile = path.join(results, "runs", "video-seed-sweep", "latest.json");
+// Reviewed evidence paths. A run must leave these untouched; the whole point
+// of the run directory is that nothing writes them by accident.
+const reviewedSummary = path.join(results, "video-seed-sweep.json");
+const reviewedDir = path.join(results, "video-seed-sweep");
 
 writeFileSync(
   fake,
@@ -150,6 +154,10 @@ try {
     throw new Error(`seed sweep exited ${result.code ?? result.signal}\nSTDOUT:\n${result.stdout}\nSTDERR:\n${result.stderr}`);
   }
 
+  assert.equal(existsSync(pointerFile), true, "the sweep must record its latest run");
+  const pointer = JSON.parse(readFileSync(pointerFile, "utf8"));
+  const sweepDir = path.join(results, "runs", "video-seed-sweep", pointer.runId);
+  const summaryFile = path.join(sweepDir, "summary.json");
   assert.ok(existsSync(summaryFile));
   const summary = JSON.parse(readFileSync(summaryFile, "utf8"));
   assert.deepEqual(summary.seeds, [2, 4]);
@@ -167,8 +175,60 @@ try {
   assert.ok(existsSync(path.join(sweepDir, "comparison-seed-4.json")));
   assert.ok(existsSync(path.join(sweepDir, "trace-seed-4.json")));
   for (const file of ["baseline.json", "moflux-enforce.json", "video-comparison.json", "scenario-trace.json"]) {
-    assert.equal(existsSync(path.join(results, file)), false);
+    assert.equal(existsSync(path.join(results, file)), false, `${file} leaked into the results root`);
+    assert.equal(existsSync(path.join(sweepDir, "scratch", file)), false, `${file} survived in scratch`);
   }
+
+  // The regression this file exists to prevent: a sweep silently replacing
+  // reviewed evidence that had already been published under another runtime.
+  assert.equal(existsSync(reviewedSummary), false, "the sweep wrote reviewed evidence");
+  assert.equal(existsSync(reviewedDir), false, "the sweep wrote the reviewed evidence directory");
+  for (const value of Object.values(summary.runs[0].arms)) {
+    assert.ok(
+      value.startsWith(`${path.basename(results)}/runs/video-seed-sweep/`)
+        || value.includes("/runs/video-seed-sweep/"),
+      `arm pointer escaped the run directory: ${value}`,
+    );
+  }
+
+  // Promotion is the only path to reviewed evidence, and it refuses to replace
+  // an existing copy without --force.
+  // `root` is what both sides express paths relative to; the sweep used the
+  // repo root, so promotion must too.
+  const published = publishRun({
+    root: ROOT,
+    resultsRoot: results,
+    runDir: sweepDir,
+    name: "video-seed-sweep",
+  });
+  assert.equal(published.replaced, false);
+  assert.equal(existsSync(reviewedSummary), true);
+  assert.equal(existsSync(path.join(reviewedDir, "baseline-seed-2.json")), true);
+  const promoted = JSON.parse(readFileSync(reviewedSummary, "utf8"));
+  const expectedBaseline = path
+    .relative(ROOT, path.join(reviewedDir, "baseline-seed-2.json"))
+    .split(path.sep)
+    .join("/");
+  assert.equal(promoted.runs[0].arms.baseline, expectedBaseline);
+  assert.equal(
+    promoted.runs[0].scenario.trace.evidence,
+    promoted.runs[0].arms.trace,
+    "the published trace pointer must name a file that was published",
+  );
+  assert.throws(
+    () => publishRun({ root: ROOT, resultsRoot: results, runDir: sweepDir, name: "video-seed-sweep" }),
+    /already exists/,
+    "publishing over existing evidence must require --force",
+  );
+  const forced = publishRun({
+    root: ROOT,
+    resultsRoot: results,
+    runDir: sweepDir,
+    name: "video-seed-sweep",
+    force: true,
+  });
+  assert.equal(forced.replaced, true);
+
   console.log("PASS  seed sweep orchestration and evidence preservation");
 } finally {
   rmSync(temp, { recursive: true, force: true });

@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 import { lstatSync, readFileSync, readdirSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { REVIEWED_EVIDENCE, RUNS_DIRNAME, isReviewedEvidence } from "../demo/evidence-paths-lib.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const required = [
@@ -67,12 +69,13 @@ for (const { full, rel } of files) {
   if (forbiddenExtensions.has(path.extname(base).toLowerCase())) {
     findings.push(`${rel}: credential-container extension is not allowed`);
   }
-  const isPublishedResultJson = rel.endsWith(".json") && (
-    rel.startsWith("results/curated/") ||
-    rel === "results/video-seed-sweep.json" ||
-    rel.startsWith("results/video-seed-sweep/")
-  );
-  if (rel.startsWith("results/") && rel.endsWith(".json") && !isPublishedResultJson) {
+  // Approved paths come from the same declaration the runtime guards use, so
+  // this check and demo/evidence-paths-lib.mjs can never drift apart.
+  const isPublishedResultJson = rel.endsWith(".json") && isReviewedEvidence(rel);
+  const isGeneratedRun = rel.startsWith(`results/${RUNS_DIRNAME}/`);
+  if (isGeneratedRun) {
+    findings.push(`${rel}: generated run output must be deleted or published before release`);
+  } else if (rel.startsWith("results/") && rel.endsWith(".json") && !isPublishedResultJson) {
     findings.push(`${rel}: generated JSON is not in an approved published-evidence path`);
   }
   if (rel === "scripts/verify-publication.mjs") continue;
@@ -98,8 +101,8 @@ if (lock.packages?.[""]?.version !== pkg.version || lock.version !== pkg.version
 }
 const example = readFileSync(path.join(ROOT, "demo/moflux/.env.example"), "utf8");
 for (const expected of [
-  "MOFLUX_TYR_IMAGE=tyr-admission-controller:0.17.0",
-  "MOFLUX_LATCHFLO_IMAGE=latchflo-control-plane:0.5.1",
+  "MOFLUX_TYR_IMAGE=tyr-admission-controller:0.18.0",
+  "MOFLUX_LATCHFLO_IMAGE=latchflo-control-plane:0.6.0",
 ]) {
   if (!example.includes(expected)) {
     findings.push(`demo/moflux/.env.example: missing pinned runtime ${expected}`);
@@ -119,8 +122,8 @@ if (!compose.includes("TYR_ROUTING_SECRET: ${TYR_ROUTING_SECRET:?Set TYR_ROUTING
 for (let replica = 1; replica <= 4; replica += 1) {
   const rel = `demo/moflux/tyr-r${replica}.yaml`;
   const yaml = readFileSync(path.join(ROOT, rel), "utf8");
-  if (!/^    version: 0\.17\.0$/m.test(yaml)) {
-    findings.push(`${rel}: control-plane metadata must identify Tyr 0.17.0`);
+  if (!/^    version: 0\.18\.0$/m.test(yaml)) {
+    findings.push(`${rel}: control-plane metadata must identify Tyr 0.18.0`);
   }
   if (!new RegExp(`^    instanceId: tyr-r${replica}$`, "m").test(yaml) ||
       !/^    sharedSecretEnv: TYR_ROUTING_SECRET$/m.test(yaml)) {
@@ -140,6 +143,67 @@ if (pkg.scripts?.demo !== "node demo/seed-sweep.mjs --seeds=1-5 --pause-ms=0" ||
 }
 if (!pkg.scripts?.verify?.includes("scripts/verify.mjs")) {
   findings.push("package.json: verify must use the bounded verification runner");
+}
+if (pkg.version !== "0.11.0") {
+  findings.push("package.json: this demand-aware benchmark release must be version 0.11.0");
+}
+const lendingScript = pkg.scripts?.["demo:lending"] ?? "";
+for (const required of [
+  "--lending",
+  "--batch-concurrency-slots=4",
+  "--token-budget=64000",
+  "--batch-token-percent=62.5",
+  "--control-arms=static-partition",
+]) {
+  if (!lendingScript.includes(required)) {
+    findings.push(`package.json: demo:lending is missing ${required}`);
+  }
+}
+const presenter = readFileSync(path.join(ROOT, "demo/present.mjs"), "utf8");
+if (!presenter.includes("const defaultBatchConcurrencySlots = lendingRequested ? 4 : 1") ||
+    !presenter.includes("const defaultTokenBudget = lendingRequested ? 64_000 : 40_000") ||
+    !presenter.includes("const defaultBatchTokenPercent = lendingRequested ? 62.5 : 25")) {
+  findings.push("demo/present.mjs: lending defaults must be a fully token-funded 28/4 policy");
+}
+
+/**
+ * Reviewed evidence must be byte-identical to what is committed.
+ *
+ * This is the check that would have caught a sweep writing over
+ * results/video-seed-sweep.json: the JSON stayed valid and the path stayed
+ * approved, so nothing else noticed. Skipped rather than failed when git is
+ * unavailable — a source tarball is a legitimate way to read this repo.
+ */
+const reviewedPaths = REVIEWED_EVIDENCE.map((entry) =>
+  entry.endsWith("/") ? entry.slice(0, -1) : entry,
+);
+const inRepo = spawnSync("git", ["rev-parse", "--is-inside-work-tree"], {
+  cwd: ROOT,
+  encoding: "utf8",
+});
+if (inRepo.status === 0 && inRepo.stdout.trim() === "true") {
+  const dirty = spawnSync("git", ["status", "--porcelain", "--", ...reviewedPaths], {
+    cwd: ROOT,
+    encoding: "utf8",
+  });
+  const changed = (dirty.stdout ?? "")
+    .split("\n")
+    .filter((line) => line.trim())
+    .map((line) => ({ status: line.slice(0, 2).trim(), file: line.slice(3).trim() }));
+  if (changed.length > 0) {
+    // Only the paths git actually reports, so the suggested command cannot
+    // fail with "pathspec did not match any file(s) known to git".
+    const restorable = [...new Set(changed.map(({ file }) => file))];
+    findings.push(
+      "reviewed evidence differs from the committed copy — a run must never write it:\n" +
+        changed.map(({ status, file }) => `    ${status} ${file}`).join("\n") +
+        `\n    restore with: git checkout -- ${restorable.join(" ")}` +
+        "\n    (run that from the repository root: cd \"$(git rev-parse --show-toplevel)\")" +
+        "\n    or, if replacing it is intended: node demo/publish-evidence.mjs --as=<name> --force",
+    );
+  }
+} else {
+  console.log("SKIP  reviewed-evidence immutability (not a git work tree)");
 }
 
 if (findings.length > 0) {

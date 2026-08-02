@@ -81,6 +81,21 @@ const CONFIG = Object.freeze({
   // isolation — the trace is identical either way, so the pair is an exact A/B.
   honorRetryHints: bool("honor-retry-hints", true),
   inFlightCeiling: num("in-flight-ceiling", 3000),
+  /**
+   * Drain bounds, applied after the last arrival so the summary is not written
+   * mid-stream.
+   *
+   * `drainIdleMs` bounds a drain that has *stopped making progress*;
+   * `drainMaxMs` bounds it absolutely. The distinction matters because the
+   * uncontrolled arm's slowest request is not a hang: one batch call carries
+   * roughly `batchInputChars / 3.6` prefill tokens and can draw up to
+   * `batchMaxTokens` of decode, and the simulator's per-stream rate degrades by
+   * close to an order of magnitude at a full envelope. A single constant
+   * covering total drain time therefore does not bound that request — it just
+   * decides the run on how loaded the host happened to be.
+   */
+  drainIdleMs: num("drain-idle-ms", 20000),
+  drainMaxMs: num("drain-max-ms", 180000),
   windowMs: num("window-ms", 30000),
   traceFile: str("trace-file", ""),
   traceOut: str("trace-out", ""),
@@ -318,6 +333,15 @@ async function backoff(s, entry, attempt, response) {
   await sleep(decision.waitMs, runAbort.signal);
 }
 
+/**
+ * Progress records for requests currently in flight, keyed by trace id.
+ *
+ * A failed drain has to say which request is unfinished and what it was doing.
+ * A bare count cannot separate a slow decode from a hung socket, and that is
+ * exactly the distinction between a legitimate tail and a broken harness.
+ */
+const liveRequests = new Map();
+
 async function issue(entry) {
   const cls = entry.class;
   const s = stats[cls];
@@ -325,6 +349,29 @@ async function issue(entry) {
   inFlight += 1;
 
   const isBatch = cls === "batch";
+  const progress = {
+    id: entry.id,
+    class: cls,
+    arrivalMs: entry.arrivalMs,
+    maxTokens: entry.maxTokens ?? (isBatch ? CONFIG.batchMaxTokens : CONFIG.interactiveMaxTokens),
+    inputChars: entry.inputChars ?? (isBatch ? CONFIG.batchInputChars : CONFIG.interactiveInputChars),
+    startedAt: Date.now(),
+    updatedAt: Date.now(),
+    attempt: 0,
+    phase: "scheduled",
+    lastStatus: null,
+    outputTokens: 0,
+  };
+  liveRequests.set(entry.id, progress);
+  /**
+   * Marks forward motion. The drain watches this, not the in-flight count: a
+   * lone request still receiving stream frames is progressing, and a socket
+   * that died holding a 200 is not. Only the second is a reason to fail a run.
+   */
+  const touch = (phase) => {
+    progress.phase = phase;
+    progress.updatedAt = Date.now();
+  };
   const baseBody = {
     model: isBatch ? CONFIG.batchModel : CONFIG.interactiveModel,
     stream: true,
@@ -347,6 +394,8 @@ async function issue(entry) {
     for (let attempt = 0; attempt < CONFIG.maxAttempts; attempt += 1) {
       s.attempts += 1;
       markAttempt(cls);
+      progress.attempt = attempt;
+      touch("request");
       let response;
       try {
         const target = targets[entry.targetSlots[attempt] % targets.length];
@@ -366,6 +415,8 @@ async function issue(entry) {
           signal: runAbort.signal,
         });
 
+        progress.lastStatus = response.status;
+        touch("response");
         if (response.status === 429) {
           // The distinction that matters: was this refused cheaply at the
           // admission layer, or earned the hard way after upstream work?
@@ -417,12 +468,14 @@ async function issue(entry) {
             s.upstreamReject += 1;
             await response.arrayBuffer().catch(() => {});
           }
+          touch("backoff");
           await backoff(s, entry, attempt, response);
           continue;
         }
         if (response.status >= 500) {
           s.serverError += 1;
           await response.arrayBuffer().catch(() => {});
+          touch("backoff");
           await backoff(s, entry, attempt, response);
           continue;
         }
@@ -433,6 +486,7 @@ async function issue(entry) {
         // that as a retryable transport failure, not an unhandled rejection.
         let ttftMs = null;
         let outputTokens = 0;
+        touch("streaming");
         if (response.body) {
           const decoder = new TextDecoder();
           let buffer = "";
@@ -459,6 +513,8 @@ async function issue(entry) {
               if (parsed?.usage?.completion_tokens !== undefined) {
                 outputTokens = parsed.usage.completion_tokens;
               }
+              progress.outputTokens = outputTokens;
+              progress.updatedAt = Date.now();
             }
           }
         }
@@ -475,12 +531,14 @@ async function issue(entry) {
         s.transportError += 1;
         await response?.body?.cancel().catch(() => {});
         // A stream that died mid-flight carries no capacity hint.
+        touch("backoff");
         await backoff(s, entry, attempt, undefined);
       }
     }
     s.exhausted += 1;
   } finally {
     inFlight -= 1;
+    liveRequests.delete(entry.id);
   }
 }
 
@@ -653,19 +711,84 @@ console.log(
 );
 
 await Promise.all(TRACE.entries.map(scheduleEntry));
-// Let outstanding work settle so the summary is not truncated mid-stream.
-const drainDeadline = Date.now() + 20000;
-while (activeIssues.size > 0 && Date.now() < drainDeadline) await sleep(100);
+
+/**
+ * Let outstanding work settle so the summary is not truncated mid-stream.
+ *
+ * The bound is on lack of progress, not on elapsed time. A drain that is still
+ * completing requests is not stuck, and in the uncontrolled arm the last one
+ * out is routinely a batch call in the middle of a multi-thousand-token decode
+ * at a degraded per-stream rate. Failing that run would delete the arm's own
+ * tail — the very thing the comparison exists to measure — and would do it
+ * non-deterministically, since the trace fixes what is requested but not how
+ * fast the host serves it.
+ *
+ * Every arm replays the same trace through the same rule, so extending the
+ * wait cannot flatter one of them: a slow arm pays for its tail in the recorded
+ * latency percentiles instead of crashing the sweep.
+ */
+const drainStartedAt = Date.now();
+const drainHardDeadline = drainStartedAt + CONFIG.drainMaxMs;
+let lastProgressAt = drainStartedAt;
+let lastActiveCount = activeIssues.size;
+let drainStalled = false;
+while (activeIssues.size > 0) {
+  if (Date.now() >= drainHardDeadline) break;
+  if (Date.now() - lastProgressAt >= CONFIG.drainIdleMs) {
+    drainStalled = true;
+    break;
+  }
+  await sleep(100);
+  // Either a request finished, or one of the survivors advanced a state or took
+  // another stream frame. A single slow decode is the normal tail of the
+  // uncontrolled arm and must not be mistaken for a stall.
+  if (activeIssues.size < lastActiveCount) {
+    lastActiveCount = activeIssues.size;
+    lastProgressAt = Date.now();
+  }
+  for (const record of liveRequests.values()) {
+    if (record.updatedAt > lastProgressAt) lastProgressAt = record.updatedAt;
+  }
+}
 if (activeIssues.size > 0) {
   const remaining = activeIssues.size;
-  runAbort.abort(new Error(`load generator drain deadline exceeded with ${remaining} request(s) still active`));
+  const elapsedMs = Date.now() - drainStartedAt;
+  const stragglers = [...liveRequests.values()]
+    .sort((a, b) => a.startedAt - b.startedAt)
+    .slice(0, 10)
+    .map(
+      (r) =>
+        `${r.id} class=${r.class} arrivalMs=${Math.round(r.arrivalMs)} ` +
+        `attempt=${r.attempt + 1}/${CONFIG.maxAttempts} phase=${r.phase} ` +
+        `lastStatus=${r.lastStatus ?? "none"} inputChars=${r.inputChars} maxTokens=${r.maxTokens} ` +
+        `outputTokens=${Math.round(r.outputTokens)} ageMs=${Date.now() - r.startedAt}`,
+    );
+  const cause = drainStalled
+    ? `no request completed for ${CONFIG.drainIdleMs}ms (--drain-idle-ms)`
+    : `drain exceeded ${CONFIG.drainMaxMs}ms (--drain-max-ms)`;
+  const detail = [
+    `load generator drain failed with ${remaining} request(s) still active after ${elapsedMs}ms: ${cause}`,
+    ...stragglers.map((line) => `  ${line}`),
+  ].join("\n");
+  runAbort.abort(new Error(detail));
   await Promise.allSettled([...activeIssues]);
-  throw new Error(`load generator drain deadline exceeded with ${remaining} request(s) still active`);
+  throw new Error(detail);
 }
 
 const summary = {
   arm: CONFIG.armLabel,
   seed: CONFIG.seed,
+  /**
+   * How long the run took to quiesce after the last arrival, against the bounds
+   * that were in force. Published so the margin is visible in the result rather
+   * than only in a crash: a drain creeping toward its idle window is the arm
+   * telling you its tail is growing.
+   */
+  drain: {
+    elapsedMs: Date.now() - drainStartedAt,
+    idleMs: CONFIG.drainIdleMs,
+    maxMs: CONFIG.drainMaxMs,
+  },
   config: {
     ...CONFIG,
     honorRetryHints: CONFIG.honorRetryHints,
