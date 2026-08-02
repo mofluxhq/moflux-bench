@@ -52,37 +52,55 @@ four agents are visible, the presenter promotes both pools to the long run lease
 and waits for one simultaneously ready, correctly sized fleet-wide grant set.
 Each accepted grant must also have enough remaining lifetime to finish the
 configured MoFlux phase. Startup fails if any live local grant is too small or
-too close to expiration. Pool creation also sends Latchflo 0.6.0's durable
+too close to expiration. Pool creation also sends Latchflo 0.6.1's durable
 minimum-grant invariants: one concurrency slot, 755 tokens for interactive, and
 9,942 tokens for batch. Latchflo therefore rejects an unusable split before it
 can issue a zero-capacity or sub-request grant.
 
-The licensed path is pinned to **Tyr 0.18.0** and **Latchflo 0.6.0**. The
-single canonical command can use images that already exist, pull configured
+The licensed path is pinned to **Tyr 0.19.0**, **Latchflo 0.6.1**,
+**async-bulkhead-llm 3.13.0**, and **async-bulkhead-ts 1.0.1**. The canonical
+comparison uses Anthropic-shaped streaming because that protocol exposes input
+usage at `message_start` and cumulative output usage while the response is still
+active. Tyr enables progressive reconciliation on every benchmark pool with a
+256-token update step and a 256-token future-output safety margin. This lets the
+benchmark measure capacity returned before completion rather than conflating it
+with the ordinary final refund. An explicit OpenAI compatibility path remains
+available, but OpenAI-shaped usage in this simulator arrives only at completion
+and therefore cannot demonstrate early release.
+
+The single canonical command can use images that already exist, pull configured
 registry images, or build missing images from local source directories. Place
 `tyr-admission-controller` and `latchflo-control-plane` beside this repository,
 or set `MOFLUX_TYR_SOURCE_DIR` and `MOFLUX_LATCHFLO_SOURCE_DIR` in the local
 environment file.
 
-Tyr 0.18.0 capacity-aware routing is enabled for the licensed four-replica
+Tyr 0.19.0 capacity-aware routing is enabled for the licensed four-replica
 MoFlux arm. Each Tyr polls the private capacity snapshots of the other three
 replicas and may forward a request once to the peer with better headroom for
 that request's concurrency and token reservation. Tyr also reports bounded
-per-pool demand snapshots to Latchflo 0.6.0 on the existing authenticated
+per-pool demand snapshots to Latchflo 0.6.1 on the existing authenticated
 heartbeat. The benchmark generates one local-only shared routing secret in
 `demo/moflux/.env`; the secret is never committed. Latchflo owns grants, demand-
 aware lending, starvation prevention, and lease safety. It does not distribute
 peer topology or the routing secret.
 
 The committed `results/` corpus is deliberately unchanged. Those files are
-historical evidence and retain their recorded Tyr 0.16.0/Latchflo 0.5.0 runtime
-metadata. New licensed runs use Tyr 0.18.0/Latchflo 0.6.0 and should be compared
+historical evidence and retain their recorded Tyr 0.17.0/Latchflo 0.5.1 runtime
+metadata. New licensed runs use Tyr 0.19.0/Latchflo 0.6.1 and should be compared
 as a new evidence set rather than silently relabeling the old one.
 
-Run:
+Run the canonical progressive comparison:
 
 ```bash
 npm run demo
+# Equivalent explicit protocol selection:
+npm run demo:progressive
+```
+
+To retain the OpenAI-shaped compatibility benchmark instead:
+
+```bash
+npm run demo:openai
 ```
 
 On first use, the command creates an ignored `demo/moflux/.env` with random
@@ -98,6 +116,14 @@ result, and prints medians with min/max spread. The presenter rejects any pair
 whose scenario fingerprints differ, whose load generator saturates, or whose
 token allocation cannot fund every configured concurrency slot. Use
 `npm run demo:record` for the step-through recording flow.
+
+Each MoFlux result separates final settlement from capacity returned while the
+stream was active. It records total reserved, consumed, refunded, and overrun
+tokens; progressive usage reports; applied and coalesced updates; tokens released
+before completion; and `progressiveEarlyReleaseRate`, the early-release share of
+all refunds. The Grafana dashboard charts both that share and reconciliation
+activity. A refund is unused safety reservation returned for reuse, not newly
+created capacity.
 
 The aggregate is written to `results/runs/video-seed-sweep/<run-id>/summary.json`
 and raw evidence alongside it, with `results/runs/video-seed-sweep/latest.json`
@@ -320,8 +346,8 @@ hit 32 together". Both policies produce the same headline number.
 npm run demo:lending   # demand-aware MoFlux vs an exact static 28/4 partition
 ```
 
-`--lending` widens the idle window from 35% to 60% of the phase so Tyr 0.18.0
-can report an idle batch pool and Latchflo 0.6.0 can safely lend its protected
+`--lending` widens the idle window from 35% to 60% of the phase so Tyr 0.19.0
+can report an idle batch pool and Latchflo 0.6.1 can safely lend its protected
 floor. The presenter creates a demand-aware capacity group with 28/4 protected
 concurrency and 24,000/40,000-token guarantees, while both pools may borrow up
 to the shared 32-slot/64,000-token envelope. The larger token envelope is

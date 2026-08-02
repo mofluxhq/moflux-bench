@@ -8,8 +8,9 @@ independently reproducible.
 
 ## Presenter command
 
-The integrated arm requires Tyr 0.18.0 and Latchflo 0.6.0 licensed images. Once
-they are tagged locally or accessible through the configured registry, run:
+The integrated arm requires Tyr 0.19.0 and Latchflo 0.6.1 licensed images.
+Tyr contains async-bulkhead-llm 3.13.0 and async-bulkhead-ts 1.0.1. Once the
+images are tagged locally or accessible through the configured registry, run:
 
 ```bash
 npm run demo
@@ -18,23 +19,28 @@ npm run demo
 The command creates the ignored local env file and random credentials on first
 use. The presenter creates or updates `sim-interactive` and `sim-batch` with a
 short
-enrollment lease before Tyr starts. It sends Latchflo 0.6.0's minimum viable
+enrollment lease before Tyr starts. It sends Latchflo 0.6.1's minimum viable
 grant settings for each request class, so an allocator split below one slot or
-below one request's token reservation fails explicitly. Tyr 0.18.0 also polls
+below one request's token reservation fails explicitly. Tyr 0.19.0 also polls
 private capacity snapshots from the other three replicas and can forward a
 request once to the peer with the best request-specific headroom. The shared
 routing secret is generated in the ignored local `.env`; Latchflo does not
-distribute topology or secrets. Tyr 0.18.0 also reports per-pool in-flight work,
+distribute topology or secrets. Tyr 0.19.0 also reports per-pool in-flight work,
 recent admissions and rejections, and token headroom on its authenticated
 Latchflo heartbeat. `npm run demo:lending` uses those reports to drive a
-Latchflo 0.6.0 demand-aware capacity group with a fully funded 28/4 protected
+Latchflo 0.6.1 demand-aware capacity group with a fully funded 28/4 protected
 split; normal runs retain the static 31/1 policy. All four replicas register for interactive traffic, while replica 4
 also registers for batch. Once all registrations are
 visible, the presenter promotes both pools to the steady-state TTL and waits
 until every endpoint is simultaneously ready with a live local grant that can
 admit one request and has enough remaining TTL for the benchmark phase. It then
 replays the same immutable trace as the baseline and
-reports per-run token-accounting deltas. The full sequence is documented in
+reports per-run token-accounting deltas. The default Anthropic-shaped stream
+reports input usage at start and cumulative output usage while active, allowing
+Tyr to reconcile progressively with the benchmark's pinned 256-token update
+step and 256-token future-output safety margin. Use `npm run demo:openai` only
+for protocol compatibility; its usage arrives at completion and therefore does
+not exercise early release. The full sequence is documented in
 `demo/VIDEO-DEMO.md`.
 
 ## Position in the harness
@@ -67,6 +73,11 @@ required. Add its port to `demo/prometheus/prometheus.yml` and collect:
     tyr_pool_tokens_consumed_total      actual usage after reconciliation
     tyr_pool_tokens_refunded_total      returned by reconciliation
     tyr_pool_tokens_overrun_total       consumption beyond the reservation
+    tyr_pool_progressive_reconciliation_enabled
+    tyr_pool_progressive_usage_reports_total
+    tyr_pool_progressive_updates_total
+    tyr_pool_progressive_coalesced_total
+    tyr_pool_progressive_tokens_released_total  returned before stream completion
     tyr_pool_advisory_would_reject_total  prospective rejects in observe mode
     tyr_pool_observe_bypassed_total
     tyr_request_duration_seconds        }  the difference is Tyr's own
@@ -77,17 +88,21 @@ required. Add its port to `demo/prometheus/prometheus.yml` and collect:
 Enable `auditEnabled` for per-request signed estimator error: the
 `tyr.admission-audit.v2` event pairs `reservedTokens` with `usage`.
 
-## The metric to lead with
+## The metrics to lead with
 
-`totalRefunded / totalReserved`.
+`totalRefunded / totalReserved` and
+`progressiveEarlyReleasedTokens / totalRefunded`.
 
 Reservation is `estimated_input + max_tokens`, and `max_tokens` is a cap rather
 than a prediction, so over-reservation is structural and large — with a median
 output near 220 tokens against a 4096 cap, most of the output reservation is
 phantom. The interesting claim is therefore not "we predict tokens accurately."
-It is: **here is exactly what capacity safety costs, and here is how much of it
-reconciliation gives back.** Arms 2 and 4 cannot give any of it back; they hold
-the full reservation for the life of the call.
+It is: **here is exactly what capacity safety costs, how much reconciliation
+gives back, and how much becomes reusable before the call ends.** Arms 2 and 4
+cannot progressively resize a live request's token hold; they retain their
+admission-time reservation for the life of the call. Keep final refunds and
+early releases separate so a completion-only protocol is not presented as
+progressive behavior.
 
 Report over-reservation waste as a first-class number, including where it makes
 MoFlux look expensive.

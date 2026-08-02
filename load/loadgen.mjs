@@ -47,6 +47,10 @@ const CONFIG = Object.freeze({
   metricsPushIntervalMs: num("metrics-push-interval-ms", 1000),
   metricsRelayRequired: bool("metrics-relay-required", false),
   armLabel: str("arm-label", "unknown"),
+  // The presenter uses Anthropic-shaped streams so Tyr can observe cumulative
+  // usage during the call. Direct load-generator users retain the historical
+  // OpenAI default unless they opt in explicitly.
+  providerApi: str("provider-api", "openai"),
   durationMs: num("duration-ms", 60000),
   seed: num("seed", 1),
 
@@ -107,6 +111,12 @@ const CONFIG = Object.freeze({
 if (CONFIG.interactiveTargets.length === 0 || CONFIG.batchTargets.length === 0) {
   throw new Error("interactive and batch target lists must both be non-empty");
 }
+if (!["openai", "anthropic"].includes(CONFIG.providerApi)) {
+  throw new Error("--provider-api must be openai or anthropic");
+}
+const PROVIDER_PATH = CONFIG.providerApi === "anthropic"
+  ? "/v1/messages"
+  : "/v1/chat/completions";
 
 const loadedTrace = CONFIG.traceFile
   ? JSON.parse(readFileSync(CONFIG.traceFile, "utf8"))
@@ -375,6 +385,9 @@ async function issue(entry) {
   const baseBody = {
     model: isBatch ? CONFIG.batchModel : CONFIG.interactiveModel,
     stream: true,
+    ...(CONFIG.providerApi === "openai"
+      ? { stream_options: { include_usage: true } }
+      : {}),
     // Version-2 traces carry a size per request; version-1 traces fall back to
     // the class constant, so an old trace replays byte-identically.
     max_tokens: entry.maxTokens ?? (isBatch ? CONFIG.batchMaxTokens : CONFIG.interactiveMaxTokens),
@@ -403,10 +416,13 @@ async function issue(entry) {
           ...baseBody,
           seed: entry.providerSeeds[attempt],
         };
-        response = await fetch(`${target}/v1/chat/completions`, {
+        response = await fetch(`${target}${PROVIDER_PATH}`, {
           method: "POST",
           headers: {
             "content-type": "application/json",
+            ...(CONFIG.providerApi === "anthropic"
+              ? { "anthropic-version": "2023-06-01", "x-api-key": "benchmark-local" }
+              : {}),
             "x-priority": isBatch ? "normal" : "high",
             "x-bench-request-id": entry.id,
             "x-bench-attempt": String(attempt + 1),
@@ -496,8 +512,9 @@ async function issue(entry) {
             while ((idx = buffer.indexOf("\n\n")) !== -1) {
               const frame = buffer.slice(0, idx);
               buffer = buffer.slice(idx + 2);
-              if (!frame.startsWith("data: ")) continue;
-              const raw = frame.slice(6);
+              const dataLine = frame.split(/\r?\n/).find((line) => line.startsWith("data:"));
+              if (!dataLine) continue;
+              const raw = dataLine.slice(5).trim();
               if (raw === "[DONE]") continue;
               let parsed;
               try {
@@ -505,13 +522,25 @@ async function issue(entry) {
               } catch {
                 continue;
               }
-              const content = parsed?.choices?.[0]?.delta?.content;
+              const openAIContent = parsed?.choices?.[0]?.delta?.content;
+              const anthropicContent =
+                parsed?.type === "content_block_delta" && parsed?.delta?.type === "text_delta"
+                  ? parsed.delta.text
+                  : undefined;
+              const content = typeof openAIContent === "string"
+                ? openAIContent
+                : anthropicContent;
               if (typeof content === "string" && content.length > 0) {
                 if (ttftMs === null) ttftMs = performance.now() - logicalStart;
                 outputTokens += content.length / 4;
               }
               if (parsed?.usage?.completion_tokens !== undefined) {
                 outputTokens = parsed.usage.completion_tokens;
+              } else if (
+                parsed?.type === "message_delta" &&
+                parsed?.usage?.output_tokens !== undefined
+              ) {
+                outputTokens = parsed.usage.output_tokens;
               }
               progress.outputTokens = outputTokens;
               progress.updatedAt = Date.now();

@@ -1,5 +1,53 @@
 # Changelog
 
+## 0.12.0
+
+### Added
+
+- Add an Anthropic-shaped streaming path across the provider simulator, load
+  generator, licensed presenter, Tyr configuration, and verification suite.
+  The simulator emits input usage at `message_start` and monotonic cumulative
+  output usage during the stream, which gives Tyr 0.19.0 the live usage signal
+  required to exercise async-bulkhead-llm 3.13.0 progressive reconciliation.
+- Add `npm run demo:progressive` as the explicit progressive benchmark command
+  and `npm run demo:openai` as the retained OpenAI-shaped compatibility path.
+  The canonical `npm run demo` path now defaults to Anthropic-shaped streams;
+  OpenAI-shaped usage still settles at completion and is not represented as
+  evidence of early release.
+- Record progressive usage reports, applied and coalesced updates, tokens
+  released before completion, the early-release share of all refunds, and the
+  pinned reconciliation policy in every MoFlux result.
+- Add Grafana panels for progressive early-release share and reconciliation
+  activity, plus simulator and load-generator contract tests for Anthropic SSE
+  usage events.
+
+### Changed
+
+- Pin the licensed stack to Tyr 0.19.0, Latchflo 0.6.1,
+  async-bulkhead-llm 3.13.0, and async-bulkhead-ts 1.0.1.
+- Enable progressive reconciliation on every benchmark Tyr pool with a
+  256-token update step and a 256-token future-output safety margin. Presenter
+  startup now rejects a live pool that does not report that exact policy.
+- Keep using Latchflo's existing `inFlightTokens` and `availableTokens` demand
+  snapshot fields. No benchmark-side control-plane protocol extension is
+  required: progressively reduced Tyr occupancy flows through the existing
+  authenticated heartbeat.
+- Preserve every previously reviewed result at its committed bytes. The
+  existing corpus records Tyr 0.17.0 and Latchflo 0.5.1; this release does not
+  claim new performance numbers or relabel historical evidence for the new
+  runtime.
+- Shorten the simulator verification sweep's warm-up and teardown pauses while
+  retaining its full 2.5-second measurement window. The seven-point sweep still
+  enforces the same 8% analytic-fidelity threshold.
+
+### Fixed
+
+- Correct the video documentation to describe generated run directories and
+  explicit evidence promotion instead of implying normal sweeps overwrite the
+  reviewed `results/video-seed-sweep*` paths.
+- Correct stale prose that described the reviewed corpus as Tyr 0.16.0 /
+  Latchflo 0.5.0 despite the recorded runtime fields reading 0.17.0 / 0.5.1.
+
 ## 0.11.0
 
 ### Fixed

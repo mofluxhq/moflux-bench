@@ -139,6 +139,29 @@ check(
   "including it would change every recorded trace hash and break the A/B pairing",
 );
 
+
+// Progressive reconciliation requires a protocol that exposes usage before
+// completion. The presenter defaults to Anthropic and must pass that choice to
+// every arm's load generator; direct loadgen users retain the OpenAI default.
+check(
+  "loadgenArgs forwards --provider-api=",
+  args.includes("--provider-api="),
+  "the selected provider protocol never reaches the generator",
+);
+check("the generator parses --provider-api", /"provider-api"/.test(loadgen));
+check(
+  "the presenter defaults to Anthropic streaming",
+  /providerApi: str\("provider-api", "anthropic"\)/.test(present),
+);
+check(
+  "the load generator preserves its OpenAI compatibility default",
+  /providerApi: str\("provider-api", "openai"\)/.test(loadgen),
+);
+check(
+  "the provider API is recorded in scenario metadata",
+  /api: OPT\.providerApi/.test(present),
+);
+
 // The Redis arm is the only one that consults a coordinator on the admission
 // path, so it is the only one that may receive this flag. Sending it to the
 // others would make them look sensitive to a coordinator they never call.

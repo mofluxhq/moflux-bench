@@ -274,6 +274,19 @@ export function buildSweepSummary({ mode, fault, seeds, records }) {
   const tokenMetrics = records
     .map((record) => record.moflux?.tokenAccounting)
     .filter(Boolean);
+  const progressiveConfigurations = tokenMetrics
+    .map((metrics) => metrics.progressiveConfiguration)
+    .filter(Boolean);
+  const progressiveConfiguration = progressiveConfigurations[0] ?? null;
+  if (progressiveConfiguration) {
+    const expected = JSON.stringify(progressiveConfiguration);
+    for (const configuration of progressiveConfigurations) {
+      if (JSON.stringify(configuration) !== expected) {
+        throw new Error("seed sweep changed the progressive reconciliation policy");
+      }
+    }
+  }
+  const numericTokenMetrics = tokenMetrics.map(({ progressiveConfiguration: _configuration, ...metrics }) => metrics);
 
   return {
     schemaVersion: 1,
@@ -319,7 +332,12 @@ export function buildSweepSummary({ mode, fault, seeds, records }) {
       versusBaseline: controlArmKeys.length > 0 ? versusBaseline : null,
       // MoFlux against each alternative. Answers "is this worth deploying".
       mofluxVersus: controlArmKeys.length > 0 ? headToHead : null,
-      tokenAccounting: tokenMetrics.length > 0 ? aggregateMetricObjects(tokenMetrics) : null,
+      tokenAccounting: numericTokenMetrics.length > 0
+        ? {
+            ...aggregateMetricObjects(numericTokenMetrics),
+            progressiveConfiguration,
+          }
+        : null,
       lending: mofluxMetrics.some((metrics) => metrics.controllerLendingObserved !== null)
         ? {
             borrowedSlots: summarize(mofluxMetrics.map((metrics) => metrics.borrowedSlots)),

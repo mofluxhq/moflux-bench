@@ -63,6 +63,16 @@ function summary(seed, successRate, success, p50, p95, upstream429s, refunded) {
       grossRecoveryRate: refunded / 1000,
       netRecovered: refunded,
       netRecoveryRate: refunded / 1000,
+      progressiveReports: 8,
+      progressiveUpdates: 4,
+      progressiveCoalesced: 4,
+      progressiveEarlyReleasedTokens: refunded / 2,
+      progressiveEarlyReleaseRate: 0.5,
+      progressiveConfiguration: {
+        enabled: true,
+        updateStepTokens: 256,
+        outputSafetyMarginTokens: 256,
+      },
     },
   };
 }
@@ -113,6 +123,12 @@ assert.ok(Math.abs(aggregate.aggregate.arms.moflux.interactiveGoodputRps.median 
 assert.equal(aggregate.aggregate.paired.upstream429Baseline.min, 10);
 assert.equal(aggregate.aggregate.paired.upstream429Baseline.max, 12);
 assert.equal(aggregate.aggregate.tokenAccounting.grossRecoveryRate.median, 0.25);
+assert.equal(aggregate.aggregate.tokenAccounting.progressiveEarlyReleaseRate.median, 0.5);
+assert.deepEqual(aggregate.aggregate.tokenAccounting.progressiveConfiguration, {
+  enabled: true,
+  updateStepTokens: 256,
+  outputSafetyMarginTokens: 256,
+});
 assert.equal(armMetrics(baseline1).interactiveTailRatio, 2);
 assert.equal(aggregate.capacityPolicy.policy, "interactive-first-static");
 assert.equal(aggregate.capacityPolicy.interactiveConcurrencySlots, 31);

@@ -184,6 +184,10 @@ function tyr(port) {
         totalConsumed: 0,
         totalRefunded: 0,
         totalOverrun: 0,
+        progressiveReports: 0,
+        progressiveUpdates: 0,
+        progressiveCoalesced: 0,
+        progressiveEarlyReleasedTokens: 0,
       },
     ]),
   );
@@ -226,6 +230,15 @@ function tyr(port) {
         totalOverrun: counters.totalOverrun,
       },
       tyr: {
+        progressiveReconciliation: {
+          enabled: true,
+          updateStepTokens: 256,
+          outputSafetyMarginTokens: 256,
+          reports: counters.progressiveReports,
+          updates: counters.progressiveUpdates,
+          coalesced: counters.progressiveCoalesced,
+          earlyReleasedTokens: counters.progressiveEarlyReleasedTokens,
+        },
         provenance: {
           current: {
             source: "latchflo",
@@ -274,12 +287,17 @@ function tyr(port) {
           `tyr_pool_tokens_consumed_total{pool="${pool}"} ${counters.totalConsumed}`,
           `tyr_pool_tokens_refunded_total{pool="${pool}"} ${counters.totalRefunded}`,
           `tyr_pool_tokens_overrun_total{pool="${pool}"} ${counters.totalOverrun}`,
+          `tyr_pool_progressive_reconciliation_enabled{pool="${pool}"} 1`,
+          `tyr_pool_progressive_usage_reports_total{pool="${pool}"} ${counters.progressiveReports}`,
+          `tyr_pool_progressive_updates_total{pool="${pool}"} ${counters.progressiveUpdates}`,
+          `tyr_pool_progressive_coalesced_total{pool="${pool}"} ${counters.progressiveCoalesced}`,
+          `tyr_pool_progressive_tokens_released_total{pool="${pool}"} ${counters.progressiveEarlyReleasedTokens}`,
         );
       }
       lines.push("");
       return text(res, 200, lines.join("\n"));
     }
-    if (req.url === "/v1/chat/completions" && req.method === "POST") {
+    if ((req.url === "/v1/chat/completions" || req.url === "/v1/messages") && req.method === "POST") {
       const chunks = [];
       req.on("data", (chunk) => chunks.push(chunk));
       req.on("end", () => {
@@ -304,12 +322,17 @@ function tyr(port) {
         counters.totalRefunded += refunded;
         counters.totalOverrun += overrun;
         counters.totalConsumed += consumed;
+        const earlyReleased = Math.round(refunded * 0.75);
+        counters.progressiveReports += 6;
+        counters.progressiveUpdates += 4;
+        counters.progressiveCoalesced += 2;
+        counters.progressiveEarlyReleasedTokens += earlyReleased;
 
         const upstream = httpRequest(
           {
             hostname: "127.0.0.1",
             port: 9000,
-            path: "/v1/chat/completions",
+            path: req.url,
             method: "POST",
             headers: { ...req.headers, "content-length": payload.length },
           },
@@ -339,8 +362,8 @@ try {
   writeFileSync(
     ENV_FILE,
     [
-      "MOFLUX_TYR_IMAGE=test-tyr:0.18.0",
-      "MOFLUX_LATCHFLO_IMAGE=test-latchflo:0.6.0",
+      "MOFLUX_TYR_IMAGE=test-tyr:0.19.0",
+      "MOFLUX_LATCHFLO_IMAGE=test-latchflo:0.6.1",
       "LATCHFLO_ADMIN_TOKEN=test-admin",
       "LATCHFLO_AGENT_BOOTSTRAP_TOKEN=test-bootstrap",
       "TYR_ROUTING_SECRET=test-routing-secret-with-at-least-32-chars",
@@ -456,7 +479,7 @@ ${run.stderr}`);
     if (history.length !== 2) throw new Error(`${pool} was configured ${history.length} times, expected 2`);
     for (const body of history) {
       if (body.minimumGrantMaxConcurrent !== 1) {
-        throw new Error(`${pool} omitted Latchflo 0.6.0 minimumGrantMaxConcurrent=1`);
+        throw new Error(`${pool} omitted Latchflo 0.6.1 minimumGrantMaxConcurrent=1`);
       }
       if (body.minimumGrantTokenBudget !== expectedMinimumTokens[pool]) {
         throw new Error(
@@ -495,6 +518,9 @@ ${run.stderr}`);
   if (JSON.stringify(baseline.scenario.provider) !== JSON.stringify(result.scenario.provider)) {
     throw new Error("baseline and MoFlux provider definitions differ");
   }
+  if (result.scenario.provider.api !== "anthropic") {
+    throw new Error("presenter did not exercise the Anthropic progressive-usage path");
+  }
   if (!baseline.scenario.trace?.hash || baseline.scenario.trace.hash !== result.scenario.trace?.hash) {
     throw new Error("baseline and MoFlux did not replay the same immutable trace");
   }
@@ -509,6 +535,21 @@ ${run.stderr}`);
       result.capacity?.interactiveConcurrencySlots !== 31 ||
       result.capacity?.batchConcurrencySlots !== 1) {
     throw new Error("presenter did not record the canonical 31/1 capacity policy");
+  }
+  if (result.runtime?.tyr?.version !== "0.19.0" || result.runtime?.latchflo?.version !== "0.6.1") {
+    throw new Error("result did not record the Tyr 0.19.0 / Latchflo 0.6.1 runtime");
+  }
+  if (result.runtime?.asyncBulkheadLlm?.version !== "3.13.0" ||
+      result.runtime?.asyncBulkheadTs?.version !== "1.0.1") {
+    throw new Error("result did not record the progressive bulkhead dependency versions");
+  }
+  if (!(result.tokenAccounting?.progressiveEarlyReleasedTokens > 0) ||
+      !(result.tokenAccounting?.progressiveEarlyReleaseRate > 0)) {
+    throw new Error("result did not record capacity released before request completion");
+  }
+  if (result.tokenAccounting?.progressiveConfiguration?.updateStepTokens !== 256 ||
+      result.tokenAccounting?.progressiveConfiguration?.outputSafetyMarginTokens !== 256) {
+    throw new Error("result did not record the pinned progressive reconciliation policy");
   }
   const configuredPools = result.capacity?.pools ?? [];
   if (configuredPools.some((pool) => pool.tokenFundedConcurrency !== pool.maxConcurrent || pool.strandedConcurrency !== 0)) {

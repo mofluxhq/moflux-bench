@@ -19,8 +19,15 @@ request characteristics.
 
 ## Runtime compatibility and setup
 
-The presenter is pinned to Tyr 0.18.0 and Latchflo 0.6.0. `npm run demo`
-creates the ignored local env file and random demo credentials automatically.
+The presenter is pinned to Tyr 0.19.0, Latchflo 0.6.1,
+async-bulkhead-llm 3.13.0, and async-bulkhead-ts 1.0.1. `npm run demo` uses
+Anthropic-shaped streams and enables progressive reconciliation with a
+256-token update step and a 256-token future-output safety margin. Input usage
+is available at stream start and cumulative output usage is reported while the
+stream is active, so early release is measurable. `npm run demo:openai` keeps an
+OpenAI-shaped compatibility path, but its simulated usage arrives only at
+completion. The command creates the ignored local env file and random demo
+credentials automatically.
 Tyr capacity-aware routing is enabled across the four private replica addresses
 with one generated local-only `TYR_ROUTING_SECRET`. Latchflo continues to
 distribute grants; it does not distribute routing topology or the secret.
@@ -43,7 +50,7 @@ Latchflo/Tyr state, then the verified single-pair presenter:
 
 1. validates Docker, Compose, licensed images, and configuration;
 2. starts Latchflo, the telemetry relay, Prometheus, and Grafana;
-3. creates or updates `sim-interactive` and `sim-batch` with a short enrollment lease, an exact 31/1 concurrency split, 30,000/10,000 token budgets, and Latchflo 0.6.0 minimum-grant floors (1 slot; 755 interactive tokens; 9,942 batch tokens);
+3. creates or updates `sim-interactive` and `sim-batch` with a short enrollment lease, an exact 31/1 concurrency split, 30,000/10,000 token budgets, and Latchflo 0.6.1 minimum-grant floors (1 slot; 755 interactive tokens; 9,942 batch tokens);
 4. runs the no-control arm;
 5. replaces passthrough replicas with Tyr, waits for all four registrations,
    promotes the pools to the steady-state lease, and waits for one simultaneous
@@ -52,16 +59,22 @@ Latchflo/Tyr state, then the verified single-pair presenter:
 6. replays the exact baseline request trace through MoFlux;
 7. rejects mismatched trace hashes, request counts, grant sizes, or generator-saturated runs;
 8. reports interactive goodput, latency, TTFT, reject location, provider
-   occupancy, batch success, and token reconciliation.
+   occupancy, batch success, final token settlement, and progressive tokens
+   released before stream completion.
 
 The sweep copies each successful run out of the presenter's scratch filenames
-before continuing. At the end it writes:
+before continuing. At the end it writes generated output under
+`results/runs/video-seed-sweep/<run-id>/`:
 
-- `results/video-seed-sweep.json` — aggregate statistics and per-seed references;
-- `results/video-seed-sweep/baseline-seed-N.json` — raw baseline evidence;
-- `results/video-seed-sweep/moflux-enforce-seed-N.json` — raw MoFlux evidence;
-- `results/video-seed-sweep/comparison-seed-N.json` — paired deltas;
-- `results/video-seed-sweep/trace-seed-N.json` — the immutable offered workload.
+- `summary.json` — aggregate statistics and per-seed references;
+- `baseline-seed-N.json` — raw baseline evidence;
+- `moflux-enforce-seed-N.json` — raw MoFlux evidence;
+- `comparison-seed-N.json` — paired deltas;
+- `trace-seed-N.json` — the immutable offered workload.
+
+`results/runs/video-seed-sweep/latest.json` points at the newest generated run.
+Nothing under the reviewed `results/video-seed-sweep*` paths changes until an
+operator explicitly promotes a run with `npm run evidence:publish`.
 
 The canonical command runs without prompts. Use `npm run demo:record` when you
 want to pause before each seed and each presenter scene.
@@ -119,8 +132,8 @@ npm run demo:lending
 
 This is a separate five-seed comparison because it changes the control-plane
 policy and lease cadence. The reference arm is an exact static 28/4 partition
-with interactive caps of 7/7/7/7. The MoFlux arm creates a Latchflo 0.6.0 demand-aware capacity group, receives
-live demand snapshots from Tyr 0.18.0, and uses short renewable leases so a
+with interactive caps of 7/7/7/7. The MoFlux arm creates a Latchflo 0.6.1 demand-aware capacity group, receives
+live demand snapshots from Tyr 0.19.0, and uses short renewable leases so a
 returning four-slot batch floor can be observed inside the contended window.
 The lending command uses a 64,000-token envelope with 24,000 interactive and
 40,000 batch guaranteed tokens so all 28 interactive and four batch slots are
@@ -155,7 +168,8 @@ Closing:
 > every value. The raw run for every seed remains available for inspection.
 > Local rejection avoids spending provider capacity on work the provider would
 > reject later. Token refunds are unused safety reservations returned for
-> reuse—not newly created capacity.
+> reuse—not newly created capacity. The progressive figure is the portion Tyr
+> returned while streams were still active, rather than at final settlement.
 
 ## Grafana and cleanup
 

@@ -8,6 +8,8 @@ server:
 upstreams:
   openai:
     baseUrl: http://host.docker.internal:9000
+  anthropic:
+    baseUrl: http://host.docker.internal:9000
 
 timeouts:
   responseHeadersMs: 30000
@@ -45,6 +47,10 @@ pools:
       minCorrection: 0.5
       maxCorrection: 2
       maxModels: 16
+    progressiveReconciliation:
+      enabled: true
+      updateStepTokens: 256
+      outputSafetyMarginTokens: 256
 
 
   - name: sim-batch
@@ -63,6 +69,10 @@ pools:
       minCorrection: 0.5
       maxCorrection: 2
       maxModels: 16
+    progressiveReconciliation:
+      enabled: true
+      updateStepTokens: 256
+      outputSafetyMarginTokens: 256
 
 routing:
   capacityAware:
@@ -93,7 +103,7 @@ controlPlane:
   metadata:
     region: local
     zone: demo-4
-    version: 0.18.0
+    version: 0.19.0
     endpoint: http://tyr-r4:8787
     labels:
       environment: benchmark

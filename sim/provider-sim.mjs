@@ -275,42 +275,101 @@ function finish(job, { error } = {}) {
   counters.trueInputTokens += job.inputTokens;
   counters.trueOutputTokens += job.emitted;
 
-  const usage = {
-    prompt_tokens: job.inputTokens,
-    completion_tokens: job.emitted,
-    total_tokens: job.inputTokens + job.emitted,
-  };
-
-  if (job.stream) {
-    writeSse(job, {
-      id: job.id,
-      object: "chat.completion.chunk",
-      model: job.model,
-      choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
-      usage,
-    });
-    job.res.write("data: [DONE]\n\n");
-    job.res.end();
+  if (job.api === "anthropic") {
+    const usage = { input_tokens: job.inputTokens, output_tokens: job.emitted };
+    if (job.stream) {
+      startStream(job);
+      writeSse(job, {
+        type: "message_delta",
+        delta: { stop_reason: "end_turn", stop_sequence: null },
+        usage: { output_tokens: job.emitted },
+      });
+      writeSse(job, { type: "content_block_stop", index: 0 });
+      writeSse(job, { type: "message_stop" });
+      job.res.end();
+    } else {
+      sendJson(job.res, 200, {
+        id: job.id,
+        type: "message",
+        role: "assistant",
+        model: job.model,
+        content: [{ type: "text", text: fillerFor(job.emitted) }],
+        stop_reason: "end_turn",
+        stop_sequence: null,
+        usage,
+      });
+    }
   } else {
-    sendJson(job.res, 200, {
-      id: job.id,
-      object: "chat.completion",
-      model: job.model,
-      choices: [
-        {
-          index: 0,
-          message: { role: "assistant", content: fillerFor(job.emitted) },
-          finish_reason: "stop",
-        },
-      ],
-      usage,
-    });
+    const usage = {
+      prompt_tokens: job.inputTokens,
+      completion_tokens: job.emitted,
+      total_tokens: job.inputTokens + job.emitted,
+    };
+    if (job.stream) {
+      startStream(job);
+      writeSse(job, {
+        id: job.id,
+        object: "chat.completion.chunk",
+        model: job.model,
+        choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+        usage,
+      });
+      job.res.write("data: [DONE]\n\n");
+      job.res.end();
+    } else {
+      sendJson(job.res, 200, {
+        id: job.id,
+        object: "chat.completion",
+        model: job.model,
+        choices: [
+          {
+            index: 0,
+            message: { role: "assistant", content: fillerFor(job.emitted) },
+            finish_reason: "stop",
+          },
+        ],
+        usage,
+      });
+    }
   }
   tryStart();
 }
 
 function writeSse(job, payload) {
-  job.res.write(`data: ${JSON.stringify(payload)}\n\n`);
+  const event = job.api === "anthropic" && typeof payload?.type === "string"
+    ? `event: ${payload.type}\n`
+    : "";
+  job.res.write(`${event}data: ${JSON.stringify(payload)}\n\n`);
+}
+
+function startStream(job) {
+  if (!job.stream || job.headersSent) return;
+  job.headersSent = true;
+  job.res.writeHead(200, {
+    "content-type": "text/event-stream",
+    "cache-control": "no-cache",
+    connection: "keep-alive",
+  });
+  if (job.api === "anthropic") {
+    writeSse(job, {
+      type: "message_start",
+      message: {
+        id: job.id,
+        type: "message",
+        role: "assistant",
+        model: job.model,
+        content: [],
+        stop_reason: null,
+        stop_sequence: null,
+        usage: { input_tokens: job.inputTokens, output_tokens: 0 },
+      },
+    });
+    writeSse(job, {
+      type: "content_block_start",
+      index: 0,
+      content_block: { type: "text", text: "" },
+    });
+  }
 }
 
 // ── the tick: accrue tokens at the current degraded rate ─────────────
@@ -343,14 +402,7 @@ function tick() {
       if (job.prefillRemaining > 0) continue;
       // prefill done -> TTFT
       job.ttftMs = now - job.receivedAt;
-      if (job.stream && !job.headersSent) {
-        job.headersSent = true;
-        job.res.writeHead(200, {
-          "content-type": "text/event-stream",
-          "cache-control": "no-cache",
-          connection: "keep-alive",
-        });
-      }
+      startStream(job);
     }
 
     job.tokenCredit += decodeRate * dt;
@@ -364,12 +416,27 @@ function tick() {
     counters.emittedTokens += emit;
 
     if (job.stream && emit > 0) {
-      writeSse(job, {
-        id: job.id,
-        object: "chat.completion.chunk",
-        model: job.model,
-        choices: [{ index: 0, delta: { content: fillerFor(emit) }, finish_reason: null }],
-      });
+      if (job.api === "anthropic") {
+        writeSse(job, {
+          type: "content_block_delta",
+          index: 0,
+          delta: { type: "text_delta", text: fillerFor(emit) },
+        });
+        // Anthropic message_delta usage is cumulative. Emitting it alongside
+        // each content chunk gives Tyr a live, monotonic signal to reconcile.
+        writeSse(job, {
+          type: "message_delta",
+          delta: { stop_reason: null, stop_sequence: null },
+          usage: { output_tokens: job.emitted },
+        });
+      } else {
+        writeSse(job, {
+          id: job.id,
+          object: "chat.completion.chunk",
+          model: job.model,
+          choices: [{ index: 0, delta: { content: fillerFor(emit) }, finish_reason: null }],
+        });
+      }
     }
 
     if (job.emitted >= job.targetOutput) {
@@ -502,7 +569,8 @@ const server = createServer(async (req, res) => {
     roll < CONFIG.failRate ? "500" : roll < CONFIG.failRate + CONFIG.stallRate ? "stall" : null;
 
   const job = {
-    id: `simcmpl_${requestKey}`,
+    id: `${isMessages ? "simmsg" : "simcmpl"}_${requestKey}`,
+    api: isMessages ? "anthropic" : "openai",
     res,
     model: body.model ?? "sim-model",
     stream: body.stream === true,
@@ -549,6 +617,6 @@ startOccupancySampler();
 server.listen(CONFIG.port, "0.0.0.0", () => {
   console.log(
     `provider-sim :${CONFIG.port} envelope=${CONFIG.envelope} queue=${CONFIG.queue} ` +
-      `sigma=${CONFIG.sigma} kappa=${CONFIG.kappa} r1=${CONFIG.r1} seed=${CONFIG.seed}`,
+      `sigma=${CONFIG.sigma} kappa=${CONFIG.kappa} r1=${CONFIG.r1} seed=${CONFIG.seed} APIs=openai,anthropic`,
   );
 });

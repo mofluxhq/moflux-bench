@@ -10,7 +10,9 @@ let activeChild = null;
 const tests = [
   ["sim/verify-sim.mjs", 90_000],
   ["sim/verify-provider-determinism.mjs", 30_000],
+  ["sim/verify-anthropic-stream.mjs", 30_000],
   ["load/verify-loadgen.mjs", 30_000],
+  ["load/verify-anthropic-loadgen.mjs", 30_000],
   ["load/verify-drain.mjs", 90_000],
   ["load/verify-retry-hints.mjs", 30_000],
   ["load/verify-trace-sizes.mjs", 30_000],

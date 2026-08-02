@@ -101,8 +101,8 @@ if (lock.packages?.[""]?.version !== pkg.version || lock.version !== pkg.version
 }
 const example = readFileSync(path.join(ROOT, "demo/moflux/.env.example"), "utf8");
 for (const expected of [
-  "MOFLUX_TYR_IMAGE=tyr-admission-controller:0.18.0",
-  "MOFLUX_LATCHFLO_IMAGE=latchflo-control-plane:0.6.0",
+  "MOFLUX_TYR_IMAGE=tyr-admission-controller:0.19.0",
+  "MOFLUX_LATCHFLO_IMAGE=latchflo-control-plane:0.6.1",
 ]) {
   if (!example.includes(expected)) {
     findings.push(`demo/moflux/.env.example: missing pinned runtime ${expected}`);
@@ -122,8 +122,16 @@ if (!compose.includes("TYR_ROUTING_SECRET: ${TYR_ROUTING_SECRET:?Set TYR_ROUTING
 for (let replica = 1; replica <= 4; replica += 1) {
   const rel = `demo/moflux/tyr-r${replica}.yaml`;
   const yaml = readFileSync(path.join(ROOT, rel), "utf8");
-  if (!/^    version: 0\.18\.0$/m.test(yaml)) {
-    findings.push(`${rel}: control-plane metadata must identify Tyr 0.18.0`);
+  if (!/^    version: 0\.19\.0$/m.test(yaml)) {
+    findings.push(`${rel}: control-plane metadata must identify Tyr 0.19.0`);
+  }
+  if (!/^  anthropic:\n    baseUrl: http:\/\/host\.docker\.internal:9000$/m.test(yaml)) {
+    findings.push(`${rel}: Anthropic simulator upstream is missing`);
+  }
+  const configuredPools = [...yaml.matchAll(/^  - name: ([^\s]+)$/gm)].length;
+  const progressiveBlocks = [...yaml.matchAll(/^    progressiveReconciliation:\n      enabled: true\n      updateStepTokens: 256\n      outputSafetyMarginTokens: 256$/gm)].length;
+  if (progressiveBlocks !== configuredPools) {
+    findings.push(`${rel}: every pool must use the pinned progressive reconciliation policy`);
   }
   if (!new RegExp(`^    instanceId: tyr-r${replica}$`, "m").test(yaml) ||
       !/^    sharedSecretEnv: TYR_ROUTING_SECRET$/m.test(yaml)) {
@@ -144,8 +152,12 @@ if (pkg.scripts?.demo !== "node demo/seed-sweep.mjs --seeds=1-5 --pause-ms=0" ||
 if (!pkg.scripts?.verify?.includes("scripts/verify.mjs")) {
   findings.push("package.json: verify must use the bounded verification runner");
 }
-if (pkg.version !== "0.11.0") {
-  findings.push("package.json: this demand-aware benchmark release must be version 0.11.0");
+if (!pkg.scripts?.["demo:progressive"]?.includes("--provider-api=anthropic") ||
+    !pkg.scripts?.["demo:openai"]?.includes("--provider-api=openai")) {
+  findings.push("package.json: progressive and OpenAI compatibility demo commands are required");
+}
+if (pkg.version !== "0.12.0") {
+  findings.push("package.json: this progressive-reconciliation benchmark release must be version 0.12.0");
 }
 const lendingScript = pkg.scripts?.["demo:lending"] ?? "";
 for (const required of [
@@ -159,7 +171,21 @@ for (const required of [
     findings.push(`package.json: demo:lending is missing ${required}`);
   }
 }
+const dashboard = readFileSync(path.join(ROOT, "demo/grafana/dashboards/moflux-bench.json"), "utf8");
+for (const metric of [
+  "tyr_pool_progressive_tokens_released_total",
+  "tyr_pool_progressive_usage_reports_total",
+  "tyr_pool_progressive_updates_total",
+  "tyr_pool_progressive_coalesced_total",
+]) {
+  if (!dashboard.includes(metric)) findings.push(`Grafana dashboard is missing ${metric}`);
+}
 const presenter = readFileSync(path.join(ROOT, "demo/present.mjs"), "utf8");
+if (!presenter.includes('providerApi: str("provider-api", "anthropic")') ||
+    !presenter.includes('`--provider-api=${PROVIDER.api}`') ||
+    !presenter.includes("progressiveEarlyReleasedTokens")) {
+  findings.push("demo/present.mjs: progressive Anthropic execution or evidence recording is missing");
+}
 if (!presenter.includes("const defaultBatchConcurrencySlots = lendingRequested ? 4 : 1") ||
     !presenter.includes("const defaultTokenBudget = lendingRequested ? 64_000 : 40_000") ||
     !presenter.includes("const defaultBatchTokenPercent = lendingRequested ? 62.5 : 25")) {

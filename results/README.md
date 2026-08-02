@@ -59,8 +59,12 @@ Latchflo 0.5.1**. Read that field rather than any prose description — prose dr
 and an earlier revision of this file and of `.gitignore` both described this
 corpus as Tyr 0.16.0 / Latchflo 0.5.0, which the files themselves contradict.
 
-New licensed runs use Tyr 0.18.0 and Latchflo 0.6.0 with one-hop capacity-aware
-routing, automatic per-pool demand heartbeats, and optional demand-aware lending.
+New licensed runs use Tyr 0.19.0, Latchflo 0.6.1,
+async-bulkhead-llm 3.13.0, and async-bulkhead-ts 1.0.1. They add one-hop
+capacity-aware routing, automatic per-pool demand heartbeats, optional
+demand-aware lending, and progressive reconciliation for Anthropic-shaped
+streams. The new runtime is a distinct evidence set; existing reviewed JSON is
+not relabeled or rewritten.
 Normal `npm run demo` and `npm run demo:arms` runs retain the static 31/1,
 40,000-token policy. `npm run demo:lending` uses a fully funded 28/4 protected
 split with 24,000/40,000-token guarantees inside a 64,000-token group envelope,

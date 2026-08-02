@@ -40,6 +40,8 @@ import { dividedStaticCap, partitionStaticCap } from "./control-arm-lib.mjs";
 import { buildTrace } from "../load/trace-lib.mjs";
 import { reservationBounds, validateCapacityPlan } from "./capacity-lib.mjs";
 import {
+  ASYNC_BULKHEAD_LLM_VERSION,
+  ASYNC_BULKHEAD_TS_VERSION,
   LATCHFLO_VERSION,
   TYR_VERSION,
   ensureDemoEnv,
@@ -191,6 +193,20 @@ const OPT = Object.freeze({
   sigma: num("sigma", 0.25),
   kappa: num("kappa", 0),
   r1: num("r1", 400),
+  // Anthropic streams expose cumulative usage before completion, which is
+  // required to exercise Tyr 0.19 progressive reconciliation. OpenAI remains
+  // available for historical/conservative replay.
+  providerApi: str("provider-api", "anthropic"),
+});
+
+if (!["openai", "anthropic"].includes(OPT.providerApi)) {
+  throw new Error("--provider-api must be openai or anthropic");
+}
+
+const PROGRESSIVE_RECONCILIATION = Object.freeze({
+  enabled: true,
+  updateStepTokens: 256,
+  outputSafetyMarginTokens: 256,
 });
 
 /**
@@ -528,6 +544,7 @@ const CAPACITY_GROUP = OPT.lending
   : null;
 
 const PROVIDER = Object.freeze({
+  api: OPT.providerApi,
   envelope: OPT.envelope,
   queue: 8,
   sigma: OPT.sigma,
@@ -1211,6 +1228,7 @@ function loadgenArgs({ interactiveTargets, batchTargets, armLabel, outFile }) {
     `--interactive-targets=${interactiveTargets.join(",")}`,
     `--batch-targets=${batchTargets.join(",")}`,
     `--arm-label=${armLabel}`,
+    `--provider-api=${PROVIDER.api}`,
     `--duration-ms=${WORKLOAD.durationMs}`,
     `--seed=${WORKLOAD.seed}`,
     `--interactive-rps=${WORKLOAD.interactiveRps}`,
@@ -1391,6 +1409,26 @@ function validateLiveGrantCapacity(statsRows) {
       if (maxConcurrent < 1) {
         throw new Error(`${pool.name} on Tyr ${port} received no usable concurrency`);
       }
+      const progressive = stats?.tyr?.progressiveReconciliation;
+      if (progressive?.enabled !== true) {
+        throw new Error(`${pool.name} on Tyr ${port} does not have progressive reconciliation enabled`);
+      }
+      if (Number(progressive.updateStepTokens) !== PROGRESSIVE_RECONCILIATION.updateStepTokens) {
+        throw new Error(
+          `${pool.name} on Tyr ${port} reports progressive updateStepTokens=${progressive.updateStepTokens}; ` +
+            `expected ${PROGRESSIVE_RECONCILIATION.updateStepTokens}`,
+        );
+      }
+      if (
+        Number(progressive.outputSafetyMarginTokens) !==
+        PROGRESSIVE_RECONCILIATION.outputSafetyMarginTokens
+      ) {
+        throw new Error(
+          `${pool.name} on Tyr ${port} reports progressive outputSafetyMarginTokens=` +
+            `${progressive.outputSafetyMarginTokens}; expected ` +
+            `${PROGRESSIVE_RECONCILIATION.outputSafetyMarginTokens}`,
+        );
+      }
       if (!Number.isFinite(remainingMs)) {
         throw new Error(`${pool.name} on Tyr ${port} has no current Latchflo grant expiration`);
       }
@@ -1463,11 +1501,23 @@ function aggregateTokenAccounting(statsRows) {
     totalConsumed: 0,
     totalRefunded: 0,
     totalOverrun: 0,
+    progressiveReports: 0,
+    progressiveUpdates: 0,
+    progressiveCoalesced: 0,
+    progressiveEarlyReleasedTokens: 0,
   };
   for (const row of statsRows) {
     for (const partition of CAPACITY.pools) {
-      const token = row?.[partition.name]?.tokenBudget ?? {};
-      for (const key of Object.keys(total)) total[key] += Number(token[key] ?? 0);
+      const pool = row?.[partition.name] ?? {};
+      const token = pool.tokenBudget ?? {};
+      for (const key of ["totalReserved", "totalConsumed", "totalRefunded", "totalOverrun"]) {
+        total[key] += Number(token[key] ?? 0);
+      }
+      const progressive = pool.tyr?.progressiveReconciliation ?? {};
+      total.progressiveReports += Number(progressive.reports ?? 0);
+      total.progressiveUpdates += Number(progressive.updates ?? 0);
+      total.progressiveCoalesced += Number(progressive.coalesced ?? 0);
+      total.progressiveEarlyReleasedTokens += Number(progressive.earlyReleasedTokens ?? 0);
     }
   }
   return total;
@@ -1689,6 +1739,8 @@ async function runMoflux(env) {
   summary.runtime = {
     tyr: { version: TYR_VERSION, image: env.MOFLUX_TYR_IMAGE },
     latchflo: { version: LATCHFLO_VERSION, image: env.MOFLUX_LATCHFLO_IMAGE },
+    asyncBulkheadLlm: { version: ASYNC_BULKHEAD_LLM_VERSION },
+    asyncBulkheadTs: { version: ASYNC_BULKHEAD_TS_VERSION },
   };
   summary.capacity = {
     policy: CAPACITY.policy,
@@ -1704,11 +1756,17 @@ async function runMoflux(env) {
     pools: RESOLVED_CAPACITY,
     liveGrants,
   };
+  const progressiveEarlyReleaseRate =
+    tokenAccounting.totalRefunded > 0
+      ? tokenAccounting.progressiveEarlyReleasedTokens / tokenAccounting.totalRefunded
+      : 0;
   summary.tokenAccounting = {
     ...tokenAccounting,
     grossRecoveryRate: +grossRecoveryRate.toFixed(4),
     netRecovered,
     netRecoveryRate: +netRecoveryRate.toFixed(4),
+    progressiveEarlyReleaseRate: +progressiveEarlyReleaseRate.toFixed(4),
+    progressiveConfiguration: PROGRESSIVE_RECONCILIATION,
   };
   writeFileSync(outFile, JSON.stringify(summary, null, 2));
 
@@ -1975,9 +2033,20 @@ function printRecovery(summary) {
   console.log(`   refunded     ${t.totalRefunded.toLocaleString("en-US")} (${percent(t.grossRecoveryRate)})`);
   console.log(`   overrun      ${t.totalOverrun.toLocaleString("en-US")}`);
   console.log(`   net recovered ${t.netRecovered.toLocaleString("en-US")} (${percent(t.netRecoveryRate)})`);
+  if (t.progressiveConfiguration?.enabled !== false) {
+    console.log(
+      `   early release ${Number(t.progressiveEarlyReleasedTokens ?? 0).toLocaleString("en-US")} ` +
+        `(${percent(t.progressiveEarlyReleaseRate ?? 0)} of refunds)`,
+    );
+    console.log(
+      `   live reports  ${Number(t.progressiveReports ?? 0).toLocaleString("en-US")} ` +
+        `(${Number(t.progressiveUpdates ?? 0).toLocaleString("en-US")} applied, ` +
+        `${Number(t.progressiveCoalesced ?? 0).toLocaleString("en-US")} coalesced)`,
+    );
+  }
   say(
     "Recovery means unused safety reservation was returned to the pool for reuse;",
-    "it is not newly created capacity.",
+    "early release is the portion returned while a stream was still active.",
   );
 }
 
@@ -2008,7 +2077,7 @@ try {
     "Latchflo coordinates fleet capacity outside the request path.",
     "Grafana will open automatically; keep it visible beside this terminal.",
     "Workload panels populate automatically; the telemetry pipeline health panel should already read 1.",
-    `Both arms use scenario ${SCENARIO_ID}: seed ${WORKLOAD.seed}, ${WORKLOAD.interactiveRps} interactive RPS, then ${WORKLOAD.batchRps} batch RPS.`,
+    `Both arms use scenario ${SCENARIO_ID}: ${PROVIDER.api} streaming, seed ${WORKLOAD.seed}, ${WORKLOAD.interactiveRps} interactive RPS, then ${WORKLOAD.batchRps} batch RPS.`,
     `Capacity is partitioned by tier: ${RESOLVED_CAPACITY
       .map((pool) => `${pool.name} ${pool.maxConcurrent}/${pool.tokenFundedConcurrency} configured/funded slots, ${pool.tokenBudget.toLocaleString("en-US")} tokens across ${pool.agentCount} agent${pool.agentCount === 1 ? "" : "s"}`)
       .join(", ")}.`,
@@ -2072,7 +2141,9 @@ ${GREEN}${BOLD}   Baseline complete.${OFF}`);
   say(
     `Latchflo allocates ${OPT.envelope} concurrent slots and ${OPT.tokenBudget.toLocaleString("en-US")} in-flight tokens`,
     "across four interactive Tyr paths, with replica 4 also carrying the batch pool. Tyr makes each admission decision locally.",
-    "Unused token reservation is reconciled and returned after actual usage is known.",
+    PROVIDER.api === "anthropic"
+      ? "Tyr progressively returns processed input and generated-output reservation while each Anthropic stream is still active."
+      : "This OpenAI compatibility run settles usage at completion; progressive early release is expected to remain zero.",
   );
   const moflux = await runMoflux(env);
   assertValidRun(moflux, "MoFlux run");

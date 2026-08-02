@@ -1,6 +1,6 @@
 {
   "name": "moflux-bench",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "Synthetic benchmark harness for LLM admission control: a provider simulator with a parameterized concurrency-degradation curve, an open-loop multi-class load generator, and comparison arms.",
   "license": "Apache-2.0",
   "type": "module",
@@ -24,6 +24,8 @@
     "demo:hetero:blind": "node demo/ensure-env.mjs --quiet && node demo/seed-sweep.mjs --seeds=1-5 --pause-ms=0 --size-distribution=lognormal --control-arms=all --honor-retry-hints=false",
     "demo:lending": "node demo/ensure-env.mjs --quiet && node demo/seed-sweep.mjs --seeds=1-5 --pause-ms=0 --lending --batch-concurrency-slots=4 --token-budget=64000 --batch-token-percent=62.5 --control-arms=static-partition",
     "demo:moflux": "node demo/ensure-env.mjs --quiet && node demo/present.mjs --mode=moflux --step",
+    "demo:openai": "node demo/ensure-env.mjs --quiet && node demo/seed-sweep.mjs --seeds=1-5 --pause-ms=0 --provider-api=openai",
+    "demo:progressive": "node demo/ensure-env.mjs --quiet && node demo/seed-sweep.mjs --seeds=1-5 --pause-ms=0 --provider-api=anthropic",
     "demo:prepare": "node demo/ensure-env.mjs",
     "demo:record": "node demo/seed-sweep.mjs --seeds=1-5 --step",
     "demo:reset": "node demo/ensure-env.mjs --quiet && docker compose --env-file demo/moflux/.env -f demo/compose.yaml -f demo/moflux/compose.yaml down --volumes --remove-orphans",

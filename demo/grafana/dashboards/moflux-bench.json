@@ -773,7 +773,7 @@
       "id": 12,
       "type": "timeseries",
       "title": "Tyr token reconciliation",
-      "description": "Cumulative reservations, actual consumption, refunds, and overruns reported by Tyr.",
+      "description": "Cumulative reservations, consumption, total refunds, early progressive release, and overruns reported by Tyr.",
       "datasource": {
         "type": "prometheus",
         "uid": "bench-prom"
@@ -829,6 +829,18 @@
           "expr": "sum(tyr_pool_tokens_overrun_total)",
           "legendFormat": "overrun",
           "refId": "D",
+          "interval": "",
+          "editorMode": "code",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "bench-prom"
+          },
+          "expr": "sum(tyr_pool_progressive_tokens_released_total)",
+          "legendFormat": "released before completion",
+          "refId": "E",
           "interval": "",
           "editorMode": "code",
           "range": true
@@ -1192,6 +1204,140 @@
           "calcs": [
             "lastNotNull"
           ]
+        }
+      }
+    },
+    {
+      "id": 19,
+      "type": "stat",
+      "title": "Progressive early-release share",
+      "description": "Share of refunded token capacity returned before request completion during the visible range.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "bench-prom"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 0,
+        "y": 47
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "bench-prom"
+          },
+          "expr": "100 * sum(increase(tyr_pool_progressive_tokens_released_total[$__range])) / clamp_min(sum(increase(tyr_pool_tokens_refunded_total[$__range])), 1)",
+          "legendFormat": "early-release share",
+          "refId": "A",
+          "interval": "",
+          "editorMode": "code",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "continuous-GrYlRd"
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
+    },
+    {
+      "id": 20,
+      "type": "timeseries",
+      "title": "Progressive reconciliation activity",
+      "description": "Usage observations, applied hold reductions, and coalesced sub-step updates from Tyr 0.19.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "bench-prom"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 12,
+        "y": 47
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "bench-prom"
+          },
+          "expr": "sum(rate(tyr_pool_progressive_usage_reports_total[15s]))",
+          "legendFormat": "usage reports/s",
+          "refId": "A",
+          "interval": "",
+          "editorMode": "code",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "bench-prom"
+          },
+          "expr": "sum(rate(tyr_pool_progressive_updates_total[15s]))",
+          "legendFormat": "applied updates/s",
+          "refId": "B",
+          "interval": "",
+          "editorMode": "code",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "bench-prom"
+          },
+          "expr": "sum(rate(tyr_pool_progressive_coalesced_total[15s]))",
+          "legendFormat": "coalesced/s",
+          "refId": "C",
+          "interval": "",
+          "editorMode": "code",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
         }
       }
     }
