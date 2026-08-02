@@ -23,13 +23,16 @@ for (const arg of process.argv.slice(2)) {
   if (match) args.set(match[1], match[2]);
 }
 const seed = Number(args.get("seed"));
+if (args.get("provider-api") !== "anthropic") {
+  throw new Error("canonical demo did not explicitly select Anthropic streaming");
+}
 const results = process.env.MOFLUX_BENCH_RESULTS_DIR;
 mkdirSync(results, { recursive: true });
 const trace = { version: 1, hash: "trace-" + seed, planned: { interactive: 2, batch: 1, total: 3 }, entries: [] };
 const scenario = {
   id: "scenario-" + seed,
   workload: { durationMs: 10000, seed, interactiveRps: 1 },
-  provider: { envelope: 32, seed, sigma: 0.25 },
+  provider: { api: "anthropic", envelope: 32, seed, sigma: 0.25 },
   trace: { version: 1, hash: trace.hash, planned: trace.planned, evidence: "results/scenario-trace.json" },
   routing: { interactiveReplicas: ["r1", "r2", "r3", "r4"], batchReplicas: ["r4"] },
 };
@@ -121,7 +124,8 @@ try {
   assert.deepEqual(summary.seeds, [1, 2, 3, 4, 5]);
   assert.equal(summary.capacityPolicy.interactiveConcurrencySlots, 31);
   assert.equal(summary.capacityPolicy.batchConcurrencySlots, 1);
-  console.log("PASS  npm run demo executes the complete automatic five-seed path");
+  assert.equal(summary.scenarioTemplate.provider.api, "anthropic");
+  console.log("PASS  npm run demo executes the complete automatic five-seed Anthropic path");
 } finally {
   rmSync(temp, { recursive: true, force: true });
 }

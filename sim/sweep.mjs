@@ -78,7 +78,7 @@ for (const [sigma, kappa] of POINTS) {
       });
   }
 
-  await sleep(1200); // reach steady-state decode
+  await sleep(1800); // reach steady-state decode
   const before = await (await fetch(`${base}/admin/stats`)).json();
   const t0 = Date.now();
   await sleep(2500);
@@ -98,9 +98,9 @@ for (const [sigma, kappa] of POINTS) {
   });
 
   for (const controller of controllers) controller.abort();
-  await sleep(100);
+  await sleep(250);
   child.kill();
-  await sleep(100);
+  await sleep(250);
 }
 
 console.log(`\naggregate decode throughput at n=${N} concurrent streams, r1=${R1}`);

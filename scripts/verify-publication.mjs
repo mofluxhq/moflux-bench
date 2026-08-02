@@ -144,7 +144,7 @@ for (let replica = 1; replica <= 4; replica += 1) {
   }
 }
 
-if (pkg.scripts?.demo !== "node demo/seed-sweep.mjs --seeds=1-5 --pause-ms=0" ||
+if (pkg.scripts?.demo !== "node demo/seed-sweep.mjs --seeds=1-5 --pause-ms=0 --provider-api=anthropic" ||
     pkg.scripts?.predemo !== "npm run demo:prepare" ||
     pkg.scripts?.["demo:record"] !== "node demo/seed-sweep.mjs --seeds=1-5 --step") {
   findings.push("package.json: npm run demo must remain automatic and demo:record must retain the step-through path");

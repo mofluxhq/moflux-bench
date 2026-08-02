@@ -558,9 +558,15 @@ const server = createServer(async (req, res) => {
   }
 
   sequence += 1;
-  const requestKey = Number.isFinite(Number(body.seed))
-    ? `trace-${Number(body.seed)}`
-    : `untraced-${sequence}`;
+  const directSeed = Number(body.seed);
+  const anthropicReplayKey = typeof body.metadata?.user_id === "string"
+    ? body.metadata.user_id.trim()
+    : "";
+  const requestKey = Number.isFinite(directSeed)
+    ? `trace-${directSeed}`
+    : anthropicReplayKey !== ""
+      ? `trace-${anthropicReplayKey}`
+      : `untraced-${sequence}`;
   const inputTokens = trueInputTokens(body, requestKey);
   const cap = Number(body.max_tokens ?? body.max_completion_tokens ?? 4096);
 

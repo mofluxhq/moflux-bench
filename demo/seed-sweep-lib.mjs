@@ -275,10 +275,12 @@ export function buildSweepSummary({ mode, fault, seeds, records }) {
     .map((record) => record.moflux?.tokenAccounting)
     .filter(Boolean);
   const progressiveConfigurations = tokenMetrics
-    .map((metrics) => metrics.progressiveConfiguration)
-    .filter(Boolean);
+    .map((metrics) => metrics.progressiveConfiguration);
   const progressiveConfiguration = progressiveConfigurations[0] ?? null;
   if (progressiveConfiguration) {
+    if (progressiveConfigurations.some((configuration) => !configuration)) {
+      throw new Error("seed sweep omitted the progressive reconciliation policy on one or more seeds");
+    }
     const expected = JSON.stringify(progressiveConfiguration);
     for (const configuration of progressiveConfigurations) {
       if (JSON.stringify(configuration) !== expected) {

@@ -412,10 +412,17 @@ async function issue(entry) {
       let response;
       try {
         const target = targets[entry.targetSlots[attempt] % targets.length];
-        const body = {
-          ...baseBody,
-          seed: entry.providerSeeds[attempt],
-        };
+        const providerSeed = entry.providerSeeds[attempt];
+        const body = CONFIG.providerApi === "anthropic"
+          ? {
+              ...baseBody,
+              // Anthropic has no top-level `seed` field. Use its metadata
+              // envelope for the simulator's deterministic replay key so the
+              // benchmark remains protocol-shaped instead of relying on an
+              // upstream-invalid request property.
+              metadata: { user_id: `moflux-bench:${providerSeed}` },
+            }
+          : { ...baseBody, seed: providerSeed };
         response = await fetch(`${target}${PROVIDER_PATH}`, {
           method: "POST",
           headers: {

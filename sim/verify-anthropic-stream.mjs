@@ -42,7 +42,7 @@ try {
     body: JSON.stringify({
       model: "sim-model-interactive",
       stream: true,
-      seed: 123,
+      metadata: { user_id: "moflux-bench:123" },
       max_tokens: 400,
       messages: [{ role: "user", content: "x".repeat(1200) }],
     }),
@@ -51,6 +51,7 @@ try {
   assert.match(response.headers.get("content-type") ?? "", /text\/event-stream/);
 
   const events = [];
+  const eventNames = [];
   const decoder = new TextDecoder();
   let buffer = "";
   for await (const chunk of response.body ?? []) {
@@ -59,11 +60,17 @@ try {
     while ((index = buffer.indexOf("\n\n")) !== -1) {
       const frame = buffer.slice(0, index);
       buffer = buffer.slice(index + 2);
-      const data = frame.split(/\r?\n/).find((line) => line.startsWith("data:"));
+      const lines = frame.split(/\r?\n/);
+      const event = lines.find((line) => line.startsWith("event:"));
+      const data = lines.find((line) => line.startsWith("data:"));
       if (!data) continue;
+      if (event) eventNames.push(event.slice(6).trim());
       events.push(JSON.parse(data.slice(5).trim()));
     }
   }
+
+  assert.ok(eventNames.includes("message_start"), "stream omitted Anthropic event names");
+  assert.ok(eventNames.includes("message_delta"), "stream omitted message_delta event names");
 
   const start = events.find((event) => event.type === "message_start");
   assert.ok(start, "stream omitted message_start");

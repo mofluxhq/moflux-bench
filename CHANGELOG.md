@@ -36,9 +36,6 @@
   existing corpus records Tyr 0.17.0 and Latchflo 0.5.1; this release does not
   claim new performance numbers or relabel historical evidence for the new
   runtime.
-- Shorten the simulator verification sweep's warm-up and teardown pauses while
-  retaining its full 2.5-second measurement window. The seven-point sweep still
-  enforces the same 8% analytic-fidelity threshold.
 
 ### Fixed
 
@@ -47,6 +44,15 @@
   reviewed `results/video-seed-sweep*` paths.
 - Correct stale prose that described the reviewed corpus as Tyr 0.16.0 /
   Latchflo 0.5.0 despite the recorded runtime fields reading 0.17.0 / 0.5.1.
+- Make the canonical `npm run demo` command explicitly select Anthropic
+  streaming rather than relying only on the presenter's default.
+- Keep Anthropic requests protocol-shaped by carrying the deterministic replay
+  key in `metadata.user_id` instead of an unsupported top-level `seed` field.
+- Emit standard Anthropic `event:` lines and parse SSE `data:` lines regardless
+  of their position within a frame, preserving both Anthropic and OpenAI stream
+  handling.
+- Refuse to aggregate a seed sweep when any MoFlux run omits or changes the
+  pinned progressive-reconciliation policy.
 
 ## 0.11.0
 

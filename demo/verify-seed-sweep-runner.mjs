@@ -47,7 +47,7 @@ const trace = {
 const scenario = {
   id: "scenario-" + seed,
   workload: { durationMs: 10000, seed, interactiveRps: 6 },
-  provider: { envelope: 32, seed, sigma: 0.25 },
+  provider: { api: "anthropic", envelope: 32, seed, sigma: 0.25 },
   trace: { version: 1, hash: trace.hash, planned: trace.planned, evidence: "results/scenario-trace.json" },
 };
 function arm(name, successRate, success, p95, upstream, tokenAccounting) {
@@ -99,6 +99,16 @@ const tokenAccounting = {
   grossRecoveryRate: (250 + seed) / (1000 + seed),
   netRecovered: 250 + seed,
   netRecoveryRate: (250 + seed) / (1000 + seed),
+  progressiveReports: 8,
+  progressiveUpdates: 4,
+  progressiveCoalesced: 4,
+  progressiveEarlyReleasedTokens: 125 + seed,
+  progressiveEarlyReleaseRate: (125 + seed) / (250 + seed),
+  progressiveConfiguration: {
+    enabled: true,
+    updateStepTokens: 256,
+    outputSafetyMarginTokens: 256,
+  },
 };
 const moflux = arm("moflux", 0.8 + seed / 100, 8 + seed, 1200, 0, tokenAccounting);
 const comparison = {
@@ -170,6 +180,13 @@ try {
   assert.equal(summary.capacityPolicy.batchConcurrencySlots, 1);
   assert.equal(summary.capacityPolicy.batchTokenPercent, 25);
   assert.equal(summary.capacityPolicy.pools[1].agentCount, 1);
+  assert.equal(summary.scenarioTemplate.provider.api, "anthropic");
+  assert.deepEqual(summary.aggregate.tokenAccounting.progressiveConfiguration, {
+    enabled: true,
+    updateStepTokens: 256,
+    outputSafetyMarginTokens: 256,
+  });
+  assert.equal(summary.aggregate.tokenAccounting.progressiveReports.median, 8);
   assert.ok(existsSync(path.join(sweepDir, "baseline-seed-2.json")));
   assert.ok(existsSync(path.join(sweepDir, "moflux-enforce-seed-4.json")));
   assert.ok(existsSync(path.join(sweepDir, "comparison-seed-4.json")));

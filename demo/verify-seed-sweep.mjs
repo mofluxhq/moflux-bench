@@ -39,7 +39,7 @@ function summary(seed, successRate, success, p50, p95, upstream429s, refunded) {
     scenario: {
       id: `scenario-${seed}`,
       workload: { durationMs: 10000, seed, interactiveRps: 6 },
-      provider: { envelope: 32, seed, sigma: 0.25 },
+      provider: { api: "anthropic", envelope: 32, seed, sigma: 0.25 },
     },
     capacity: {
       policy: "interactive-first-static",
@@ -129,6 +129,31 @@ assert.deepEqual(aggregate.aggregate.tokenAccounting.progressiveConfiguration, {
   updateStepTokens: 256,
   outputSafetyMarginTokens: 256,
 });
+assert.throws(
+  () => buildSweepSummary({
+    mode: "compare",
+    fault: false,
+    seeds: [1, 2],
+    records: [
+      { seed: 1, baseline: baseline1, moflux: moflux1, comparison: { metrics: metrics1 }, scenario: baseline1.scenario, arms: {} },
+      {
+        seed: 2,
+        baseline: baseline2,
+        moflux: {
+          ...moflux2,
+          tokenAccounting: {
+            ...moflux2.tokenAccounting,
+            progressiveConfiguration: undefined,
+          },
+        },
+        comparison: { metrics: metrics2 },
+        scenario: baseline2.scenario,
+        arms: {},
+      },
+    ],
+  }),
+  /omitted the progressive reconciliation policy/,
+);
 assert.equal(armMetrics(baseline1).interactiveTailRatio, 2);
 assert.equal(aggregate.capacityPolicy.policy, "interactive-first-static");
 assert.equal(aggregate.capacityPolicy.interactiveConcurrencySlots, 31);
