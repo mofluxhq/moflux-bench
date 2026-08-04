@@ -207,8 +207,11 @@ Redis services before the first narrated phase. It waits for the provisioned
 `moflux-bench` dashboard and opens its direct URL automatically. Use
 `node demo/run-demo.mjs --step --no-open-grafana` for headless runs. Pass
 `--no-stack-start` only when the support services are already managed
-externally. A failed startup includes Compose status plus telemetry-relay and
-Grafana logs instead of reporting only that port 8200 was unhealthy.
+externally. External or test-managed services can be selected with
+`--telemetry-relay-url`, `--prometheus-url`, and `--grafana`; the normal
+defaults remain ports 8200, 9090, and 3000. A failed startup includes Compose
+status plus telemetry-relay and Grafana logs instead of reporting only that
+port 8200 was unhealthy.
 
 Requires Node 22+ and Docker Compose v2. There are no runtime npm dependencies —
 the Redis client is a small RESP implementation in `arms/redis-client.mjs`.

@@ -32,7 +32,6 @@ import { RedisClient } from "../arms/redis-client.mjs";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const RESULTS = path.resolve(process.env.MOFLUX_BENCH_RESULTS_DIR ?? path.join(ROOT, "results"));
 const SUPPORT_COMPOSE_FILE = path.join(ROOT, "demo", "compose.yaml");
-const TELEMETRY_RELAY_URL = "http://127.0.0.1:8200";
 const GRAFANA_DASHBOARD_UID = "moflux-bench";
 const GRAFANA_DASHBOARD_PATH = `/d/${GRAFANA_DASHBOARD_UID}/moflux-benchmark-harness?orgId=1&refresh=5s`;
 mkdirSync(RESULTS, { recursive: true });
@@ -59,6 +58,9 @@ const OPT = {
   r1: num("r1", 400),
   tokenBudget: num("token-budget", 40000),
   seed: num("seed", 7),
+  telemetryRelayUrl:
+    args.get("telemetry-relay-url") ?? "http://127.0.0.1:8200",
+  prometheusUrl: args.get("prometheus-url") ?? "http://127.0.0.1:9090",
   grafana: args.get("grafana") ?? "http://localhost:3000",
   grafanaAuth: args.get("grafana-auth") ?? "admin:admin",
   openGrafana: !flag("no-open-grafana"),
@@ -330,9 +332,9 @@ async function ensureSupportStack() {
   }
 
   try {
-    await waitForUrl(`${TELEMETRY_RELAY_URL}/healthz`, OPT.supportStackTimeoutMs);
-    await waitForUrl("http://127.0.0.1:9090/-/ready", OPT.supportStackTimeoutMs);
-    await waitForUrl("http://127.0.0.1:3000/api/health", OPT.supportStackTimeoutMs);
+    await waitForUrl(`${OPT.telemetryRelayUrl}/healthz`, OPT.supportStackTimeoutMs);
+    await waitForUrl(`${OPT.prometheusUrl}/-/ready`, OPT.supportStackTimeoutMs);
+    await waitForUrl(`${OPT.grafana}/api/health`, OPT.supportStackTimeoutMs);
     await waitForGrafanaDashboard(OPT.supportStackTimeoutMs);
   } catch (error) {
     const diagnostics = supportStackDiagnostics();
@@ -436,7 +438,7 @@ async function runArm({ label, arm, maxConcurrent, tokenBudget = 0, maxQueue = 0
   }
 
   // Re-check the relay immediately before launching the ephemeral load generator.
-  await waitForUrl(`${TELEMETRY_RELAY_URL}/healthz`, 5000);
+  await waitForUrl(`${OPT.telemetryRelayUrl}/healthz`, 5000);
 
   const gen = launch(
     "loadgen",
@@ -455,7 +457,7 @@ async function runArm({ label, arm, maxConcurrent, tokenBudget = 0, maxQueue = 0
     `--batch-input-chars=${WORKLOAD.batchInputChars}`,
     `--batch-max-tokens=${WORKLOAD.batchMaxTokens}`,
     "--metrics-port=0",
-    `--metrics-relay-url=${TELEMETRY_RELAY_URL}/ingest`,
+    `--metrics-relay-url=${OPT.telemetryRelayUrl}/ingest`,
     "--metrics-relay-required",
       `--out=${outFile}`,
     ],

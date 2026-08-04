@@ -156,8 +156,8 @@ if (!pkg.scripts?.["demo:progressive"]?.includes("--provider-api=anthropic") ||
     !pkg.scripts?.["demo:openai"]?.includes("--provider-api=openai")) {
   findings.push("package.json: progressive and OpenAI compatibility demo commands are required");
 }
-if (pkg.version !== "0.13.0") {
-  findings.push("package.json: this adaptive heterogeneous benchmark release must be version 0.13.0");
+if (pkg.version !== "0.13.1") {
+  findings.push("package.json: this full-stack verification patch release must be version 0.13.1");
 }
 const adaptiveScripts = [
   ["demo:hetero:adaptive", true],

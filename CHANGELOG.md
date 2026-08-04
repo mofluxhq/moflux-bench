@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.13.1 - 2026-08-04
+
+### Fixed
+
+- Make `demo/verify-full-stack-bootstrap.mjs` use operating-system-assigned
+  ephemeral ports for its fake telemetry relay, Prometheus, and Grafana
+  services. `npm run verify` no longer waits for hard-coded ports 8200, 9090,
+  and 3000 to become free when a real demo stack is already running.
+- Add `--telemetry-relay-url` and `--prometheus-url` overrides to
+  `demo/run-demo.mjs`, and use the existing `--grafana` override consistently
+  for readiness checks. All defaults remain unchanged for normal demo runs.
+- Remove local environment state and generated run output from the release
+  archive so publication hygiene passes without exposing credentials or
+  packaging transient benchmark artifacts.
+
 ## 0.13.0
 
 ### Added

@@ -49,30 +49,24 @@ function healthServer(pathname, extraRoutes = new Map()) {
   });
 }
 
-async function listenWhenFree(server, port) {
-  const deadline = Date.now() + 10_000;
-  while (Date.now() < deadline) {
-    try {
-      await new Promise((resolve, reject) => {
-        const onError = (error) => {
-          server.off("listening", onListening);
-          reject(error);
-        };
-        const onListening = () => {
-          server.off("error", onError);
-          resolve();
-        };
-        server.once("error", onError);
-        server.once("listening", onListening);
-        server.listen(port, "127.0.0.1");
-      });
-      return;
-    } catch (error) {
-      if (error.code !== "EADDRINUSE") throw error;
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-  }
-  throw new Error(`port ${port} did not become available`);
+async function listenEphemeral(server) {
+  await new Promise((resolve, reject) => {
+    const onError = (error) => {
+      server.off("listening", onListening);
+      reject(error);
+    };
+    const onListening = () => {
+      server.off("error", onError);
+      resolve();
+    };
+    server.once("error", onError);
+    server.once("listening", onListening);
+    server.listen(0, "127.0.0.1");
+  });
+
+  const address = server.address();
+  assert.ok(address && typeof address === "object", "server did not expose a TCP address");
+  return `http://127.0.0.1:${address.port}`;
 }
 
 const relay = createTelemetryRelayServer();
@@ -83,10 +77,10 @@ const grafana = healthServer(
 );
 
 try {
-  await Promise.all([
-    listenWhenFree(relay, 8200),
-    listenWhenFree(prometheus, 9090),
-    listenWhenFree(grafana, 3000),
+  const [telemetryRelayUrl, prometheusUrl, grafanaUrl] = await Promise.all([
+    listenEphemeral(relay),
+    listenEphemeral(prometheus),
+    listenEphemeral(grafana),
   ]);
 
   const run = await new Promise((resolve, reject) => {
@@ -100,6 +94,9 @@ try {
         "--pause-ms=0",
         "--sigma=0",
         "--r1=5000",
+        `--telemetry-relay-url=${telemetryRelayUrl}`,
+        `--prometheus-url=${prometheusUrl}`,
+        `--grafana=${grafanaUrl}`,
       ],
       {
         cwd: ROOT,
@@ -138,9 +135,9 @@ try {
     /compose -f .*demo\/compose\.yaml up -d --force-recreate telemetry-relay prometheus grafana redis/,
   );
   const browserCalls = readFileSync(browserMarker, "utf8");
-  assert.match(
-    browserCalls,
-    /^http:\/\/localhost:3000\/d\/moflux-bench\/moflux-benchmark-harness\?orgId=1&refresh=5s$/m,
+  assert.equal(
+    browserCalls.trim(),
+    `${grafanaUrl}/d/moflux-bench/moflux-benchmark-harness?orgId=1&refresh=5s`,
   );
   console.log("PASS  demo:full starts its support stack and opens the provisioned dashboard");
 } finally {
