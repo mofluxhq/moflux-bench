@@ -34,7 +34,7 @@ import {
 } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import { buildSweepSummary, parseSeedSpec } from "./seed-sweep-lib.mjs";
+import { adaptiveProofFailureMessage, buildSweepSummary, parseSeedSpec } from "./seed-sweep-lib.mjs";
 import {
   assertSafeResultsDir,
   assertSafeRunDir,
@@ -117,6 +117,7 @@ const step = flag("step");
 const pauseMs = num("pause-ms", 2500);
 const keepStack = !flag("cleanup");
 const openGrafana = !flag("no-open");
+const requireAdaptiveProof = flag("require-adaptive-proof");
 
 if (!Number.isFinite(pauseMs) || pauseMs < 0) throw new Error("--pause-ms must be non-negative");
 if (fault && mode === "baseline") throw new Error("--fault is not meaningful with --mode=baseline");
@@ -210,6 +211,7 @@ function childArgs(seed, index) {
     "run-id",
     "publish-as",
     "force-publish",
+    "require-adaptive-proof",
   ]);
   const forwarded = originalArgs.filter((arg) => {
     const match = /^--([^=]+)(?:=.*)?$/.exec(arg);
@@ -480,6 +482,27 @@ function printAggregate(summary) {
     ]);
   }
 
+  const adaptive = summary.adaptiveProof;
+  if (adaptive) {
+    console.log(`${BOLD}   Adaptive 28/4 acceptance gate${OFF}`);
+    console.table([
+      {
+        "policy exact": adaptive.policyMatches ? "yes" : "NO",
+        "passed seeds": `${adaptive.passedSeeds}/${adaptive.seeds}`,
+        "zero upstream 429": `${adaptive.zeroUpstream429Seeds}/${adaptive.seeds}`,
+        "interactive ≥90%": `${adaptive.interactiveTargetSeeds}/${adaptive.seeds}`,
+        "batch ≥10%": `${adaptive.batchTargetSeeds}/${adaptive.seeds}`,
+        "occupancy proof": `${adaptive.occupancyObservedSeeds}/${adaptive.seeds}`,
+        "controller proof": `${adaptive.controllerObservedSeeds}/${adaptive.seeds}`,
+        "floor restored": `${adaptive.floorRestoredSeeds}/${adaptive.seeds}`,
+        "batch served": `${adaptive.batchServedSeeds}/${adaptive.seeds}`,
+      },
+    ]);
+    if (!adaptive.passed) {
+      console.log(`${YELLOW}   Adaptive proof failed: ${adaptiveProofFailureMessage(adaptive)}${OFF}`);
+    }
+  }
+
   const lending = summary.aggregate.lending;
   if (lending) {
     console.log(`${BOLD}   Demand-aware lending proof${OFF}`);
@@ -569,6 +592,15 @@ try {
 
   const summary = buildSweepSummary({ mode, fault, seeds, records });
   writeFileSync(summaryFile, JSON.stringify(summary, null, 2));
+  if (requireAdaptiveProof) {
+    const failure = adaptiveProofFailureMessage(summary.adaptiveProof);
+    if (failure) {
+      throw new Error(
+        `adaptive 28/4 acceptance gate failed: ${failure}. ` +
+          `The complete evidence remains at ${relativePath(summaryFile)}`,
+      );
+    }
+  }
 
   // A stable path to the newest run, so tooling never has to guess a run id
   // and never has to fall back to reading reviewed evidence.

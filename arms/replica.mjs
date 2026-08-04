@@ -505,6 +505,13 @@ const server = createServer(async (req, res) => {
   }
 });
 
+server.on("error", (error) => {
+  const detail = error?.code === "EADDRINUSE"
+    ? `port ${CONFIG.port} is already in use by another process`
+    : `${error?.code ?? "error"}: ${error?.message ?? String(error)}`;
+  console.error(`replica ${CONFIG.id} failed to start: ${detail}`);
+  process.exit(1);
+});
 server.listen(CONFIG.port, "0.0.0.0", () => {
   console.log(
     `replica ${CONFIG.id} :${CONFIG.port} arm=${CONFIG.arm} ` +

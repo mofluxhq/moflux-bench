@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { armMetrics, buildSweepSummary, median, parseSeedSpec, summarize } from "./seed-sweep-lib.mjs";
+import { adaptiveProofFailureMessage, armMetrics, buildSweepSummary, median, parseSeedSpec, summarize } from "./seed-sweep-lib.mjs";
 
 assert.deepEqual(parseSeedSpec("1-3,7,3"), [1, 2, 3, 7]);
 assert.deepEqual(parseSeedSpec("0"), [0]);
@@ -160,6 +160,111 @@ assert.equal(aggregate.capacityPolicy.interactiveConcurrencySlots, 31);
 assert.equal(aggregate.capacityPolicy.batchConcurrencySlots, 1);
 assert.equal(aggregate.capacityPolicy.batchConcurrencyPercent, 3.125);
 assert.equal(aggregate.capacityPolicy.pools[1].agentCount, 1);
+const adaptiveRecords = records.map((record) => {
+  const moflux = structuredClone(record.moflux);
+  moflux.capacity = {
+    profile: "adaptive-28-4",
+    policy: "interactive-first-demand-aware",
+    batchFloorPercent: null,
+    batchConcurrencySlots: 4,
+    interactiveConcurrencySlots: 28,
+    batchConcurrencyPercent: 12.5,
+    batchTokenPercent: 62.5,
+    envelope: 32,
+    tokenBudget: 64000,
+    capacityGroup: "sim-workloads",
+    demandPolicy: {
+      enabled: true,
+      reportStaleAfterMs: 6000,
+      idleAfterMs: 3000,
+      maxStarvationMs: 5000,
+    },
+    pools: [
+      { name: "sim-interactive", maxConcurrent: 32, tokenBudget: 64000, guaranteedMaxConcurrent: 28, guaranteedTokenBudget: 24000, ceilingMaxConcurrent: 32, ceilingTokenBudget: 64000, agentCount: 4 },
+      { name: "sim-batch", maxConcurrent: 32, tokenBudget: 64000, guaranteedMaxConcurrent: 4, guaranteedTokenBudget: 40000, ceilingMaxConcurrent: 32, ceilingTokenBudget: 64000, agentCount: 1 },
+    ],
+  };
+  moflux.classes.interactive.upstreamReject = 0;
+  moflux.classes.interactive.successRate = 0.95;
+  moflux.classes.batch.upstreamReject = 0;
+  moflux.classes.batch.successRate = 0.12;
+  moflux.classes.batch.success = 4;
+  moflux.lending = {
+    idleWindow: { borrowed: true, borrowedSlots: 4 },
+    floorReassertion: { admissionGapMs: 750 },
+    controlPlane: {
+      lendingObserved: true,
+      floorRestored: true,
+      restorationDurationMs: 500,
+    },
+  };
+  return { ...record, moflux };
+});
+const adaptive = buildSweepSummary({
+  mode: "compare",
+  fault: false,
+  seeds: [1, 2],
+  records: adaptiveRecords,
+});
+assert.equal(adaptive.capacityPolicy.profile, "adaptive-28-4");
+assert.equal(adaptive.adaptiveProof.passed, true);
+assert.equal(adaptive.adaptiveProof.passedSeeds, 2);
+assert.equal(adaptive.adaptiveProof.zeroUpstream429Seeds, 2);
+assert.equal(adaptive.adaptiveProof.interactiveTargetSeeds, 2);
+assert.equal(adaptive.adaptiveProof.batchTargetSeeds, 2);
+assert.equal(adaptive.adaptiveProof.occupancyObservedSeeds, 2);
+assert.equal(adaptive.adaptiveProof.controllerObservedSeeds, 2);
+assert.equal(adaptive.adaptiveProof.floorRestoredSeeds, 2);
+assert.equal(adaptive.adaptiveProof.batchServedSeeds, 2);
+assert.equal(adaptiveProofFailureMessage(adaptive.adaptiveProof), null);
+
+const partialOccupancyRecords = structuredClone(adaptiveRecords);
+partialOccupancyRecords[1].moflux.lending.idleWindow.borrowed = false;
+const partialOccupancy = buildSweepSummary({
+  mode: "compare",
+  fault: false,
+  seeds: [1, 2],
+  records: partialOccupancyRecords,
+});
+assert.equal(partialOccupancy.adaptiveProof.passed, true);
+assert.equal(partialOccupancy.adaptiveProof.occupancyObservedSeeds, 1);
+
+const failedAdaptiveRecords = structuredClone(adaptiveRecords);
+failedAdaptiveRecords[1].moflux.lending.controlPlane.floorRestored = false;
+const failedAdaptive = buildSweepSummary({
+  mode: "compare",
+  fault: false,
+  seeds: [1, 2],
+  records: failedAdaptiveRecords,
+});
+assert.equal(failedAdaptive.adaptiveProof.passed, false);
+assert.match(adaptiveProofFailureMessage(failedAdaptive.adaptiveProof), /seed 2: batch floor not restored/);
+const lowBatchRecords = structuredClone(adaptiveRecords);
+lowBatchRecords[0].moflux.classes.batch.successRate = 0.05;
+lowBatchRecords[0].moflux.classes.batch.success = 3;
+const lowBatch = buildSweepSummary({
+  mode: "compare",
+  fault: false,
+  seeds: [1, 2],
+  records: lowBatchRecords,
+});
+assert.equal(lowBatch.adaptiveProof.passed, false);
+assert.match(adaptiveProofFailureMessage(lowBatch.adaptiveProof), /batch completions 3 < protected floor 4/);
+const noOccupancyRecords = structuredClone(adaptiveRecords);
+for (const record of noOccupancyRecords) record.moflux.lending.idleWindow.borrowed = false;
+const noOccupancy = buildSweepSummary({
+  mode: "compare",
+  fault: false,
+  seeds: [1, 2],
+  records: noOccupancyRecords,
+});
+assert.equal(noOccupancy.adaptiveProof.passed, false);
+assert.match(
+  adaptiveProofFailureMessage(noOccupancy.adaptiveProof),
+  /no seed showed idle occupancy above the static 28-slot floor/,
+);
+assert.equal(adaptiveProofFailureMessage(null), "the run did not use --capacity-profile=adaptive-28-4");
+
 const mismatchedRecords = structuredClone(records);
 mismatchedRecords[1].moflux.capacity.batchTokenPercent = 30;
 assert.throws(

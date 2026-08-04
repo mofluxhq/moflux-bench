@@ -531,10 +531,11 @@ ${run.stderr}`);
   if (!(result.classes.batch.success > 0)) {
     throw new Error("dedicated batch capacity did not carry a request");
   }
-  if (result.capacity?.policy !== "interactive-first-static" ||
+  if (result.capacity?.profile !== "historical-31-1" ||
+      result.capacity?.policy !== "interactive-first-static" ||
       result.capacity?.interactiveConcurrencySlots !== 31 ||
       result.capacity?.batchConcurrencySlots !== 1) {
-    throw new Error("presenter did not record the canonical 31/1 capacity policy");
+    throw new Error("presenter did not record the historical 31/1 capacity profile");
   }
   if (result.runtime?.tyr?.version !== "0.19.0" || result.runtime?.latchflo?.version !== "0.6.1") {
     throw new Error("result did not record the Tyr 0.19.0 / Latchflo 0.6.1 runtime");

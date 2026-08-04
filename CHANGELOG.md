@@ -1,5 +1,71 @@
 # Changelog
 
+## 0.13.0
+
+### Added
+
+- Add `npm run demo:hetero:adaptive` and
+  `npm run demo:hetero:adaptive:blind` as the canonical mixed-workload
+  comparisons. Both combine lognormal request sizes, progressive token
+  reconciliation, a demand-aware 28/4 protected capacity profile, and all
+  comparison arms on the same five traces.
+- Add the named `adaptive-28-4` capacity profile. It fixes the shared envelope
+  at 32 concurrency slots and 64,000 in-flight tokens, with 28/4 protected
+  concurrency and 24,000/40,000 protected tokens. Conflicting overrides are
+  rejected instead of silently changing the policy a result claims to measure.
+- Add a per-seed adaptive acceptance record to sweep summaries. It reports
+  upstream 429s, batch completions, borrowed slots, controller lending proof,
+  floor restoration, restoration duration, and first batch service latency.
+- Add the `--require-adaptive-proof` gate with per-seed interactive, batch,
+  controller-event, floor-restoration, and upstream-overload checks. The gate
+  requires the protected four-slot batch floor to complete at least four
+  requests per seed and treats occupancy above 28 as sweep-level corroboration.
+  Failed-run evidence remains available for diagnosis.
+- Add a preflight check that TCP 9000 is free before a run starts. The provider
+  simulator is a host process, so no Compose command and no `npm run demo:down`
+  can release that port; an orphan from an interrupted run previously surfaced
+  as a startup timeout part-way into an arm. The check tolerates a socket that
+  is still being released between seeds.
+- Add `demo/host-process-lib.mjs` and `demo/verify-host-supervision.mjs`,
+  extracting host child supervision from the presenter so its failure reporting
+  is covered by the verification suite without Docker.
+
+### Changed
+
+- Record the selected capacity profile in every new MoFlux result and aggregate
+  summary. Historical 31/1 runs are labeled `historical-31-1`; existing
+  `--lending` experiments remain available as `custom-demand-aware` policies.
+- Keep `demo:hetero` and `demo:hetero:blind` unchanged for historical 31/1
+  reproduction. The adaptive commands are additive and do not relabel or
+  overwrite reviewed evidence.
+
+### Fixed
+
+- Validate the adaptive batch guarantee using at least four completed batch
+  requests per seed rather than a workload-dependent success percentage.
+- Treat idle-window occupancy above 28 as sweep-level corroboration while
+  retaining Latchflo's `capacity_group.lending_observed` event as the per-seed
+  source of truth.
+- Remove local `.env`, macOS metadata, scratch arm JSON, and generated run
+  directories from the release copy so publication hygiene passes without
+  deleting reviewed evidence.
+- Keep the slow-drain and full-presenter verification checks bounded while
+  allowing enough time for them to complete on slower CI hosts.
+- Report why a host process failed to start instead of reporting only that it
+  did. The liveness guard tested `child.exitCode !== null`, which stays `null`
+  when a process is terminated by a signal, so a killed simulator or replica
+  was mistaken for a slow one: the poll ran to its full deadline and reported
+  `timed out waiting for <label>; last result: fetch failed`, the same sentence
+  a slow start, a crash, and a taken port all produced. Startup failures now
+  name the exit code or signal, report elapsed time and whether the process was
+  still running, and carry the child's own last output — including the case
+  where it produced none.
+- Report a bind failure in the provider simulator and the replicas as one line
+  naming the port, rather than an unhandled `error` event stack from
+  `node:net` that identifies neither component nor collision.
+- Route the provider simulator's port through a single constant shared by the
+  preflight, the launch arguments, and the replica upstream.
+
 ## 0.12.0
 
 ### Added

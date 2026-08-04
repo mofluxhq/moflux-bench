@@ -620,6 +620,16 @@ const server = createServer(async (req, res) => {
 });
 
 startOccupancySampler();
+// Without this, a taken port surfaces as an unhandled 'error' event: a stack
+// trace from node:net that says nothing about which demo component collided
+// with what. The supervisor reads this line back out of the child's output.
+server.on("error", (error) => {
+  const detail = error?.code === "EADDRINUSE"
+    ? `port ${CONFIG.port} is already in use by another process`
+    : `${error?.code ?? "error"}: ${error?.message ?? String(error)}`;
+  console.error(`provider-sim failed to start: ${detail}`);
+  process.exit(1);
+});
 server.listen(CONFIG.port, "0.0.0.0", () => {
   console.log(
     `provider-sim :${CONFIG.port} envelope=${CONFIG.envelope} queue=${CONFIG.queue} ` +

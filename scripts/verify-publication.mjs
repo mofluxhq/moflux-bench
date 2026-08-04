@@ -156,9 +156,29 @@ if (!pkg.scripts?.["demo:progressive"]?.includes("--provider-api=anthropic") ||
     !pkg.scripts?.["demo:openai"]?.includes("--provider-api=openai")) {
   findings.push("package.json: progressive and OpenAI compatibility demo commands are required");
 }
-if (pkg.version !== "0.12.0") {
-  findings.push("package.json: this progressive-reconciliation benchmark release must be version 0.12.0");
+if (pkg.version !== "0.13.0") {
+  findings.push("package.json: this adaptive heterogeneous benchmark release must be version 0.13.0");
 }
+const adaptiveScripts = [
+  ["demo:hetero:adaptive", true],
+  ["demo:hetero:adaptive:blind", false],
+];
+for (const [name, honorsRetryHints] of adaptiveScripts) {
+  const script = pkg.scripts?.[name] ?? "";
+  for (const required of [
+    "--size-distribution=lognormal",
+    "--capacity-profile=adaptive-28-4",
+    "--control-arms=all",
+    "--require-adaptive-proof",
+  ]) {
+    if (!script.includes(required)) findings.push(`package.json: ${name} is missing ${required}`);
+  }
+  const blind = script.includes("--honor-retry-hints=false");
+  if (blind === honorsRetryHints) {
+    findings.push(`package.json: ${name} has the wrong retry-hint mode`);
+  }
+}
+
 const lendingScript = pkg.scripts?.["demo:lending"] ?? "";
 for (const required of [
   "--lending",
@@ -190,6 +210,15 @@ if (!presenter.includes("const defaultBatchConcurrencySlots = lendingRequested ?
     !presenter.includes("const defaultTokenBudget = lendingRequested ? 64_000 : 40_000") ||
     !presenter.includes("const defaultBatchTokenPercent = lendingRequested ? 62.5 : 25")) {
   findings.push("demo/present.mjs: lending defaults must be a fully token-funded 28/4 policy");
+}
+if (!presenter.includes('requestedCapacityProfile === "adaptive-28-4"') ||
+    !presenter.includes('profile: OPT.capacityProfile')) {
+  findings.push("demo/present.mjs: the named adaptive-28-4 capacity profile is missing");
+}
+const seedSweep = readFileSync(path.join(ROOT, "demo/seed-sweep.mjs"), "utf8");
+if (!seedSweep.includes("--capacity-profile=adaptive-28-4") &&
+    !seedSweep.includes("adaptive 28/4 acceptance gate failed")) {
+  findings.push("demo/seed-sweep.mjs: adaptive proof enforcement is missing");
 }
 
 /**

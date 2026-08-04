@@ -128,7 +128,15 @@ longer than the normal comparison.
 
 ```bash
 npm run demo:lending
+npm run demo:hetero:adaptive
+npm run demo:hetero:adaptive:blind
 ```
+
+`demo:lending` is the focused static-partition comparison. The adaptive
+heterogeneous commands are the recommended mixed-workload scenes: they add
+lognormal request sizes, all control arms, and an acceptance gate that requires
+proof on every seed. The blind variant disables retry-hint handling while
+replaying the same trace shape and capacity policy.
 
 This is a separate five-seed comparison because it changes the control-plane
 policy and lease cadence. The reference arm is an exact static 28/4 partition
@@ -140,10 +148,15 @@ The lending command uses a 64,000-token envelope with 24,000 interactive and
 funded for the current request shapes.
 
 The command does not infer lending from configuration or a run-long 32/32 peak.
-It requires idle-window occupancy above the static 28-slot ceiling and a
-matching `capacity_group.lending_observed` event. Floor restoration requires
-both controller evidence and completed batch work. Missing either proof makes
-the run inconclusive or failed, not successful.
+Each seed requires a matching `capacity_group.lending_observed` event, while
+idle-window occupancy above the static 28-slot ceiling provides independent
+corroboration somewhere in the sweep. Floor restoration requires both
+controller evidence and completed batch work. The adaptive commands require at least 90% interactive success, at least four
+completed batch requests, a matching controller lending event, restored batch
+capacity, and zero upstream 429s on every seed. Idle-window occupancy above 28
+is required across the sweep rather than on every stochastic seed. Missing any
+required proof fails the command while preserving the run directory for
+diagnosis.
 
 ## Suggested narration
 

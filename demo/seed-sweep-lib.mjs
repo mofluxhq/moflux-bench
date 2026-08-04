@@ -159,6 +159,7 @@ function capacityPolicy(summary) {
   const capacity = summary?.capacity;
   if (!capacity) return null;
   return {
+    profile: capacity.profile ?? null,
     policy: capacity.policy ?? null,
     batchFloorPercent: capacity.batchFloorPercent ?? null,
     batchConcurrencySlots: capacity.batchConcurrencySlots,
@@ -171,6 +172,142 @@ function capacityPolicy(summary) {
     demandPolicy: capacity.demandPolicy ?? null,
     pools: capacity.pools,
   };
+}
+
+const ADAPTIVE_MIN_INTERACTIVE_SUCCESS_RATE = 0.9;
+const ADAPTIVE_MIN_BATCH_SUCCESSES = 4;
+
+function adaptiveProof(records, capacity) {
+  if (capacity?.profile !== "adaptive-28-4") return null;
+
+  const interactivePool = capacity.pools?.find((pool) => pool.name === "sim-interactive");
+  const batchPool = capacity.pools?.find((pool) => pool.name === "sim-batch");
+  const policyMatches =
+    capacity.policy === "interactive-first-demand-aware" &&
+    capacity.interactiveConcurrencySlots === 28 &&
+    capacity.batchConcurrencySlots === 4 &&
+    capacity.envelope === 32 &&
+    capacity.tokenBudget === 64_000 &&
+    capacity.batchTokenPercent === 62.5 &&
+    Boolean(capacity.capacityGroup) &&
+    capacity.demandPolicy?.enabled === true &&
+    interactivePool?.guaranteedMaxConcurrent === 28 &&
+    interactivePool?.guaranteedTokenBudget === 24_000 &&
+    interactivePool?.ceilingMaxConcurrent === 32 &&
+    interactivePool?.ceilingTokenBudget === 64_000 &&
+    batchPool?.guaranteedMaxConcurrent === 4 &&
+    batchPool?.guaranteedTokenBudget === 40_000 &&
+    batchPool?.ceilingMaxConcurrent === 32 &&
+    batchPool?.ceilingTokenBudget === 64_000;
+
+  const perSeed = records.map((record) => {
+    const moflux = record.moflux ?? {};
+    const lending = moflux.lending ?? {};
+    const upstream429s =
+      Number(moflux.classes?.interactive?.upstreamReject ?? 0) +
+      Number(moflux.classes?.batch?.upstreamReject ?? 0);
+    const interactiveSuccessRate = Number(moflux.classes?.interactive?.successRate ?? 0);
+    const batchSuccessRate = Number(moflux.classes?.batch?.successRate ?? 0);
+    const batchSuccess = Number(moflux.classes?.batch?.success ?? 0);
+    const interactiveTargetMet = interactiveSuccessRate >= ADAPTIVE_MIN_INTERACTIVE_SUCCESS_RATE;
+    const minimumBatchSuccesses = Math.max(
+      ADAPTIVE_MIN_BATCH_SUCCESSES,
+      Number(capacity.batchConcurrencySlots ?? 0),
+    );
+    const batchTargetMet = batchSuccess >= minimumBatchSuccesses;
+    const occupancyLendingObserved = lending.idleWindow?.borrowed === true;
+    const controllerLendingObserved = lending.controlPlane?.lendingObserved === true;
+    const floorRestored = lending.controlPlane?.floorRestored === true;
+    const batchServed = batchSuccess > 0;
+    const passed =
+      policyMatches &&
+      upstream429s === 0 &&
+      interactiveTargetMet &&
+      batchTargetMet &&
+      controllerLendingObserved &&
+      floorRestored &&
+      batchServed;
+
+    return {
+      seed: record.seed,
+      passed,
+      upstream429s,
+      interactiveSuccessRate,
+      batchSuccessRate,
+      batchSuccess,
+      minimumBatchSuccesses,
+      interactiveTargetMet,
+      batchTargetMet,
+      occupancyLendingObserved,
+      controllerLendingObserved,
+      floorRestored,
+      borrowedSlots: lending.idleWindow?.borrowedSlots ?? null,
+      floorRestorationDurationMs: lending.controlPlane?.restorationDurationMs ?? null,
+      batchFirstServiceGapMs: lending.floorReassertion?.admissionGapMs ?? null,
+    };
+  });
+
+  const count = (key) => perSeed.filter((seed) => seed[key] === true).length;
+  const failures = [];
+  if (!policyMatches) failures.push("capacity policy is not the exact adaptive 28/4 profile");
+  for (const seed of perSeed) {
+    const missing = [];
+    if (seed.upstream429s !== 0) missing.push(`${seed.upstream429s} upstream 429s`);
+    if (!seed.interactiveTargetMet) {
+      missing.push(
+        `interactive success ${(seed.interactiveSuccessRate * 100).toFixed(1)}% < ` +
+          `${(ADAPTIVE_MIN_INTERACTIVE_SUCCESS_RATE * 100).toFixed(0)}%`,
+      );
+    }
+    if (!seed.batchTargetMet) {
+      missing.push(
+        `batch completions ${seed.batchSuccess} < protected floor ${seed.minimumBatchSuccesses}`,
+      );
+    }
+    if (!seed.controllerLendingObserved) missing.push("no controller lending event");
+    if (!seed.floorRestored) missing.push("batch floor not restored");
+    if (seed.batchSuccess <= 0) missing.push("no batch success");
+    if (missing.length > 0) failures.push(`seed ${seed.seed}: ${missing.join(", ")}`);
+  }
+
+  const occupancyObservedSeeds = count("occupancyLendingObserved");
+  if (occupancyObservedSeeds === 0) {
+    failures.push("no seed showed idle occupancy above the static 28-slot floor");
+  }
+
+  return {
+    profile: "adaptive-28-4",
+    targets: {
+      minimumInteractiveSuccessRate: ADAPTIVE_MIN_INTERACTIVE_SUCCESS_RATE,
+      minimumBatchSuccesses: ADAPTIVE_MIN_BATCH_SUCCESSES,
+      maximumUpstream429s: 0,
+    },
+    policyMatches,
+    seeds: perSeed.length,
+    passedSeeds: perSeed.filter((seed) => seed.passed).length,
+    zeroUpstream429Seeds: perSeed.filter((seed) => seed.upstream429s === 0).length,
+    interactiveTargetSeeds: count("interactiveTargetMet"),
+    batchTargetSeeds: count("batchTargetMet"),
+    occupancyObservedSeeds,
+    controllerObservedSeeds: count("controllerLendingObserved"),
+    floorRestoredSeeds: count("floorRestored"),
+    batchServedSeeds: perSeed.filter((seed) => seed.batchSuccess > 0).length,
+    passed:
+      policyMatches &&
+      perSeed.length > 0 &&
+      occupancyObservedSeeds > 0 &&
+      perSeed.every((seed) => seed.passed),
+    failures,
+    perSeed,
+  };
+}
+
+export function adaptiveProofFailureMessage(proof) {
+  if (!proof) return "the run did not use --capacity-profile=adaptive-28-4";
+  if (proof.passed) return null;
+  return proof.failures.length > 0
+    ? proof.failures.join("; ")
+    : "adaptive proof did not pass on every seed";
 }
 
 function omitSeed(object) {
@@ -305,6 +442,7 @@ export function buildSweepSummary({ mode, fault, seeds, records }) {
         }
       : null,
     capacityPolicy: firstCapacityPolicy,
+    adaptiveProof: adaptiveProof(records, firstCapacityPolicy),
     runs: records.map((record) => ({
       seed: record.seed,
       scenario: record.scenario,

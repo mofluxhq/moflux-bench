@@ -48,6 +48,18 @@ import {
   imageMatchesVersion,
 } from "./env-lib.mjs";
 import { assertSafeResultsDir } from "./evidence-paths-lib.mjs";
+import {
+  assertHostPortFree,
+  fetchWithTimeout,
+  hostChildren,
+  killChildTree,
+  launchNode,
+  sleep,
+  stopHostChildren,
+  stopHostChildrenSync,
+  terminateHostChild,
+  waitFor,
+} from "./host-process-lib.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const RESULTS = process.env.MOFLUX_BENCH_RESULTS_DIR
@@ -58,6 +70,10 @@ const MOFLUX_COMPOSE = path.join(ROOT, "demo", "moflux", "compose.yaml");
 const ENV_FILE = process.env.MOFLUX_BENCH_ENV_FILE
   ? path.resolve(process.env.MOFLUX_BENCH_ENV_FILE)
   : path.join(ROOT, "demo", "moflux", ".env");
+// The provider simulator runs on the host, not in Compose. One constant so
+// the preflight, the launch arguments, and the replica upstream cannot drift.
+const PROVIDER_PORT = 9000;
+const PROVIDER_BASE_URL = `http://127.0.0.1:${PROVIDER_PORT}`;
 const TYR_PORTS = [8101, 8102, 8103, 8104];
 const INTERACTIVE_PORTS = [8101, 8102, 8103, 8104];
 const BATCH_PORTS = [8104];
@@ -87,7 +103,19 @@ const bool = (name, fallback) => (rawArgs.has(name) ? rawArgs.get(name) === "tru
 const num = (name, fallback) => (rawArgs.has(name) ? Number(rawArgs.get(name)) : fallback);
 const str = (name, fallback) => rawArgs.get(name) ?? fallback;
 
-const lendingRequested = str("lending", "false") !== "false";
+const legacyLendingRequested = str("lending", "false") !== "false";
+const requestedCapacityProfile = str("capacity-profile", "").trim();
+const CAPACITY_PROFILE_NAMES = new Set(["", "historical-31-1", "adaptive-28-4"]);
+if (!CAPACITY_PROFILE_NAMES.has(requestedCapacityProfile)) {
+  throw new Error(
+    `--capacity-profile must be historical-31-1 or adaptive-28-4, got "${requestedCapacityProfile}"`,
+  );
+}
+if (requestedCapacityProfile === "historical-31-1" && legacyLendingRequested) {
+  throw new Error("--capacity-profile=historical-31-1 cannot be combined with --lending");
+}
+const adaptiveProfileRequested = requestedCapacityProfile === "adaptive-28-4";
+const lendingRequested = adaptiveProfileRequested || legacyLendingRequested;
 const hasLegacyBatchFloor = rawArgs.has("batch-floor-percent");
 const hasBatchConcurrencyPercent = rawArgs.has("batch-concurrency-percent");
 const hasBatchConcurrencySlots = rawArgs.has("batch-concurrency-slots");
@@ -118,6 +146,30 @@ const configuredBatchConcurrencySlots = hasBatchConcurrencySlots
 const configuredBatchTokenPercent = rawArgs.has("batch-token-percent")
   ? num("batch-token-percent", defaultBatchTokenPercent)
   : legacyBatchFloorPercent ?? defaultBatchTokenPercent;
+
+if (adaptiveProfileRequested) {
+  const conflicts = [];
+  if (hasLegacyBatchFloor) conflicts.push("--batch-floor-percent");
+  if (hasBatchConcurrencyPercent) conflicts.push("--batch-concurrency-percent");
+  if (hasBatchConcurrencySlots && configuredBatchConcurrencySlots !== 4) {
+    conflicts.push("--batch-concurrency-slots (must be 4)");
+  }
+  if (rawArgs.has("envelope") && num("envelope", 32) !== 32) {
+    conflicts.push("--envelope (must be 32)");
+  }
+  if (rawArgs.has("token-budget") && num("token-budget", 64_000) !== 64_000) {
+    conflicts.push("--token-budget (must be 64000)");
+  }
+  if (rawArgs.has("batch-token-percent") && configuredBatchTokenPercent !== 62.5) {
+    conflicts.push("--batch-token-percent (must be 62.5)");
+  }
+  if (conflicts.length > 0) {
+    throw new Error(
+      `--capacity-profile=adaptive-28-4 fixes the protected 28/4, 24k/40k policy; ` +
+        `remove conflicting ${conflicts.join(", ")}`,
+    );
+  }
+}
 
 const OPT = Object.freeze({
   mode: str("mode", "compare"), // compare | baseline | moflux | doctor
@@ -150,6 +202,11 @@ const OPT = Object.freeze({
    * cannot, which is what makes the two distinguishable.
    */
   lending: lendingRequested,
+  capacityProfile: adaptiveProfileRequested
+    ? "adaptive-28-4"
+    : legacyLendingRequested
+      ? "custom-demand-aware"
+      : requestedCapacityProfile || "historical-31-1",
   lendingReportStaleAfterMs: num("lending-report-stale-after-ms", 6000),
   lendingIdleAfterMs: num("lending-idle-after-ms", 3000),
   lendingMaxStarvationMs: num("lending-max-starvation-ms", 5000),
@@ -432,6 +489,7 @@ const CAPACITY = (() => {
   const ceilingConcurrent = OPT.lending ? OPT.envelope : null;
   const ceilingTokens = OPT.lending ? OPT.tokenBudget : null;
   return Object.freeze({
+    profile: OPT.capacityProfile,
     policy: OPT.lending ? "interactive-first-demand-aware" : "interactive-first-static",
     capacityGroup: OPT.lending ? DEFAULT_CAPACITY_GROUP_NAME : null,
     batchFloorPercent:
@@ -577,7 +635,6 @@ const YELLOW = "\u001b[33m";
 const GREEN = "\u001b[32m";
 const RED = "\u001b[31m";
 const OFF = "\u001b[0m";
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const rl = createInterface({ input: process.stdin, output: process.stdout });
 
 function scene(number, title) {
@@ -650,34 +707,6 @@ function compose(...args) {
 
 function composeQuiet(...args) {
   return command("docker", composeArgs(...args), { quiet: true });
-}
-
-async function fetchWithTimeout(url, options = {}, timeoutMs = 1500) {
-  return fetch(url, { ...options, signal: AbortSignal.timeout(timeoutMs) });
-}
-
-async function waitFor(url, {
-  timeoutMs = 30000,
-  statuses = [200],
-  label = url,
-  child = null,
-} = {}) {
-  const deadline = Date.now() + timeoutMs;
-  let last = "no response";
-  while (Date.now() < deadline) {
-    if (child && child.exitCode !== null) {
-      throw new Error(`${label} process exited early with code ${child.exitCode}`);
-    }
-    try {
-      const response = await fetchWithTimeout(url, {}, 1200);
-      last = `HTTP ${response.status}`;
-      if (statuses.includes(response.status)) return response;
-    } catch (error) {
-      last = error instanceof Error ? error.message : String(error);
-    }
-    await sleep(500);
-  }
-  throw new Error(`timed out waiting for ${label}; last result: ${last}`);
 }
 
 async function jsonRequest(url, {
@@ -800,66 +829,6 @@ function openBrowser(url) {
   } catch {
     // Printing the URL is sufficient fallback.
   }
-}
-
-const hostChildren = new Set();
-
-function killChildTree(child, signal = "SIGTERM") {
-  if (!child?.pid) return;
-  if (process.platform === "win32") {
-    spawnSync("taskkill", ["/pid", String(child.pid), "/t", "/f"], { stdio: "ignore" });
-    return;
-  }
-  try {
-    process.kill(-child.pid, signal);
-  } catch {
-    try { child.kill(signal); } catch { /* already gone */ }
-  }
-}
-
-function launchNode(label, script, argv, { echo = false } = {}) {
-  const child = spawn(process.execPath, [path.join(ROOT, script), ...argv], {
-    cwd: ROOT,
-    stdio: ["ignore", "pipe", "pipe"],
-    detached: process.platform !== "win32",
-  });
-  child.label = label;
-  child.stdout.setEncoding("utf8");
-  child.stdout.on("data", (chunk) => {
-    if (echo) process.stdout.write(`${DIM}[${label}] ${chunk}${OFF}`);
-  });
-  child.stderr.setEncoding("utf8");
-  child.stderr.on("data", (chunk) => process.stderr.write(`${RED}[${label}] ${chunk}${OFF}`));
-  hostChildren.add(child);
-  child.on("close", () => hostChildren.delete(child));
-  return child;
-}
-
-async function terminateHostChild(child, graceMs = 1500) {
-  if (!child) return;
-  if (child.exitCode === null && child.signalCode === null) killChildTree(child, "SIGTERM");
-  const closed = await Promise.race([
-    new Promise((resolve) => child.once("close", () => resolve(true))),
-    sleep(graceMs).then(() => false),
-  ]);
-  if (!closed && child.exitCode === null) {
-    killChildTree(child, "SIGKILL");
-    await Promise.race([
-      new Promise((resolve) => child.once("close", resolve)),
-      sleep(500),
-    ]);
-  }
-  child.stdout?.destroy();
-  child.stderr?.destroy();
-  hostChildren.delete(child);
-}
-
-async function stopHostChildren() {
-  await Promise.all([...hostChildren].map((child) => terminateHostChild(child)));
-}
-
-function stopHostChildrenSync() {
-  for (const child of [...hostChildren]) killChildTree(child, "SIGTERM");
 }
 
 let interrupting = false;
@@ -1210,7 +1179,7 @@ async function startTyr(env) {
 
 function providerArgs() {
   return [
-    "--port=9000",
+    `--port=${PROVIDER_PORT}`,
     `--envelope=${PROVIDER.envelope}`,
     `--queue=${PROVIDER.queue}`,
     `--sigma=${PROVIDER.sigma}`,
@@ -1337,7 +1306,7 @@ async function runLoadgen({ interactiveTargets, batchTargets, armLabel, outFile 
 
 async function readProviderCounters() {
   try {
-    const response = await fetchWithTimeout("http://127.0.0.1:9000/admin/stats", {}, 2000);
+    const response = await fetchWithTimeout(`${PROVIDER_BASE_URL}/admin/stats`, {}, 2000);
     return (await response.json())?.counters ?? null;
   } catch {
     return null;
@@ -1541,7 +1510,7 @@ async function runLocalArm({ name, replicaArm, replicaFlags, armLabel, file, nee
   if (needsRedis) await flushRedis();
 
   const provider = launchNode("provider", "sim/provider-sim.mjs", providerArgs());
-  await waitFor("http://127.0.0.1:9000/healthz", {
+  await waitFor(`${PROVIDER_BASE_URL}/healthz`, {
     timeoutMs: 15000,
     label: "provider simulator",
     child: provider,
@@ -1555,7 +1524,7 @@ async function runLocalArm({ name, replicaArm, replicaFlags, armLabel, file, nee
         `--port=${port}`,
         `--id=r${index + 1}`,
         `--arm=${replicaArm}`,
-        "--upstream=http://127.0.0.1:9000",
+        `--upstream=${PROVIDER_BASE_URL}`,
         ...(typeof replicaFlags === "function" ? replicaFlags(index) : replicaFlags),
       ]);
       replicas.push(replica);
@@ -1676,7 +1645,7 @@ async function runBaseline() {
 
 async function runMoflux(env) {
   const sim = launchNode("provider", "sim/provider-sim.mjs", providerArgs());
-  await waitFor("http://127.0.0.1:9000/healthz", {
+  await waitFor(`${PROVIDER_BASE_URL}/healthz`, {
     timeoutMs: 15000,
     label: "provider simulator",
     child: sim,
@@ -1743,6 +1712,7 @@ async function runMoflux(env) {
     asyncBulkheadTs: { version: ASYNC_BULKHEAD_TS_VERSION },
   };
   summary.capacity = {
+    profile: CAPACITY.profile,
     policy: CAPACITY.policy,
     batchFloorPercent: CAPACITY.batchFloorPercent,
     batchConcurrencySlots: CAPACITY.batchConcurrencySlots,
@@ -2059,6 +2029,16 @@ async function doctor(env) {
   console.log(`${GREEN}   ✓ Tyr image: ${env.MOFLUX_TYR_IMAGE}${OFF}`);
   console.log(`${GREEN}   ✓ Latchflo image: ${env.MOFLUX_LATCHFLO_IMAGE}${OFF}`);
   console.log(`${GREEN}   ✓ Compose configuration resolves${OFF}`);
+  // The provider simulator is a host process, so nothing in Compose can free
+  // this port and `npm run demo:down` will not either. Checking it here turns
+  // an orphan from an interrupted run into a preflight failure with a fix in
+  // it, instead of a startup timeout in the middle of an arm.
+  //
+  // Only the simulator port is checked. Tyr publishes 8101-8104 from
+  // containers that legitimately survive between seeds when the stack is kept
+  // up, so asserting those free would fail correct runs.
+  await assertHostPortFree(PROVIDER_PORT, { label: "provider simulator port" });
+  console.log(`${GREEN}   ✓ Host port ${PROVIDER_PORT} is free for the provider simulator${OFF}`);
 }
 
 let env;
@@ -2081,7 +2061,7 @@ try {
     `Capacity is partitioned by tier: ${RESOLVED_CAPACITY
       .map((pool) => `${pool.name} ${pool.maxConcurrent}/${pool.tokenFundedConcurrency} configured/funded slots, ${pool.tokenBudget.toLocaleString("en-US")} tokens across ${pool.agentCount} agent${pool.agentCount === 1 ? "" : "s"}`)
       .join(", ")}.`,
-    `The canonical interactive-first policy is ${CAPACITY.interactiveConcurrencySlots}/${CAPACITY.batchConcurrencySlots}; all ${OPT.envelope} slots are token-funded.`,
+    `Capacity profile ${CAPACITY.profile}: ${CAPACITY.interactiveConcurrencySlots}/${CAPACITY.batchConcurrencySlots} protected slots; all ${OPT.envelope} slots are token-funded.`,
     `The immutable trace is ${TRACE.hash.slice(0, 12)} with ${TRACE.planned.interactive} interactive and ${TRACE.planned.batch} batch requests.`,
   );
   await startControlPlane(env);

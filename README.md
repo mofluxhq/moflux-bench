@@ -152,11 +152,23 @@ exponential backoff for every arm; the trace is identical either way, so the
 pair of runs isolates the hint's contribution:
 
 ```bash
-npm run demo:hetero        # hints honored (the default for every recorded result)
-npm run demo:hetero:blind  # same trace, blind backoff
+npm run demo:hetero                 # historical 31/1 policy; hints honored
+npm run demo:hetero:blind           # historical 31/1 policy; blind backoff
+npm run demo:hetero:adaptive        # recommended demand-aware 28/4 policy
+npm run demo:hetero:adaptive:blind  # same adaptive traces, blind backoff
 ```
 
-Concurrency slots and in-flight tokens are separate resources. The canonical
+The adaptive commands combine heterogeneous request sizes, progressive token
+reconciliation, all control arms, and a named `adaptive-28-4` capacity profile.
+They also enable `--require-adaptive-proof`. The command exits unsuccessfully
+if any seed falls below 90% interactive success, completes fewer than four
+batch requests, lacks a matching Latchflo lending event, fails to restore the
+batch floor, or produces an upstream 429. Because request sizes are stochastic,
+idle-window occupancy above the static 28-slot floor is required somewhere in
+the five-seed sweep rather than on every seed. The complete failed run is
+retained under `results/runs/` for inspection.
+
+Concurrency slots and in-flight tokens are separate resources. The historical
 policy uses `--batch-concurrency-slots=1` with `--batch-token-percent=25`.
 `--batch-concurrency-percent` remains available for experiments, and the legacy
 `--batch-floor-percent` still sets both dimensions, but exact slots cannot be
@@ -200,6 +212,27 @@ Grafana logs instead of reporting only that port 8200 was unhealthy.
 
 Requires Node 22+ and Docker Compose v2. There are no runtime npm dependencies —
 the Redis client is a small RESP implementation in `arms/redis-client.mjs`.
+
+### Host processes and their ports
+
+The provider simulator, the four replicas, and the load generator run on the
+host rather than in Compose, because the demo kills a replica mid-run and doing
+that through the host process tree is far less fragile than through Docker. The
+consequence is that `npm run demo:down` cannot clean them up: it stops
+containers, and these are not containers.
+
+The simulator needs TCP **9000**, and the preflight refuses to start if
+something else already holds it. If a run was interrupted hard enough that the
+presenter could not run its own cleanup, find the survivor with:
+
+```bash
+lsof -nP -iTCP:9000 -sTCP:LISTEN
+```
+
+A host process that fails to start is reported with the exit code or signal
+that ended it, how long the wait lasted, whether the process was still running
+at that point, and its own last output. Startup failures that produce no output
+say so explicitly, so silence is never confused with a missing check.
 
 ## The provider simulator
 
@@ -343,8 +376,13 @@ run-long peak-occupancy high-water mark of 32/32 is equally consistent with
 hit 32 together". Both policies produce the same headline number.
 
 ```bash
-npm run demo:lending   # demand-aware MoFlux vs an exact static 28/4 partition
+npm run demo:lending           # focused demand-aware vs static 28/4 proof
+npm run demo:hetero:adaptive   # recommended mixed-size, all-arm comparison
 ```
+
+`demo:hetero:adaptive` selects the exact profile through
+`--capacity-profile=adaptive-28-4`; conflicting envelope, concurrency, or token
+settings are rejected. `demo:lending` remains the focused two-arm scene.
 
 `--lending` widens the idle window from 35% to 60% of the phase so Tyr 0.19.0
 can report an idle batch pool and Latchflo 0.6.1 can safely lend its protected
@@ -374,11 +412,12 @@ event can be a measurement artifact. The command reports such a run as
 inconclusive rather than successful. A policy that borrows but never restores
 the batch guarantee is starvation, not lending.
 
-Results are written to `results/lending.json`; the seed sweep also aggregates
-borrowed slots, controller proof, floor restoration, and restoration duration.
-Existing copies of that file are historical 31/1 evidence and are not rewritten
-by this source-only policy change. Rerun `npm run demo:lending` to produce 28/4
-evidence. Two implementation notes are load-bearing:
+Each run is written below `results/runs/<sweep>/<run-id>/`; the seed summary
+aggregates borrowed slots, controller proof, floor restoration, restoration
+duration, batch service, and an explicit adaptive pass/fail record. Reviewed
+evidence is not overwritten. A failed `--require-adaptive-proof` run keeps its
+summary and per-seed files but does not update the latest successful pointer.
+Two implementation notes are load-bearing:
 
 - Phase windows are computed by the load generator from a record that is never
   pruned. The rolling `samples` array exists for the Prometheus percentiles and
@@ -410,8 +449,13 @@ Real traffic in one class spans one to two orders of magnitude, because context
 length, retrieved documents, and conversation history vary per call.
 
 ```bash
-npm run demo:hetero    # lognormal sizes, all four arms, five seeds
+npm run demo:hetero             # lognormal sizes with historical 31/1 policy
+npm run demo:hetero:adaptive    # lognormal sizes with demand-aware 28/4 policy
 ```
+
+Use the historical command to reproduce the reviewed 31/1 corpus. Use the
+adaptive command for the current product claim: interactive can borrow idle
+batch capacity, and the four-slot batch floor must return when demand arrives.
 
 `--size-distribution=lognormal` draws an input size and a max-token count per
 request. `--interactive-size-sigma` (default 0.75) and `--batch-size-sigma`
