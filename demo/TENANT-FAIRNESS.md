@@ -1,7 +1,7 @@
 # Tenant-fairness benchmark
 
 MoFlux Bench 0.14.0 adds a paired, authenticated noisy-neighbor scenario for
-Tyr 0.20.0 and Latchflo 0.7.0.
+Tyr 0.21.0 and Latchflo 0.7.2.
 
 ## What it compares
 

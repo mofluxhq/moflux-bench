@@ -128,6 +128,11 @@ export async function startIdentityFixture(runtimeDir, { port = IDENTITY_PORT } 
       azp: "batch-worker",
       roles: ["tyr.invoke"],
     }),
+    operator: issueJwt(privateKey, kid, {
+      sub: "moflux-bench-harness",
+      azp: "moflux-bench",
+      roles: ["tyr.operator"],
+    }),
   });
 
   const server = createServer(

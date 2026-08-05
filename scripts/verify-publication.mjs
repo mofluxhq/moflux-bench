@@ -105,8 +105,8 @@ if (lock.packages?.[""]?.version !== pkg.version || lock.version !== pkg.version
 }
 const example = readFileSync(path.join(ROOT, "demo/moflux/.env.example"), "utf8");
 for (const expected of [
-  "MOFLUX_TYR_IMAGE=tyr-admission-controller:0.20.0",
-  "MOFLUX_LATCHFLO_IMAGE=latchflo-control-plane:0.7.0",
+  "MOFLUX_TYR_IMAGE=tyr-admission-controller:0.21.0",
+  "MOFLUX_LATCHFLO_IMAGE=latchflo-control-plane:0.7.2",
 ]) {
   if (!example.includes(expected)) {
     findings.push(`demo/moflux/.env.example: missing pinned runtime ${expected}`);
@@ -126,8 +126,8 @@ if (!compose.includes("TYR_ROUTING_SECRET: ${TYR_ROUTING_SECRET:?Set TYR_ROUTING
 for (let replica = 1; replica <= 4; replica += 1) {
   const rel = `demo/moflux/tyr-r${replica}.yaml`;
   const yaml = readFileSync(path.join(ROOT, rel), "utf8");
-  if (!/^    version: 0\.20\.0$/m.test(yaml)) {
-    findings.push(`${rel}: control-plane metadata must identify Tyr 0.20.0`);
+  if (!/^    version: 0\.21\.0$/m.test(yaml)) {
+    findings.push(`${rel}: control-plane metadata must identify Tyr 0.21.0`);
   }
   if (!/^  anthropic:\n    baseUrl: http:\/\/host\.docker\.internal:9000$/m.test(yaml)) {
     findings.push(`${rel}: Anthropic simulator upstream is missing`);
@@ -166,7 +166,7 @@ for (let replica = 1; replica <= 4; replica += 1) {
     "defaultClass: noisy",
     "tenantIds: [tenant-premium]",
     "pools: [sim-shared, sim-isolated]",
-    "version: 0.20.0",
+    "version: 0.21.0",
   ]) {
     if (!yaml.includes(required)) findings.push(`${rel}: missing ${required}`);
   }

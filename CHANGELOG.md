@@ -1,11 +1,11 @@
 # Changelog
 
-## 0.14.0 - 2026-08-04
+## 0.14.0 - 2026-08-05
 
 ### Added
 
 - Add `npm run demo:classes`, a paired five-seed noisy-neighbor benchmark for
-  Tyr 0.20.0 and Latchflo 0.7.0. Every seed replays one immutable trace through
+  Tyr 0.21.0 and Latchflo 0.7.2. Every seed replays one immutable trace through
   equal pool-only and identity-aware class-isolated physical envelopes.
 - Add an ephemeral HTTPS JWKS fixture with per-run RSA signing keys and a
   generated local CA. Premium and noisy workloads use authenticated tenant
@@ -21,11 +21,33 @@
 
 ### Changed
 
-- Pin licensed demo defaults to Tyr 0.20.0, Latchflo 0.7.0,
-  async-bulkhead-llm 3.14.0, and async-bulkhead-ts 1.0.1. Existing committed
+- Pin licensed demo defaults to Tyr 0.21.0, Latchflo 0.7.2,
+  async-bulkhead-llm 3.14.0, and async-bulkhead-ts 1.0.2. Existing committed
   benchmark evidence remains byte-for-byte historical and is not relabeled.
 - Extend the load generator with optional per-workload identity tokens. Results
   persist only `provided`/empty markers; bearer tokens never enter result JSON.
+- Align every active runtime pin, Tyr control-plane metadata field, local-image
+  build check, presenter assertion, and publication check with the supported
+  Tyr 0.21.0 / Latchflo 0.7.2 release train. Tyr 0.21.0 is the minimum
+  runtime that consumes Latchflo-distributed admission-class ceilings.
+- Update the benchmark dependency record to async-bulkhead-ts 1.0.2 while
+  retaining async-bulkhead-llm 3.14.0.
+- Remove local environment state, generated run output, and macOS archive
+  metadata from the 0.14.0 source package.
+
+### Fixed
+
+- Fix `npm run demo:classes` hanging and failing with `Tyr /stats returned
+  HTTP 401`. The tenant-fairness Tyr fleet requires an authenticated
+  `tyr.operator` identity on `/stats`, but the readiness poller sent no
+  identity token at all. The ephemeral identity fixture now mints an
+  operator token alongside the premium/noisy tenant tokens, and the poller
+  sends it.
+- Fix every `x-tyr-identity-token` header (the fleet readiness poller and
+  the load generator's premium/noisy request traffic) to send `Bearer
+  <token>` instead of the raw JWT. Tyr rejects a bare token on that header
+  with `identity_invalid`, so no authenticated tenant-fairness request
+  could previously be admitted end to end.
 
 ## 0.13.1 - 2026-08-04
 

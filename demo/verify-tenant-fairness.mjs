@@ -42,7 +42,8 @@ function decodePayload(token) {
 function startTarget() {
   const seen = [];
   const server = createServer((req, res) => {
-    const token = String(req.headers["x-tyr-identity-token"] ?? "");
+    const raw = String(req.headers["x-tyr-identity-token"] ?? "");
+    const token = raw.startsWith("Bearer ") ? raw.slice("Bearer ".length) : raw;
     const cls = token === "premium-token" ? "premium" : token === "noisy-token" ? "noisy" : "unknown";
     seen.push({ cls, token });
     req.resume();
@@ -168,7 +169,7 @@ try {
 
   for (let replica = 1; replica <= 4; replica += 1) {
     const yaml = readFileSync(path.join(ROOT, "demo", "classes", `tyr-r${replica}.yaml`), "utf8");
-    assert.match(yaml, /version: 0\.20\.0/);
+    assert.match(yaml, /version: 0\.21\.0/);
     assert.match(yaml, /defaultClass: noisy/);
     assert.match(yaml, /tenantIds: \[tenant-premium\]/);
     assert.match(yaml, /jwksUrl: https:\/\/host\.docker\.internal:9010\/jwks/);

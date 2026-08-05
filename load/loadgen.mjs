@@ -435,7 +435,7 @@ async function issue(entry) {
               : {}),
             "x-priority": isBatch ? "normal" : "high",
             ...((isBatch ? CONFIG.batchIdentityToken : CONFIG.interactiveIdentityToken)
-              ? { "x-tyr-identity-token": isBatch ? CONFIG.batchIdentityToken : CONFIG.interactiveIdentityToken }
+              ? { "x-tyr-identity-token": `Bearer ${isBatch ? CONFIG.batchIdentityToken : CONFIG.interactiveIdentityToken}` }
               : {}),
             "x-bench-request-id": entry.id,
             "x-bench-attempt": String(attempt + 1),

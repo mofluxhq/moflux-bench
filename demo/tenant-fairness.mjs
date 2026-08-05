@@ -276,7 +276,11 @@ async function waitForAgents(token) {
 
 async function readTyrStats() {
   return Promise.all(TYR_PORTS.map(async (port) => {
-    const response = await fetchWithTimeout(`http://127.0.0.1:${port}/stats`, {}, 2000);
+    const response = await fetchWithTimeout(
+      `http://127.0.0.1:${port}/stats`,
+      { headers: { "x-tyr-identity-token": `Bearer ${identity.tokens.operator}` } },
+      2000,
+    );
     if (!response.ok) throw new Error(`Tyr ${port} /stats returned HTTP ${response.status}`);
     return response.json();
   }));
