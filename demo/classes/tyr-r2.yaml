@@ -19,10 +19,24 @@ timeouts:
 shutdown:
   drainTimeoutMs: 30000
 
-# The benchmark load generator sends x-priority directly.
-# This is acceptable only for this local, controlled benchmark.
 priority:
-  trustHeader: true
+  trustHeader: false
+
+identity:
+  jwt:
+    jwksUrl: https://host.docker.internal:9010/jwks
+    issuer: https://moflux-bench.local/
+    audience: moflux-bench
+    header: x-tyr-identity-token
+    algorithms: [RS256]
+    claims:
+      subject: sub
+      tenantId: tenant_id
+      applicationId: azp
+      roles: roles
+  roles:
+    invoke: [tyr.invoke]
+    operator: [tyr.operator]
 
 telemetry:
   metrics:
@@ -31,8 +45,8 @@ telemetry:
     enabled: false
 
 pools:
-  - name: sim-interactive
-    modelPrefixes: [sim-model-interactive]
+  - name: sim-shared
+    modelPrefixes: [sim-model-shared]
     estimatorModel: gpt-4o
     maxConcurrent: 0
     maxQueue: 0
@@ -51,6 +65,37 @@ pools:
       enabled: true
       updateStepTokens: 256
       outputSafetyMarginTokens: 256
+
+  - name: sim-isolated
+    modelPrefixes: [sim-model-isolated]
+    estimatorModel: gpt-4o
+    maxConcurrent: 0
+    maxQueue: 0
+    limitsRevision: 0
+    admissionMode: enforce
+    inFlightTokenBudget: 0
+    defaultOutputReservation: 2048
+    adaptiveEstimation:
+      enabled: true
+      smoothing: 0.2
+      minSamples: 5
+      minCorrection: 0.5
+      maxCorrection: 2
+      maxModels: 16
+    progressiveReconciliation:
+      enabled: true
+      updateStepTokens: 256
+      outputSafetyMarginTokens: 256
+    admissionClasses:
+      defaultClass: noisy
+      classes:
+        premium:
+          maxConcurrent: 8
+        noisy:
+          maxConcurrent: 24
+      rules:
+        - admissionClass: premium
+          tenantIds: [tenant-premium]
 
 routing:
   capacityAware:
@@ -72,7 +117,7 @@ controlPlane:
   type: latchflo
   url: http://latchflo:8080
   instanceId: tyr-r2
-  pools: [sim-interactive]
+  pools: [sim-shared, sim-isolated]
   bootstrapTokenEnv: LATCHFLO_AGENT_BOOTSTRAP_TOKEN
   agentTokenFile: /var/lib/tyr/latchflo-agent.token
   retryIntervalMs: 500
@@ -80,8 +125,9 @@ controlPlane:
   requestTimeoutMs: 3000
   metadata:
     region: local
-    zone: demo-2
+    zone: demo-classes
     version: 0.20.0
     endpoint: http://tyr-r2:8787
     labels:
       environment: benchmark
+      scenario: tenant-fairness

@@ -251,7 +251,7 @@ const OPT = Object.freeze({
   kappa: num("kappa", 0),
   r1: num("r1", 400),
   // Anthropic streams expose cumulative usage before completion, which is
-  // required to exercise Tyr 0.19 progressive reconciliation. OpenAI remains
+  // required to exercise Tyr 0.20 progressive reconciliation. OpenAI remains
   // available for historical/conservative replay.
   providerApi: str("provider-api", "anthropic"),
 });
@@ -465,7 +465,7 @@ const WORKLOAD = Object.freeze({
 
 // Normal runs keep the historical one-slot batch guarantee. The lending run
 // uses a 28/4 protected split and raises both pool ceilings to the full shared
-// envelope, letting Latchflo 0.6 release only an actually idle member's
+// envelope, letting Latchflo 0.7 release only an actually idle member's
 // guarantee. This is a real control-plane policy, not a benchmark-side
 // simulation.
 const CAPACITY = (() => {

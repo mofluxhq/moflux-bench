@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.14.0 - 2026-08-04
+
+### Added
+
+- Add `npm run demo:classes`, a paired five-seed noisy-neighbor benchmark for
+  Tyr 0.20.0 and Latchflo 0.7.0. Every seed replays one immutable trace through
+  equal pool-only and identity-aware class-isolated physical envelopes.
+- Add an ephemeral HTTPS JWKS fixture with per-run RSA signing keys and a
+  generated local CA. Premium and noisy workloads use authenticated tenant
+  identities without checking in credentials or disabling TLS verification.
+- Add bounded fleet-wide `premium` and `noisy` class policy fixtures: 8/24
+  concurrent requests and 16,000/48,000 in-flight tokens beneath a shared
+  32-request / 64,000-token physical pool.
+- Record `x-admission-class` response attribution in load-generator summaries,
+  add per-seed structural proof results, and aggregate premium success,
+  contended goodput, TTFT ratios, noisy-class shedding, and upstream 429 totals.
+- Add `demo/TENANT-FAIRNESS.md` and verification for class topology, grant
+  aggregation, identity-token transport, output redaction, and proof logic.
+
+### Changed
+
+- Pin licensed demo defaults to Tyr 0.20.0, Latchflo 0.7.0,
+  async-bulkhead-llm 3.14.0, and async-bulkhead-ts 1.0.1. Existing committed
+  benchmark evidence remains byte-for-byte historical and is not relabeled.
+- Extend the load generator with optional per-workload identity tokens. Results
+  persist only `provided`/empty markers; bearer tokens never enter result JSON.
+
 ## 0.13.1 - 2026-08-04
 
 ### Fixed

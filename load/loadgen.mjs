@@ -42,6 +42,8 @@ const CONFIG = Object.freeze({
   targets: str("targets", "http://127.0.0.1:8100").split(",").filter(Boolean),
   interactiveTargets: str("interactive-targets", str("targets", "http://127.0.0.1:8100")).split(",").filter(Boolean),
   batchTargets: str("batch-targets", str("targets", "http://127.0.0.1:8100")).split(",").filter(Boolean),
+  interactiveIdentityToken: str("interactive-identity-token", ""),
+  batchIdentityToken: str("batch-identity-token", ""),
   metricsPort: num("metrics-port", 8200),
   metricsRelayUrl: str("metrics-relay-url", ""),
   metricsPushIntervalMs: num("metrics-push-interval-ms", 1000),
@@ -145,6 +147,7 @@ for (const cls of classes) {
     localRejectReasons: {},
     localRejectPools: {},
     localRejectDetails: {},
+    admissionClassResponses: {},
     firstAttemptAtMs: null,
     firstSuccessAtMs: null,
     /**
@@ -431,6 +434,9 @@ async function issue(entry) {
               ? { "anthropic-version": "2023-06-01", "x-api-key": "benchmark-local" }
               : {}),
             "x-priority": isBatch ? "normal" : "high",
+            ...((isBatch ? CONFIG.batchIdentityToken : CONFIG.interactiveIdentityToken)
+              ? { "x-tyr-identity-token": isBatch ? CONFIG.batchIdentityToken : CONFIG.interactiveIdentityToken }
+              : {}),
             "x-bench-request-id": entry.id,
             "x-bench-attempt": String(attempt + 1),
           },
@@ -439,6 +445,9 @@ async function issue(entry) {
         });
 
         progress.lastStatus = response.status;
+        const responseAdmissionClass = response.headers.get("x-admission-class") ?? "unclassified";
+        s.admissionClassResponses[responseAdmissionClass] =
+          (s.admissionClassResponses[responseAdmissionClass] ?? 0) + 1;
         touch("response");
         if (response.status === 429) {
           // The distinction that matters: was this refused cheaply at the
@@ -811,6 +820,11 @@ if (activeIssues.size > 0) {
   throw new Error(detail);
 }
 
+const {
+  interactiveIdentityToken,
+  batchIdentityToken,
+  ...publicConfig
+} = CONFIG;
 const summary = {
   arm: CONFIG.armLabel,
   seed: CONFIG.seed,
@@ -826,7 +840,9 @@ const summary = {
     maxMs: CONFIG.drainMaxMs,
   },
   config: {
-    ...CONFIG,
+    ...publicConfig,
+    interactiveIdentityToken: interactiveIdentityToken ? "provided" : "",
+    batchIdentityToken: batchIdentityToken ? "provided" : "",
     honorRetryHints: CONFIG.honorRetryHints,
     traceFile: CONFIG.traceFile ? "provided" : "",
     traceOut: CONFIG.traceOut ? "requested" : "",
@@ -856,6 +872,7 @@ for (const cls of classes) {
     localRejectReasons: s.localRejectReasons,
     localRejectPools: s.localRejectPools,
     localRejectDetails: Object.values(s.localRejectDetails),
+    admissionClassResponses: s.admissionClassResponses,
     upstreamReject: s.upstreamReject,
     serverError: s.serverError,
     transportError: s.transportError,

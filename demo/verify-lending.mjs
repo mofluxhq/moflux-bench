@@ -282,7 +282,7 @@ const starvedBatch = { success: 0, firstAttemptAtMs: 15_100, firstSuccessAtMs: n
 }
 
 
-// ── Latchflo 0.6 capacity-group contract ─────────────────────────────
+// ── Latchflo 0.7 capacity-group contract ─────────────────────────────
 {
   const group = buildDemandAwareCapacityGroup({
     envelope: 32,

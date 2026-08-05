@@ -26,6 +26,7 @@ const tests = [
   ["demo/verify-topology.mjs", 30_000],
   ["demo/verify-telemetry-relay.mjs", 30_000],
   ["demo/verify-full-stack-bootstrap.mjs", 30_000],
+  ["demo/verify-tenant-fairness.mjs", 60_000],
   ["demo/verify-host-supervision.mjs", 60_000],
   ["demo/verify-presenter.mjs", 360_000],
   ["demo/verify-seed-sweep.mjs", 30_000],

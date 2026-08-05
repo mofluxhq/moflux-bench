@@ -362,8 +362,8 @@ try {
   writeFileSync(
     ENV_FILE,
     [
-      "MOFLUX_TYR_IMAGE=test-tyr:0.19.0",
-      "MOFLUX_LATCHFLO_IMAGE=test-latchflo:0.6.1",
+      "MOFLUX_TYR_IMAGE=test-tyr:0.20.0",
+      "MOFLUX_LATCHFLO_IMAGE=test-latchflo:0.7.0",
       "LATCHFLO_ADMIN_TOKEN=test-admin",
       "LATCHFLO_AGENT_BOOTSTRAP_TOKEN=test-bootstrap",
       "TYR_ROUTING_SECRET=test-routing-secret-with-at-least-32-chars",
@@ -479,7 +479,7 @@ ${run.stderr}`);
     if (history.length !== 2) throw new Error(`${pool} was configured ${history.length} times, expected 2`);
     for (const body of history) {
       if (body.minimumGrantMaxConcurrent !== 1) {
-        throw new Error(`${pool} omitted Latchflo 0.6.1 minimumGrantMaxConcurrent=1`);
+        throw new Error(`${pool} omitted Latchflo 0.7.0 minimumGrantMaxConcurrent=1`);
       }
       if (body.minimumGrantTokenBudget !== expectedMinimumTokens[pool]) {
         throw new Error(
@@ -537,10 +537,10 @@ ${run.stderr}`);
       result.capacity?.batchConcurrencySlots !== 1) {
     throw new Error("presenter did not record the historical 31/1 capacity profile");
   }
-  if (result.runtime?.tyr?.version !== "0.19.0" || result.runtime?.latchflo?.version !== "0.6.1") {
-    throw new Error("result did not record the Tyr 0.19.0 / Latchflo 0.6.1 runtime");
+  if (result.runtime?.tyr?.version !== "0.20.0" || result.runtime?.latchflo?.version !== "0.7.0") {
+    throw new Error("result did not record the Tyr 0.20.0 / Latchflo 0.7.0 runtime");
   }
-  if (result.runtime?.asyncBulkheadLlm?.version !== "3.13.0" ||
+  if (result.runtime?.asyncBulkheadLlm?.version !== "3.14.0" ||
       result.runtime?.asyncBulkheadTs?.version !== "1.0.1") {
     throw new Error("result did not record the progressive bulkhead dependency versions");
   }

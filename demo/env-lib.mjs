@@ -2,9 +2,9 @@ import { randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
-export const TYR_VERSION = "0.19.0";
-export const LATCHFLO_VERSION = "0.6.1";
-export const ASYNC_BULKHEAD_LLM_VERSION = "3.13.0";
+export const TYR_VERSION = "0.20.0";
+export const LATCHFLO_VERSION = "0.7.0";
+export const ASYNC_BULKHEAD_LLM_VERSION = "3.14.0";
 export const ASYNC_BULKHEAD_TS_VERSION = "1.0.1";
 export const DEFAULT_TYR_IMAGE = `tyr-admission-controller:${TYR_VERSION}`;
 export const DEFAULT_LATCHFLO_IMAGE = `latchflo-control-plane:${LATCHFLO_VERSION}`;

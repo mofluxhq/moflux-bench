@@ -15,6 +15,9 @@ const required = [
   ".gitignore",
   ".github/workflows/ci.yml",
   "demo/moflux/.env.example",
+  "demo/classes/compose.yaml",
+  "demo/classes/tyr-r1.yaml",
+  "demo/TENANT-FAIRNESS.md",
 ];
 const ignoredDirectories = new Set([".git", "node_modules", "coverage", ".tmp", "tmp"]);
 const forbiddenNames = new Set([".DS_Store", "Thumbs.db"]);
@@ -27,6 +30,7 @@ function walk(dir) {
     if (ignoredDirectories.has(entry.name)) continue;
     const full = path.join(dir, entry.name);
     const rel = path.relative(ROOT, full).split(path.sep).join("/");
+    if (rel === "demo/classes/runtime") continue;
     const stat = lstatSync(full);
     if (stat.isSymbolicLink()) findings.push(`${rel}: symbolic links are not allowed in a release`);
     if (entry.isDirectory()) {
@@ -101,8 +105,8 @@ if (lock.packages?.[""]?.version !== pkg.version || lock.version !== pkg.version
 }
 const example = readFileSync(path.join(ROOT, "demo/moflux/.env.example"), "utf8");
 for (const expected of [
-  "MOFLUX_TYR_IMAGE=tyr-admission-controller:0.19.0",
-  "MOFLUX_LATCHFLO_IMAGE=latchflo-control-plane:0.6.1",
+  "MOFLUX_TYR_IMAGE=tyr-admission-controller:0.20.0",
+  "MOFLUX_LATCHFLO_IMAGE=latchflo-control-plane:0.7.0",
 ]) {
   if (!example.includes(expected)) {
     findings.push(`demo/moflux/.env.example: missing pinned runtime ${expected}`);
@@ -122,14 +126,15 @@ if (!compose.includes("TYR_ROUTING_SECRET: ${TYR_ROUTING_SECRET:?Set TYR_ROUTING
 for (let replica = 1; replica <= 4; replica += 1) {
   const rel = `demo/moflux/tyr-r${replica}.yaml`;
   const yaml = readFileSync(path.join(ROOT, rel), "utf8");
-  if (!/^    version: 0\.19\.0$/m.test(yaml)) {
-    findings.push(`${rel}: control-plane metadata must identify Tyr 0.19.0`);
+  if (!/^    version: 0\.20\.0$/m.test(yaml)) {
+    findings.push(`${rel}: control-plane metadata must identify Tyr 0.20.0`);
   }
   if (!/^  anthropic:\n    baseUrl: http:\/\/host\.docker\.internal:9000$/m.test(yaml)) {
     findings.push(`${rel}: Anthropic simulator upstream is missing`);
   }
   const configuredPools = [...yaml.matchAll(/^  - name: ([^\s]+)$/gm)].length;
-  const progressiveBlocks = [...yaml.matchAll(/^    progressiveReconciliation:\n      enabled: true\n      updateStepTokens: 256\n      outputSafetyMarginTokens: 256$/gm)].length;
+  const progressiveBlock = "    progressiveReconciliation:\n      enabled: true\n      updateStepTokens: 256\n      outputSafetyMarginTokens: 256";
+  const progressiveBlocks = yaml.split(progressiveBlock).length - 1;
   if (progressiveBlocks !== configuredPools) {
     findings.push(`${rel}: every pool must use the pinned progressive reconciliation policy`);
   }
@@ -144,6 +149,53 @@ for (let replica = 1; replica <= 4; replica += 1) {
   }
 }
 
+const classesCompose = readFileSync(path.join(ROOT, "demo/classes/compose.yaml"), "utf8");
+for (const required of [
+  "NODE_EXTRA_CA_CERTS: /etc/tyr/benchmark-ca.pem",
+  "./classes/runtime/ca.pem:/etc/tyr/benchmark-ca.pem:ro",
+]) {
+  if (!classesCompose.includes(required)) {
+    findings.push(`demo/classes/compose.yaml: missing ${required}`);
+  }
+}
+for (let replica = 1; replica <= 4; replica += 1) {
+  const rel = `demo/classes/tyr-r${replica}.yaml`;
+  const yaml = readFileSync(path.join(ROOT, rel), "utf8");
+  for (const required of [
+    "jwksUrl: https://host.docker.internal:9010/jwks",
+    "defaultClass: noisy",
+    "tenantIds: [tenant-premium]",
+    "pools: [sim-shared, sim-isolated]",
+    "version: 0.20.0",
+  ]) {
+    if (!yaml.includes(required)) findings.push(`${rel}: missing ${required}`);
+  }
+  const progressiveBlock = "    progressiveReconciliation:\n      enabled: true\n      updateStepTokens: 256\n      outputSafetyMarginTokens: 256";
+  const progressiveBlocks = yaml.split(progressiveBlock).length - 1;
+  if (progressiveBlocks !== 2) {
+    findings.push(`${rel}: both tenant-fairness pools must enable progressive reconciliation`);
+  }
+  if (!new RegExp(`^    instanceId: tyr-r${replica}$`, "m").test(yaml)) {
+    findings.push(`${rel}: routing instance ID is missing`);
+  }
+}
+const tenantRunner = readFileSync(path.join(ROOT, "demo/tenant-fairness.mjs"), "utf8");
+for (const required of [
+  'tenantPoolDefinition("sim-shared"',
+  'tenantPoolDefinition("sim-isolated"',
+  'model: "sim-model-shared"',
+  'model: "sim-model-isolated"',
+  "validateAdmissionClassGrantSet",
+]) {
+  if (!tenantRunner.includes(required)) findings.push(`demo/tenant-fairness.mjs: missing ${required}`);
+}
+const loadgen = readFileSync(path.join(ROOT, "load/loadgen.mjs"), "utf8");
+if (!loadgen.includes('interactiveIdentityToken: interactiveIdentityToken ? "provided" : ""') ||
+    !loadgen.includes('"x-tyr-identity-token"') ||
+    !loadgen.includes("admissionClassResponses")) {
+  findings.push("load/loadgen.mjs: identity attribution or token redaction is missing");
+}
+
 if (pkg.scripts?.demo !== "node demo/seed-sweep.mjs --seeds=1-5 --pause-ms=0 --provider-api=anthropic" ||
     pkg.scripts?.predemo !== "npm run demo:prepare" ||
     pkg.scripts?.["demo:record"] !== "node demo/seed-sweep.mjs --seeds=1-5 --step") {
@@ -156,8 +208,14 @@ if (!pkg.scripts?.["demo:progressive"]?.includes("--provider-api=anthropic") ||
     !pkg.scripts?.["demo:openai"]?.includes("--provider-api=openai")) {
   findings.push("package.json: progressive and OpenAI compatibility demo commands are required");
 }
-if (pkg.version !== "0.13.1") {
-  findings.push("package.json: this full-stack verification patch release must be version 0.13.1");
+if (pkg.version !== "0.14.0") {
+  findings.push("package.json: the admission-class benchmark release must be version 0.14.0");
+}
+const classesScript = pkg.scripts?.["demo:classes"] ?? "";
+for (const required of ["demo/tenant-fairness.mjs", "--seeds=1-5", "--require-proof"]) {
+  if (!classesScript.includes(required)) {
+    findings.push(`package.json: demo:classes is missing ${required}`);
+  }
 }
 const adaptiveScripts = [
   ["demo:hetero:adaptive", true],

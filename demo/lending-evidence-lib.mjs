@@ -1,5 +1,5 @@
 /**
- * Pure helpers for configuring and interpreting Latchflo 0.6 demand-aware
+ * Pure helpers for configuring and interpreting Latchflo 0.7 demand-aware
  * capacity groups. Kept separate from presenter orchestration so the safety
  * and evidence contract can be tested without Docker or licensed images.
  */
