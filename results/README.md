@@ -50,6 +50,17 @@ The MoFlux result contains per-run token-accounting deltas:
 
 A refund means unused safety reservation was returned for reuse; it is not newly created capacity.
 
+## Admission-class lending runs
+
+`npm run demo:classes` writes four matched arms under
+`results/runs/tenant-fairness/<run-id>/`: pool-only, class ceilings, static
+protected floors, and adaptive protected floors. Each seed also writes
+`adaptive-lending-seed-N.json`, which samples Latchflo class-demand/lending state
+and the aggregate class limits actually applied by Tyr. The schema-version-3
+`summary.json` records the lend -> demand -> restore proof and restoration
+latency separately from performance observations. These runs are generated
+evidence and are not automatically promoted into the reviewed corpus.
+
 ## Published evidence status
 
 `video-seed-sweep.json` and `video-seed-sweep/` hold the reviewed five-seed
@@ -59,12 +70,14 @@ Latchflo 0.5.1**. Read that field rather than any prose description — prose dr
 and an earlier revision of this file and of `.gitignore` both described this
 corpus as Tyr 0.16.0 / Latchflo 0.5.0, which the files themselves contradict.
 
-New licensed runs use Tyr 0.19.0, Latchflo 0.6.1,
-async-bulkhead-llm 3.13.0, and async-bulkhead-ts 1.0.1. They add one-hop
-capacity-aware routing, automatic per-pool demand heartbeats, optional
-demand-aware lending, and progressive reconciliation for Anthropic-shaped
-streams. The new runtime is a distinct evidence set; existing reviewed JSON is
-not relabeled or rewritten.
+New licensed runs use Tyr 0.23.0, Latchflo 0.9.0,
+async-bulkhead-llm 3.15.1, and async-bulkhead-ts 1.0.1. The main sweep retains
+one-hop capacity-aware routing, per-pool demand heartbeats, pool-level lending,
+and progressive reconciliation for Anthropic-shaped streams. `demo:classes`
+adds a separate four-arm admission-class run that observes Tyr 0.23.0 per-class
+demand and Latchflo 0.9.0 protected-floor lending/restoration. The current
+runtime is a distinct evidence set; existing reviewed JSON is not relabeled or
+rewritten.
 Normal `npm run demo` and `npm run demo:arms` runs retain the static 31/1,
 40,000-token policy. `npm run demo:lending` uses a fully funded 28/4 protected
 split with 24,000/40,000-token guarantees inside a 64,000-token group envelope,

@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.16.0 - 2026-08-07
+
+### Added
+
+- Extend `demo:classes` to a four-arm matched-trace benchmark: pool-only, class
+  ceilings, static protected floors, and demand-aware protected floors.
+- Add end-to-end adaptive class-lending proof collection against Tyr 0.23.0 and
+  Latchflo 0.9.0. The runner samples both Latchflo class-demand status and the
+  class limits actually applied by Tyr.
+- Require every adaptive seed to prove that the idle noisy floor was lent, hard
+  class ceilings stayed fixed, noisy demand returned after lending, and the
+  nominal noisy floor was restored without starving the class or causing an
+  upstream 429.
+- Add schema-version-3 tenant summaries with adaptive success/goodput/TTFT,
+  per-seed lending/restoration evidence, and restoration-latency measurements.
+
+### Changed
+
+- Pin active licensed benchmark paths to Tyr 0.23.0 and Latchflo 0.9.0 while
+  retaining async-bulkhead-llm 3.15.1 and the async-bulkhead-ts 1.0.1 runtime
+  shipped by Tyr. Historical committed evidence is not relabeled.
+- Give only the adaptive class arm a 3-second benchmark grant TTL, 1-second idle
+  threshold, and 5-second stale-report bound so lease-safe restoration can be
+  observed inside a 30-second seed. The three control arms retain long steady
+  leases.
+- Treat success rate, goodput, TTFT, and restoration latency as measured
+  outcomes rather than acceptance thresholds; the hard gate remains structural
+  and safety-oriented.
+
+### Fixed
+
+- Verify adaptive floor changes at the data-plane boundary rather than accepting
+  controller intent alone. A seed now fails if Latchflo reports lending or
+  restoration but Tyr's aggregate applied class grants do not reflect it.
+- Keep adaptive hard ceilings under proof while protected floors are temporarily
+  zero, preventing work conservation from being mistaken for relaxed isolation.
+- Make simulator-sweep startup and shutdown bounded: allocate a free local port,
+  fail if a provider exits before readiness, abort and settle streaming requests,
+  and escalate child termination when needed so `npm run sweep` / `verify:all`
+  cannot hang on a stale stream or startup-port collision.
+
 ## 0.15.0 - 2026-08-06
 
 ### Added

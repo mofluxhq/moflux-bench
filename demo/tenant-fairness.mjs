@@ -32,8 +32,12 @@ import {
 import { startIdentityFixture } from "./identity-fixture-lib.mjs";
 import {
   compareTenantFairness,
+  TENANT_FAIRNESS_POLICY,
+  aggregateAdmissionClassGrants,
+  summarizeAdaptiveLendingSamples,
   tenantFairnessProof,
   tenantPoolDefinition,
+  validateAdmissionClassCeilings,
   validateAdmissionClassGrantSet,
   validateNoisyRequestFitsEveryGrant,
 } from "./tenant-fairness-lib.mjs";
@@ -53,6 +57,7 @@ const TYR_SERVICES = ["tyr-r1", "tyr-r2", "tyr-r3", "tyr-r4"];
 const PROVIDER_PORT = 9000;
 const ENROLLMENT_TTL_MS = 3000;
 const STEADY_TTL_MS = 120000;
+const ADAPTIVE_TTL_MS = TENANT_FAIRNESS_POLICY.adaptive.grantTtlMs;
 
 const args = new Map();
 for (const arg of process.argv.slice(2)) {
@@ -245,6 +250,7 @@ async function configurePools(token, ttlMs, { allowCreate }) {
     tenantPoolDefinition("sim-shared", ttlMs),
     tenantPoolDefinition("sim-ceilings", ttlMs, { classPolicy: "ceilings" }),
     tenantPoolDefinition("sim-protected", ttlMs, { classPolicy: "protected" }),
+    tenantPoolDefinition("sim-adaptive", ADAPTIVE_TTL_MS, { classPolicy: "adaptive" }),
   ]) {
     const { name, ...body } = spec;
     const update = await jsonRequest(`http://127.0.0.1:18080/v1/pools/${name}`, {
@@ -269,6 +275,9 @@ async function waitForAgents(token) {
       for (const agent of agents) {
         if (agent?.capabilities?.admissionClasses !== true) {
           throw new Error(`${agent.instanceId ?? "unknown agent"} did not advertise admissionClasses capability`);
+        }
+        if (agent?.capabilities?.admissionClassDemand !== true) {
+          throw new Error(`${agent.instanceId ?? "unknown agent"} did not advertise admissionClassDemand capability`);
         }
       }
       return agents;
@@ -309,7 +318,78 @@ function classGrantRows(statsRows, poolName) {
   }));
 }
 
-async function waitForUsableFleet() {
+
+function compactAdaptiveStatus(status) {
+  if (!status || typeof status !== "object") return null;
+  return {
+    pool: status.pool ?? "sim-adaptive",
+    enabled: status.enabled === true,
+    floorRestorationDeadline: status.floorRestorationDeadline ?? null,
+    classes: Array.isArray(status.classes)
+      ? status.classes.map((entry) => ({
+          admissionClass: entry?.admissionClass ?? "",
+          demand: {
+            state: entry?.demand?.state ?? "unknown",
+            inFlight: Number(entry?.demand?.inFlight ?? 0),
+            recentAdmissions: Number(entry?.demand?.recentAdmissions ?? 0),
+            recentRejections: Number(entry?.demand?.recentRejections ?? 0),
+          },
+          nominal: {
+            protectedConcurrent: Number(entry?.nominal?.protectedConcurrent ?? 0),
+            protectedInFlightTokens: Number(entry?.nominal?.protectedInFlightTokens ?? 0),
+          },
+          active: {
+            protectedConcurrent: Number(entry?.active?.protectedConcurrent ?? 0),
+            protectedInFlightTokens: Number(entry?.active?.protectedInFlightTokens ?? 0),
+          },
+          released: {
+            protectedConcurrent: Number(entry?.released?.protectedConcurrent ?? 0),
+            protectedInFlightTokens: Number(entry?.released?.protectedInFlightTokens ?? 0),
+          },
+          restorationPending: entry?.restorationPending === true,
+        }))
+      : [],
+  };
+}
+
+async function observeAdaptiveLending(adminToken, startedAt) {
+  const samples = [];
+  const intervalMs = TENANT_FAIRNESS_POLICY.adaptive.observeIntervalMs;
+  const deadline = startedAt + WORKLOAD_BASE.durationMs + ADAPTIVE_TTL_MS + 2_000;
+  while (Date.now() <= deadline) {
+    const offsetMs = Date.now() - startedAt;
+    try {
+      const [controller, stats] = await Promise.all([
+        jsonRequest(
+          "http://127.0.0.1:18080/v1/admission-class-demand?pool=sim-adaptive",
+          { token: adminToken },
+        ),
+        readTyrStats(),
+      ]);
+      const applied = aggregateAdmissionClassGrants(
+        classGrantRows(stats, "sim-adaptive"),
+        "sim-adaptive",
+      );
+      samples.push({
+        offsetMs,
+        controller: compactAdaptiveStatus(controller.body?.status),
+        applied,
+      });
+    } catch (error) {
+      samples.push({
+        offsetMs,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    await sleep(intervalMs);
+  }
+  return {
+    summary: summarizeAdaptiveLendingSamples(samples),
+    samples,
+  };
+}
+
+async function waitForUsableFleet(adminToken) {
   const deadline = Date.now() + 60000;
   let last = "no observation";
   while (Date.now() < deadline) {
@@ -321,7 +401,7 @@ async function waitForUsableFleet() {
       if (readiness.every((status) => status === 200)) {
         const stats = await readTyrStats();
         for (const row of stats) {
-          for (const pool of ["sim-shared", "sim-ceilings", "sim-protected"]) {
+          for (const pool of ["sim-shared", "sim-ceilings", "sim-protected", "sim-adaptive"]) {
             const snapshot = row?.[pool];
             if (Number(snapshot?.limits?.maxConcurrent ?? 0) < 1) {
               throw new Error(`${pool} has no usable concurrency on one replica`);
@@ -333,6 +413,11 @@ async function waitForUsableFleet() {
         }
         const ceilingsRows = classGrantRows(stats, "sim-ceilings");
         const protectedRows = classGrantRows(stats, "sim-protected");
+        const adaptiveRows = classGrantRows(stats, "sim-adaptive");
+        const adaptiveStatus = await jsonRequest(
+          "http://127.0.0.1:18080/v1/admission-class-demand?pool=sim-adaptive",
+          { token: adminToken },
+        ).catch(() => null);
         const aggregate = {
           ceilings: validateAdmissionClassGrantSet(
             ceilingsRows,
@@ -344,12 +429,19 @@ async function waitForUsableFleet() {
             "sim-protected",
             "protected",
           ),
+          adaptive: validateAdmissionClassCeilings(
+            adaptiveRows,
+            "sim-adaptive",
+            "adaptive",
+          ),
+          adaptiveDemandPolicy: TENANT_FAIRNESS_POLICY.adaptive,
         };
         validateNoisyRequestFitsEveryGrant(ceilingsRows, "sim-ceilings");
         validateNoisyRequestFitsEveryGrant(protectedRows, "sim-protected", {
           requireProtected: true,
         });
-        return { stats, aggregate };
+        validateNoisyRequestFitsEveryGrant(adaptiveRows, "sim-adaptive");
+        return { stats, aggregate, adaptiveStatus: adaptiveStatus?.body?.status ?? null };
       }
       last = `readiness statuses ${readiness.join(",")}`;
     } catch (error) {
@@ -419,9 +511,10 @@ function percentile(values, p) {
 
 function aggregateResults(rows, outputDir, classGrants) {
   const comparisons = rows.map((row) => row.comparison);
+  const lending = rows.map((row) => row.adaptiveLending);
   const numeric = (values) => values.filter(Number.isFinite);
   const summary = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     benchmark: "tenant-fairness",
     generatedAt: new Date().toISOString(),
     runtime: {
@@ -438,9 +531,11 @@ function aggregateResults(rows, outputDir, classGrants) {
       sharedSuccessRateMedian: percentile(comparisons.map((row) => row.premium.shared.successRate), 0.5),
       ceilingsSuccessRateMedian: percentile(comparisons.map((row) => row.premium.ceilings.successRate), 0.5),
       protectedSuccessRateMedian: percentile(comparisons.map((row) => row.premium.protected.successRate), 0.5),
+      adaptiveSuccessRateMedian: percentile(comparisons.map((row) => row.premium.adaptive.successRate), 0.5),
       sharedContendedGoodputRpsMedian: percentile(comparisons.map((row) => row.premium.shared.contendedGoodputRps), 0.5),
       ceilingsContendedGoodputRpsMedian: percentile(comparisons.map((row) => row.premium.ceilings.contendedGoodputRps), 0.5),
       protectedContendedGoodputRpsMedian: percentile(comparisons.map((row) => row.premium.protected.contendedGoodputRps), 0.5),
+      adaptiveContendedGoodputRpsMedian: percentile(comparisons.map((row) => row.premium.adaptive.contendedGoodputRps), 0.5),
       protectedVsSharedTtftRatioMedian: percentile(
         numeric(comparisons.map((row) => row.premium.protectedVsSharedTtftRatio)),
         0.5,
@@ -449,13 +544,30 @@ function aggregateResults(rows, outputDir, classGrants) {
         numeric(comparisons.map((row) => row.premium.protectedVsCeilingsTtftRatio)),
         0.5,
       ),
+      adaptiveVsProtectedTtftRatioMedian: percentile(
+        numeric(comparisons.map((row) => row.premium.adaptiveVsProtectedTtftRatio)),
+        0.5,
+      ),
+      adaptiveVsProtectedGoodputRatioMedian: percentile(
+        numeric(comparisons.map((row) => row.premium.adaptiveVsProtectedGoodputRatio)),
+        0.5,
+      ),
+      adaptiveVsSharedGoodputRatioMedian: percentile(
+        numeric(comparisons.map((row) => row.premium.adaptiveVsSharedGoodputRatio)),
+        0.5,
+      ),
     },
     noisy: {
       sharedSuccessRateMedian: percentile(comparisons.map((row) => row.noisy.shared.successRate), 0.5),
       ceilingsSuccessRateMedian: percentile(comparisons.map((row) => row.noisy.ceilings.successRate), 0.5),
       protectedSuccessRateMedian: percentile(comparisons.map((row) => row.noisy.protected.successRate), 0.5),
+      adaptiveSuccessRateMedian: percentile(comparisons.map((row) => row.noisy.adaptive.successRate), 0.5),
       protectedContendedCompletionsMedian: percentile(
         comparisons.map((row) => row.noisy.protected.contendedCompleted),
+        0.5,
+      ),
+      adaptiveContendedCompletionsMedian: percentile(
+        comparisons.map((row) => row.noisy.adaptive.contendedCompleted),
         0.5,
       ),
       ceilingsLocalRejectsTotal: comparisons.reduce(
@@ -466,13 +578,33 @@ function aggregateResults(rows, outputDir, classGrants) {
         (sum, row) => sum + row.noisy.protected.localRejects,
         0,
       ),
+      adaptiveLocalRejectsTotal: comparisons.reduce(
+        (sum, row) => sum + row.noisy.adaptive.localRejects,
+        0,
+      ),
+    },
+    classLending: {
+      seedsWithNoisyFloorLent: lending.filter((row) => row.noisyFloorLent).length,
+      seedsWithNoisyDemandAfterLending: lending.filter((row) => row.noisyDemandObservedAfterLending).length,
+      seedsWithNoisyFloorRestored: lending.filter((row) => row.noisyFloorRestored).length,
+      seedsWithHardCeilingsPreservedWhileLent: lending.filter((row) => row.hardCeilingsPreservedWhileLent).length,
+      restorationLatencyMsMedian: percentile(
+        numeric(lending.map((row) => row.restorationLatencyMs)),
+        0.5,
+      ),
+      perSeed: rows.map((row) => ({ seed: row.seed, ...row.adaptiveLending })),
     },
     upstream429s: {
       sharedTotal: comparisons.reduce((sum, row) => sum + row.upstream429s.shared, 0),
       ceilingsTotal: comparisons.reduce((sum, row) => sum + row.upstream429s.ceilings, 0),
       protectedTotal: comparisons.reduce((sum, row) => sum + row.upstream429s.protected, 0),
+      adaptiveTotal: comparisons.reduce((sum, row) => sum + row.upstream429s.adaptive, 0),
     },
-    results: rows.map((row) => ({ seed: row.seed, comparison: row.comparison })),
+    results: rows.map((row) => ({
+      seed: row.seed,
+      comparison: row.comparison,
+      adaptiveLending: row.adaptiveLending,
+    })),
   };
   writeFileSync(path.join(outputDir, "summary.json"), JSON.stringify(summary, null, 2));
   return summary;
@@ -503,12 +635,12 @@ try {
     }
     await waitForAgents(adminToken);
     await configurePools(adminToken, STEADY_TTL_MS, { allowCreate: false });
-    for (const pool of ["sim-shared", "sim-ceilings", "sim-protected"]) {
+    for (const pool of ["sim-shared", "sim-ceilings", "sim-protected", "sim-adaptive"]) {
       await jsonRequest(`http://127.0.0.1:18080/v1/pools/${pool}/rebalance`, {
         method: "POST", token: adminToken, allowed: [200, 202],
       });
     }
-    const fleet = await waitForUsableFleet();
+    const fleet = await waitForUsableFleet(adminToken);
 
     const runId = new Date().toISOString().replaceAll(":", "").replaceAll(".", "");
     const outputDir = path.join(RESULTS_ROOT, runId);
@@ -554,18 +686,38 @@ try {
         outFile: path.join(outputDir, `protected-seed-${seed}.json`),
         tokens: identity.tokens,
       });
+      await sleep(1000);
+      const adaptiveStartedAt = Date.now();
+      const [adaptiveArm, adaptiveObservation] = await Promise.all([
+        runLoadgen({
+          seed,
+          model: "sim-model-adaptive",
+          arm: "moflux-adaptive-class-floors",
+          traceFile,
+          outFile: path.join(outputDir, `adaptive-seed-${seed}.json`),
+          tokens: identity.tokens,
+        }),
+        observeAdaptiveLending(adminToken, adaptiveStartedAt),
+      ]);
+      writeFileSync(
+        path.join(outputDir, `adaptive-lending-seed-${seed}.json`),
+        JSON.stringify(adaptiveObservation, null, 2),
+      );
       await terminateHostChild(provider);
-      const comparison = compareTenantFairness(shared, ceilings, protectedArm);
-      const proof = tenantFairnessProof(comparison);
-      const row = { seed, comparison, proof };
+      const comparison = compareTenantFairness(shared, ceilings, protectedArm, adaptiveArm);
+      const adaptiveLending = adaptiveObservation.summary;
+      const proof = tenantFairnessProof(comparison, adaptiveLending);
+      const row = { seed, comparison, adaptiveLending, proof };
       rows.push(row);
       writeFileSync(path.join(outputDir, `comparison-seed-${seed}.json`), JSON.stringify(row, null, 2));
       console.log(
         `seed ${seed}: premium contended goodput ` +
           `${comparison.premium.shared.contendedGoodputRps} / ` +
           `${comparison.premium.ceilings.contendedGoodputRps} / ` +
-          `${comparison.premium.protected.contendedGoodputRps} rps; protected noisy completions ` +
-          `${comparison.noisy.protected.contendedCompleted}; proof=${proof.passed ? "pass" : "fail"}`,
+          `${comparison.premium.protected.contendedGoodputRps} / ` +
+          `${comparison.premium.adaptive.contendedGoodputRps} rps; adaptive noisy floor ` +
+          `lent=${adaptiveLending.noisyFloorLent} restored=${adaptiveLending.noisyFloorRestored}; ` +
+          `proof=${proof.passed ? "pass" : "fail"}`,
       );
       if (OPT.requireProof && !proof.passed) {
         throw new Error(`tenant-fairness proof failed for seed ${seed}: ${JSON.stringify(proof.checks)}`);

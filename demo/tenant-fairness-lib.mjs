@@ -1,3 +1,18 @@
+const PROTECTED_CLASS_LIMITS = Object.freeze({
+  premium: Object.freeze({
+    globalProtectedConcurrent: 4,
+    globalMaxConcurrent: 8,
+    globalProtectedInFlightTokens: 8_000,
+    globalMaxInFlightTokens: 64_000,
+  }),
+  noisy: Object.freeze({
+    globalProtectedConcurrent: 4,
+    globalMaxConcurrent: 24,
+    globalProtectedInFlightTokens: 36_000,
+    globalMaxInFlightTokens: 64_000,
+  }),
+});
+
 export const TENANT_FAIRNESS_POLICY = Object.freeze({
   physical: Object.freeze({
     maxConcurrent: 32,
@@ -7,6 +22,12 @@ export const TENANT_FAIRNESS_POLICY = Object.freeze({
   workload: Object.freeze({
     minimumNoisyReservationTokensPerAgent: 8_000,
     minimumNoisyCompletionsPerSeed: 4,
+  }),
+  adaptive: Object.freeze({
+    grantTtlMs: 3_000,
+    reportStaleAfterMs: 5_000,
+    idleAfterMs: 1_000,
+    observeIntervalMs: 500,
   }),
   classPolicies: Object.freeze({
     ceilings: Object.freeze({
@@ -19,26 +40,18 @@ export const TENANT_FAIRNESS_POLICY = Object.freeze({
         globalMaxInFlightTokens: 64_000,
       }),
     }),
-    protected: Object.freeze({
-      premium: Object.freeze({
-        globalProtectedConcurrent: 4,
-        globalMaxConcurrent: 8,
-        globalProtectedInFlightTokens: 8_000,
-        globalMaxInFlightTokens: 64_000,
-      }),
-      noisy: Object.freeze({
-        globalProtectedConcurrent: 4,
-        globalMaxConcurrent: 24,
-        globalProtectedInFlightTokens: 36_000,
-        globalMaxInFlightTokens: 64_000,
-      }),
-    }),
+    protected: PROTECTED_CLASS_LIMITS,
+    adaptive: PROTECTED_CLASS_LIMITS,
   }),
 });
 
-export function tenantPoolDefinition(name, grantTtlMs, { classPolicy = "shared" } = {}) {
+export function tenantPoolDefinition(
+  name,
+  grantTtlMs,
+  { classPolicy = "shared" } = {},
+) {
   const policy = TENANT_FAIRNESS_POLICY;
-  if (!["shared", "ceilings", "protected"].includes(classPolicy)) {
+  if (!["shared", "ceilings", "protected", "adaptive"].includes(classPolicy)) {
     throw new Error(`unknown tenant-fairness class policy ${classPolicy}`);
   }
   return Object.freeze({
@@ -54,6 +67,15 @@ export function tenantPoolDefinition(name, grantTtlMs, { classPolicy = "shared" 
     ...(classPolicy === "shared"
       ? {}
       : { admissionClassLimits: policy.classPolicies[classPolicy] }),
+    ...(classPolicy === "adaptive"
+      ? {
+          admissionClassDemandPolicy: {
+            enabled: true,
+            reportStaleAfterMs: policy.adaptive.reportStaleAfterMs,
+            idleAfterMs: policy.adaptive.idleAfterMs,
+          },
+        }
+      : {}),
   });
 }
 
@@ -76,8 +98,8 @@ function ratio(numerator, denominator) {
     : null;
 }
 
-export function compareTenantFairness(shared, ceilings, protectedArm) {
-  const summaries = { shared, ceilings, protected: protectedArm };
+export function compareTenantFairness(shared, ceilings, protectedArm, adaptiveArm) {
+  const summaries = { shared, ceilings, protected: protectedArm, adaptive: adaptiveArm };
   const premium = Object.fromEntries(
     Object.entries(summaries).map(([arm, summary]) => {
       const values = summary?.classes?.interactive ?? {};
@@ -108,11 +130,13 @@ export function compareTenantFairness(shared, ceilings, protectedArm) {
   return Object.freeze({
     traceHashMatches:
       shared?.trace?.hash === ceilings?.trace?.hash &&
-      ceilings?.trace?.hash === protectedArm?.trace?.hash,
+      ceilings?.trace?.hash === protectedArm?.trace?.hash &&
+      protectedArm?.trace?.hash === adaptiveArm?.trace?.hash,
     upstream429s: Object.freeze({
       shared: upstreamRejects(shared),
       ceilings: upstreamRejects(ceilings),
       protected: upstreamRejects(protectedArm),
+      adaptive: upstreamRejects(adaptiveArm),
     }),
     premium: Object.freeze({
       ...premium,
@@ -128,12 +152,95 @@ export function compareTenantFairness(shared, ceilings, protectedArm) {
         premium.protected.contendedGoodputRps,
         premium.ceilings.contendedGoodputRps,
       ),
+      adaptiveVsProtectedTtftRatio: ratio(
+        premium.adaptive.contendedTtftP95Ms,
+        premium.protected.contendedTtftP95Ms,
+      ),
+      adaptiveVsProtectedGoodputRatio: ratio(
+        premium.adaptive.contendedGoodputRps,
+        premium.protected.contendedGoodputRps,
+      ),
+      adaptiveVsSharedGoodputRatio: ratio(
+        premium.adaptive.contendedGoodputRps,
+        premium.shared.contendedGoodputRps,
+      ),
     }),
     noisy: Object.freeze(noisy),
   });
 }
 
-export function tenantFairnessProof(comparison) {
+function floorEquals(actual, expected) {
+  return Number(actual?.protectedConcurrent ?? 0) === Number(expected?.protectedConcurrent ?? 0) &&
+    Number(actual?.protectedInFlightTokens ?? 0) === Number(expected?.protectedInFlightTokens ?? 0);
+}
+
+function hardCeilingsEqual(actual, expected) {
+  return Number(actual?.maxConcurrent ?? 0) === Number(expected?.maxConcurrent ?? 0) &&
+    Number(actual?.maxInFlightTokens ?? 0) === Number(expected?.maxInFlightTokens ?? 0);
+}
+
+function controllerNoisy(sample) {
+  return sample?.controller?.classes?.find((entry) => entry?.admissionClass === "noisy") ?? null;
+}
+
+function sampleHasDemand(sample) {
+  const noisy = controllerNoisy(sample);
+  const demand = noisy?.demand ?? {};
+  return ["demanding", "starved", "protected"].includes(String(demand.state ?? "")) &&
+    (
+      Number(demand.inFlight ?? 0) > 0 ||
+      Number(demand.recentAdmissions ?? 0) > 0 ||
+      Number(demand.recentRejections ?? 0) > 0
+    );
+}
+
+export function summarizeAdaptiveLendingSamples(samples) {
+  const nominal = expectedGrantLimits(TENANT_FAIRNESS_POLICY.classPolicies.adaptive).noisy;
+  const ordered = [...samples].sort((a, b) => Number(a.offsetMs ?? 0) - Number(b.offsetMs ?? 0));
+  const lentIndex = ordered.findIndex((sample) => {
+    const noisy = controllerNoisy(sample);
+    const applied = sample?.applied?.noisy;
+    return Number(noisy?.released?.protectedConcurrent ?? 0) === nominal.protectedConcurrent &&
+      Number(noisy?.released?.protectedInFlightTokens ?? 0) === nominal.protectedInFlightTokens &&
+      floorEquals(applied, { protectedConcurrent: 0, protectedInFlightTokens: 0 }) &&
+      hardCeilingsEqual(applied, nominal);
+  });
+  const demandingIndex = ordered.findIndex((sample, index) => index > lentIndex && sampleHasDemand(sample));
+  const restoredIndex = ordered.findIndex((sample, index) => {
+    if (index <= demandingIndex) return false;
+    const noisy = controllerNoisy(sample);
+    const applied = sample?.applied?.noisy;
+    return Number(noisy?.released?.protectedConcurrent ?? -1) === 0 &&
+      Number(noisy?.released?.protectedInFlightTokens ?? -1) === 0 &&
+      floorEquals(applied, nominal) &&
+      hardCeilingsEqual(applied, nominal);
+  });
+  const restorationPendingIndex = ordered.findIndex((sample, index) =>
+    index > lentIndex && controllerNoisy(sample)?.restorationPending === true,
+  );
+  const first = (index) => index < 0 ? null : Number(ordered[index]?.offsetMs ?? 0);
+  return Object.freeze({
+    sampleCount: ordered.length,
+    noisyFloorLent: lentIndex >= 0,
+    noisyDemandObservedAfterLending: demandingIndex >= 0,
+    noisyRestorationPendingObserved: restorationPendingIndex >= 0,
+    noisyFloorRestored: restoredIndex >= 0,
+    hardCeilingsPreservedWhileLent: lentIndex >= 0 &&
+      hardCeilingsEqual(ordered[lentIndex]?.applied?.noisy, nominal),
+    hardCeilingsPreservedAfterRestoration: restoredIndex >= 0 &&
+      hardCeilingsEqual(ordered[restoredIndex]?.applied?.noisy, nominal),
+    lentAtMs: first(lentIndex),
+    demandObservedAtMs: first(demandingIndex),
+    restorationPendingAtMs: first(restorationPendingIndex),
+    restoredAtMs: first(restoredIndex),
+    restorationLatencyMs:
+      demandingIndex >= 0 && restoredIndex >= 0
+        ? first(restoredIndex) - first(demandingIndex)
+        : null,
+  });
+}
+
+export function tenantFairnessProof(comparison, adaptiveLending = {}) {
   const minimumNoisyCompletions =
     TENANT_FAIRNESS_POLICY.workload.minimumNoisyCompletionsPerSeed;
   const checks = Object.freeze({
@@ -141,27 +248,44 @@ export function tenantFairnessProof(comparison) {
     noSharedUpstream429s: comparison.upstream429s.shared === 0,
     noCeilingsUpstream429s: comparison.upstream429s.ceilings === 0,
     noProtectedUpstream429s: comparison.upstream429s.protected === 0,
+    noAdaptiveUpstream429s: comparison.upstream429s.adaptive === 0,
     ceilingPremiumClassObserved: comparison.premium.ceilings.classifiedResponses > 0,
     ceilingNoisyClassObserved: comparison.noisy.ceilings.classifiedResponses > 0,
     protectedPremiumClassObserved: comparison.premium.protected.classifiedResponses > 0,
     protectedNoisyClassObserved: comparison.noisy.protected.classifiedResponses > 0,
+    adaptivePremiumClassObserved: comparison.premium.adaptive.classifiedResponses > 0,
+    adaptiveNoisyClassObserved: comparison.noisy.adaptive.classifiedResponses > 0,
     protectedPolicyExercised: comparison.noisy.protected.localRejects > 0,
-    premiumServedUnderContention: comparison.premium.protected.contendedGoodputRps > 0,
-    noisyServedUnderContention: comparison.noisy.protected.contendedGoodputRps > 0,
+    adaptivePolicyExercised: comparison.noisy.adaptive.localRejects > 0,
+    premiumServedUnderContention: comparison.premium.adaptive.contendedGoodputRps > 0,
+    noisyServedUnderContention: comparison.noisy.adaptive.contendedGoodputRps > 0,
     noisyMinimumCompletions:
-      comparison.noisy.protected.contendedCompleted >= minimumNoisyCompletions,
+      comparison.noisy.adaptive.contendedCompleted >= minimumNoisyCompletions,
+    adaptiveNoisyFloorLent: adaptiveLending.noisyFloorLent === true,
+    adaptiveNoisyDemandObservedAfterLending:
+      adaptiveLending.noisyDemandObservedAfterLending === true,
+    adaptiveNoisyFloorRestored: adaptiveLending.noisyFloorRestored === true,
+    adaptiveHardCeilingsPreservedWhileLent:
+      adaptiveLending.hardCeilingsPreservedWhileLent === true,
+    adaptiveHardCeilingsPreservedAfterRestoration:
+      adaptiveLending.hardCeilingsPreservedAfterRestoration === true,
   });
   const observations = Object.freeze({
     premiumTtftImprovedVsShared:
-      comparison.premium.protected.contendedTtftP95Ms > 0 &&
+      comparison.premium.adaptive.contendedTtftP95Ms > 0 &&
       comparison.premium.shared.contendedTtftP95Ms > 0 &&
-      comparison.premium.protected.contendedTtftP95Ms <
+      comparison.premium.adaptive.contendedTtftP95Ms <
         comparison.premium.shared.contendedTtftP95Ms,
-    premiumTtftImprovedVsCeilings:
+    premiumTtftImprovedVsProtected:
+      comparison.premium.adaptive.contendedTtftP95Ms > 0 &&
       comparison.premium.protected.contendedTtftP95Ms > 0 &&
-      comparison.premium.ceilings.contendedTtftP95Ms > 0 &&
-      comparison.premium.protected.contendedTtftP95Ms <
-        comparison.premium.ceilings.contendedTtftP95Ms,
+      comparison.premium.adaptive.contendedTtftP95Ms <
+        comparison.premium.protected.contendedTtftP95Ms,
+    premiumGoodputImprovedVsProtected:
+      comparison.premium.adaptive.contendedGoodputRps >
+        comparison.premium.protected.contendedGoodputRps,
+    restorationPendingObserved:
+      adaptiveLending.noisyRestorationPendingObserved === true,
   });
   return Object.freeze({
     passed: Object.values(checks).every(Boolean),
@@ -225,6 +349,25 @@ export function validateAdmissionClassGrantSet(grants, poolName, classPolicy) {
   }
   if (Object.keys(aggregate).sort().join(",") !== Object.keys(expected).sort().join(",")) {
     throw new Error(`${poolName} grant set contains unexpected admission-class keys`);
+  }
+  return aggregate;
+}
+
+export function validateAdmissionClassCeilings(grants, poolName, classPolicy) {
+  const configured = TENANT_FAIRNESS_POLICY.classPolicies[classPolicy];
+  if (configured === undefined) throw new Error(`unknown class policy ${classPolicy}`);
+  const aggregate = aggregateAdmissionClassGrants(grants, poolName);
+  const expected = expectedGrantLimits(configured);
+  for (const id of Object.keys(expected)) {
+    const actual = aggregate[id];
+    if (actual === undefined) throw new Error(`${poolName} grant set is missing class ${id}`);
+    for (const field of ["maxConcurrent", "maxInFlightTokens"]) {
+      if (actual[field] !== expected[id][field]) {
+        throw new Error(
+          `${poolName} ${id} ${field} sums to ${actual[field]}; expected ${expected[id][field]}`,
+        );
+      }
+    }
   }
   return aggregate;
 }

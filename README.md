@@ -52,12 +52,12 @@ four agents are visible, the presenter promotes both pools to the long run lease
 and waits for one simultaneously ready, correctly sized fleet-wide grant set.
 Each accepted grant must also have enough remaining lifetime to finish the
 configured MoFlux phase. Startup fails if any live local grant is too small or
-too close to expiration. Pool creation also sends Latchflo 0.8.0's durable
+too close to expiration. Pool creation also sends Latchflo 0.9.0's durable
 minimum-grant invariants: one concurrency slot, 755 tokens for interactive, and
 9,942 tokens for batch. Latchflo therefore rejects an unusable split before it
 can issue a zero-capacity or sub-request grant.
 
-The licensed path is pinned to **Tyr 0.22.0**, **Latchflo 0.8.0**,
+The licensed path is pinned to **Tyr 0.23.0**, **Latchflo 0.9.0**,
 **async-bulkhead-llm 3.15.1**, and **async-bulkhead-ts 1.0.1**. The canonical
 comparison uses Anthropic-shaped streaming because that protocol exposes input
 usage at `message_start` and cumulative output usage while the response is still
@@ -74,11 +74,11 @@ registry images, or build missing images from local source directories. Place
 or set `MOFLUX_TYR_SOURCE_DIR` and `MOFLUX_LATCHFLO_SOURCE_DIR` in the local
 environment file.
 
-Tyr 0.22.0 capacity-aware routing is enabled for the licensed four-replica
+Tyr 0.23.0 capacity-aware routing is enabled for the licensed four-replica
 MoFlux arm. Each Tyr polls the private capacity snapshots of the other three
 replicas and may forward a request once to the peer with better headroom for
 that request's concurrency and token reservation. Tyr also reports bounded
-per-pool demand snapshots to Latchflo 0.8.0 on the existing authenticated
+per-pool demand snapshots to Latchflo 0.9.0 on the existing authenticated
 heartbeat. The benchmark generates one local-only shared routing secret in
 `demo/moflux/.env`; the secret is never committed. Latchflo owns grants, demand-
 aware lending, starvation prevention, and lease safety. It does not distribute
@@ -86,7 +86,7 @@ peer topology or the routing secret.
 
 The committed `results/` corpus is deliberately unchanged. Those files are
 historical evidence and retain their recorded Tyr 0.17.0/Latchflo 0.5.1 runtime
-metadata. New licensed runs use Tyr 0.22.0/Latchflo 0.8.0 and should be compared
+metadata. New licensed runs use Tyr 0.23.0/Latchflo 0.9.0 and should be compared
 as a new evidence set rather than silently relabeling the old one.
 
 Run the canonical progressive comparison:
@@ -193,49 +193,50 @@ shorter than `--grant-ttl-ms`; no benchmark traffic begins during enrollment.
 See `demo/VIDEO-DEMO.md` for the recording flow and narration. Stop the
 containers afterward with `npm run demo:down`.
 
-### Authenticated tenant-fairness benchmark
+### Authenticated admission-class benchmark
 
-MoFlux Bench 0.15.0 adds a three-arm noisy-neighbor benchmark for **Tyr 0.22.0**
-and **Latchflo 0.8.0**. Every seed replays the same immutable trace through three
-equal 32-request / 64,000-token physical pools:
+MoFlux Bench 0.16.0 extends the noisy-neighbor benchmark to four matched arms
+for **Tyr 0.23.0** and **Latchflo 0.9.0**. Every seed replays the same immutable
+trace through equal 32-request / 64,000-token physical pools:
 
 - `sim-shared` applies only the fleet-wide pool envelope.
 - `sim-ceilings` classifies traffic and applies 8/24 premium/noisy concurrency
   ceilings, but reserves no class capacity.
-- `sim-protected` keeps the same ceilings and adds strict fleet-wide floors:
-  premium receives 4 concurrent requests and 8,000 tokens; noisy receives 4
-  concurrent requests and 36,000 tokens.
+- `sim-protected` keeps those ceilings and adds static fleet-wide floors: premium
+  gets 4 concurrent / 8,000 tokens; noisy gets 4 concurrent / 36,000 tokens.
+- `sim-adaptive` uses the same nominal floors and ceilings but enables Latchflo
+  0.9.0 demand-aware class-floor lending from Tyr 0.23.0 per-class heartbeats.
 
-The noisy request shape is intentionally sized so two requests can exhaust one
-replica's token grant in the ceiling-only arm. Before traffic starts, the runner
-verifies that every protected replica grant can fund at least one noisy request.
-This catches class-policy fragmentation instead of allowing a configuration
-that rejects the noisy class before any useful work can begin.
+Noisy traffic starts five seconds after premium traffic. The adaptive pool uses
+a short 3-second benchmark lease and a 1-second idle threshold so the runner can
+observe an idle noisy floor being released and then safely restored after noisy
+demand begins. The other three control pools retain long steady leases. This
+short adaptive TTL is benchmark instrumentation, not a production recommendation.
 
 Two ephemeral RS256 identities drive the workloads. Tyr maps the premium tenant
-to `premium`; the noisy worker uses the fixed default class. Latchflo distributes
-only numeric limits for those fixed class IDs and never receives caller identity.
-The benchmark generates a one-run HTTPS JWKS endpoint and CA, mounts only the CA
-into Tyr, redacts tokens from result JSON, and deletes the generated credentials
-afterward.
+to `premium`; the noisy worker uses the fixed default class. Latchflo receives
+only bounded class demand and numeric limits for fixed class IDs, not caller
+identity. Generated keys, JWTs, and the local CA are deleted after the run.
 
 ```bash
-npm run demo:classes         # five three-arm seeds with the proof gate
+npm run demo:classes         # five four-arm seeds with the proof gate
 npm run demo:classes:single  # one diagnostic seed
 npm run demo:classes:doctor  # prerequisites only
 ```
 
-The proof gate requires matching trace hashes across all three arms, zero
-provider 429s, class attribution in both class-aware arms, protected-policy
-shedding, premium service during contention, noisy service during contention,
-and at least four noisy completions per protected seed. A run where the noisy
-class completes no work now fails. Comparative success rate, goodput, and TTFT
-remain reported observations rather than hard-coded performance thresholds.
+The proof gate requires matching trace hashes, zero provider 429s, correct class
+attribution, bounded shedding, premium and noisy service under contention, and
+at least four noisy completions in the adaptive arm. It also samples both
+Latchflo and Tyr during the adaptive arm and requires: the noisy nominal floor
+was actually lent, its 24-concurrent / 64,000-token hard ceilings stayed intact,
+noisy demand appeared after lending, and Tyr later applied the restored
+4-concurrent / 36,000-token floor.
 
-Tyr 0.22.0 treats these as strict local floors. MoFlux Bench 0.15.0 does not
-claim idle-capacity lending between admission classes because Tyr does not yet
-report per-class demand to Latchflo. See `demo/TENANT-FAIRNESS.md` for the exact
-policy, security model, proof contract, and result schema.
+Success rate, goodput, TTFT, and restoration latency are reported outcomes, not
+acceptance thresholds. The benchmark therefore tests whether adaptive floors are
+work-conserving without assuming in advance that they must beat static floors on
+every performance metric. See `demo/TENANT-FAIRNESS.md` for the exact policy,
+lease semantics, security model, proof contract, and schema-version-3 output.
 
 ### Public research walkthrough
 
@@ -431,8 +432,8 @@ npm run demo:hetero:adaptive   # recommended mixed-size, all-arm comparison
 `--capacity-profile=adaptive-28-4`; conflicting envelope, concurrency, or token
 settings are rejected. `demo:lending` remains the focused two-arm scene.
 
-`--lending` widens the idle window from 35% to 60% of the phase so Tyr 0.22.0
-can report an idle batch pool and Latchflo 0.8.0 can safely lend its protected
+`--lending` widens the idle window from 35% to 60% of the phase so Tyr 0.23.0
+can report an idle batch pool and Latchflo 0.9.0 can safely lend its protected
 floor. The presenter creates a demand-aware capacity group with 28/4 protected
 concurrency and 24,000/40,000-token guarantees, while both pools may borrow up
 to the shared 32-slot/64,000-token envelope. The larger token envelope is
@@ -670,11 +671,12 @@ Three things worth reading carefully, including the ones that are inconvenient:
   envelope never saturates, so every arm looks identical. Both failure modes
   were hit while building this. Check that peak occupancy reaches the envelope
   and that success rates are neither 0% nor 100% before trusting a comparison.
-- **Admission-class floors are strict, not work-conserving across classes.**
-  Latchflo 0.8.0 distributes protected class floors, but Tyr 0.22.0 reports
-  demand at pool scope. The tenant benchmark therefore measures floor
-  enforcement and starvation resistance, not automatic lending of an idle
-  class floor.
+- **Adaptive class-floor restoration is lease-safe, not instantaneous.**
+  Tyr 0.23.0 reports bounded per-class demand and Latchflo 0.9.0 can lend a fully
+  observed idle class floor. Returning demand stops new lending immediately, but
+  running borrowers are not revoked; the nominal floor is restored after the
+  outstanding lent-allocation lease expires plus normal reconcile/poll delay.
+  The class benchmark therefore reports restoration latency explicitly.
 - **Streaming chunk granularity** is one SSE frame per simulator tick, not per
   token.
 

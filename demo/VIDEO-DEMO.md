@@ -19,7 +19,7 @@ request characteristics.
 
 ## Runtime compatibility and setup
 
-The presenter is pinned to Tyr 0.22.0, Latchflo 0.8.0,
+The presenter is pinned to Tyr 0.23.0, Latchflo 0.9.0,
 async-bulkhead-llm 3.15.1, and async-bulkhead-ts 1.0.1. `npm run demo` uses
 Anthropic-shaped streams and enables progressive reconciliation with a
 256-token update step and a 256-token future-output safety margin. Input usage
@@ -50,7 +50,7 @@ Latchflo/Tyr state, then the verified single-pair presenter:
 
 1. validates Docker, Compose, licensed images, and configuration;
 2. starts Latchflo, the telemetry relay, Prometheus, and Grafana;
-3. creates or updates `sim-interactive` and `sim-batch` with a short enrollment lease, an exact 31/1 concurrency split, 30,000/10,000 token budgets, and Latchflo 0.8.0 minimum-grant floors (1 slot; 755 interactive tokens; 9,942 batch tokens);
+3. creates or updates `sim-interactive` and `sim-batch` with a short enrollment lease, an exact 31/1 concurrency split, 30,000/10,000 token budgets, and Latchflo 0.9.0 minimum-grant floors (1 slot; 755 interactive tokens; 9,942 batch tokens);
 4. runs the no-control arm;
 5. replaces passthrough replicas with Tyr, waits for all four registrations,
    promotes the pools to the steady-state lease, and waits for one simultaneous
@@ -140,8 +140,8 @@ replaying the same trace shape and capacity policy.
 
 This is a separate five-seed comparison because it changes the control-plane
 policy and lease cadence. The reference arm is an exact static 28/4 partition
-with interactive caps of 7/7/7/7. The MoFlux arm creates a Latchflo 0.8.0 demand-aware capacity group, receives
-live demand snapshots from Tyr 0.22.0, and uses short renewable leases so a
+with interactive caps of 7/7/7/7. The MoFlux arm creates a Latchflo 0.9.0 demand-aware capacity group, receives
+live demand snapshots from Tyr 0.23.0, and uses short renewable leases so a
 returning four-slot batch floor can be observed inside the contended window.
 The lending command uses a 64,000-token envelope with 24,000 interactive and
 40,000 batch guaranteed tokens so all 28 interactive and four batch slots are

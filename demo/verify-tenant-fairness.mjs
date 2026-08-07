@@ -10,8 +10,10 @@ import { startIdentityFixture } from "./identity-fixture-lib.mjs";
 import {
   TENANT_FAIRNESS_POLICY,
   compareTenantFairness,
+  summarizeAdaptiveLendingSamples,
   tenantFairnessProof,
   tenantPoolDefinition,
+  validateAdmissionClassCeilings,
   validateAdmissionClassGrantSet,
   validateNoisyRequestFitsEveryGrant,
 } from "./tenant-fairness-lib.mjs";
@@ -130,6 +132,44 @@ function fakeSummary({ hash = "same", premiumClass, noisyClass, noisyCompleted =
   };
 }
 
+function adaptiveSample(offsetMs, { lent = false, demanding = false, pending = false, restored = false } = {}) {
+  const nominal = { protectedConcurrent: 4, protectedInFlightTokens: 36000 };
+  const active = lent && !restored
+    ? { protectedConcurrent: 0, protectedInFlightTokens: 0 }
+    : nominal;
+  const released = lent && !restored
+    ? nominal
+    : { protectedConcurrent: 0, protectedInFlightTokens: 0 };
+  return {
+    offsetMs,
+    controller: {
+      pool: "sim-adaptive",
+      enabled: true,
+      classes: [{
+        admissionClass: "noisy",
+        demand: {
+          state: demanding ? "demanding" : "idle",
+          inFlight: demanding ? 1 : 0,
+          recentAdmissions: demanding ? 1 : 0,
+          recentRejections: 0,
+        },
+        nominal,
+        active,
+        released,
+        restorationPending: pending,
+      }],
+    },
+    applied: {
+      noisy: {
+        protectedConcurrent: active.protectedConcurrent,
+        maxConcurrent: 24,
+        protectedInFlightTokens: active.protectedInFlightTokens,
+        maxInFlightTokens: 64000,
+      },
+    },
+  };
+}
+
 try {
   identity = await startIdentityFixture(path.join(temp, "identity"), { port: 0 });
   const jwks = await getJson(`${identity.url}/jwks`, readFileSync(identity.tls.ca));
@@ -141,9 +181,16 @@ try {
   const shared = tenantPoolDefinition("sim-shared", 120000);
   const ceilings = tenantPoolDefinition("sim-ceilings", 120000, { classPolicy: "ceilings" });
   const protectedPool = tenantPoolDefinition("sim-protected", 120000, { classPolicy: "protected" });
+  const adaptivePool = tenantPoolDefinition("sim-adaptive", 3000, { classPolicy: "adaptive" });
   assert.equal(shared.admissionClassLimits, undefined);
   assert.deepEqual(ceilings.admissionClassLimits, TENANT_FAIRNESS_POLICY.classPolicies.ceilings);
   assert.deepEqual(protectedPool.admissionClassLimits, TENANT_FAIRNESS_POLICY.classPolicies.protected);
+  assert.deepEqual(adaptivePool.admissionClassLimits, TENANT_FAIRNESS_POLICY.classPolicies.adaptive);
+  assert.deepEqual(adaptivePool.admissionClassDemandPolicy, {
+    enabled: true,
+    reportStaleAfterMs: 5000,
+    idleAfterMs: 1000,
+  });
 
   const ceilingsGrants = [0, 1, 2, 3].map(() => ({
     pool: "sim-ceilings",
@@ -179,6 +226,24 @@ try {
       },
     } },
   }));
+  const adaptiveLentGrants = [0, 1, 2, 3].map(() => ({
+    pool: "sim-adaptive",
+    limits: { admissionClasses: {
+      premium: {
+        protectedConcurrent: 0,
+        maxConcurrent: 2,
+        protectedInFlightTokens: 0,
+        maxInFlightTokens: 16000,
+      },
+      noisy: {
+        protectedConcurrent: 0,
+        maxConcurrent: 6,
+        protectedInFlightTokens: 0,
+        maxInFlightTokens: 16000,
+      },
+    } },
+  }));
+
   assert.deepEqual(validateAdmissionClassGrantSet(
     ceilingsGrants,
     "sim-ceilings",
@@ -215,6 +280,26 @@ try {
       maxInFlightTokens: 64000,
     },
   });
+  assert.deepEqual(validateAdmissionClassCeilings(
+    adaptiveLentGrants,
+    "sim-adaptive",
+    "adaptive",
+  ), {
+    premium: {
+      protectedConcurrent: 0,
+      maxConcurrent: 8,
+      protectedInFlightTokens: 0,
+      maxInFlightTokens: 64000,
+    },
+    noisy: {
+      protectedConcurrent: 0,
+      maxConcurrent: 24,
+      protectedInFlightTokens: 0,
+      maxInFlightTokens: 64000,
+    },
+  });
+  assert.equal(validateNoisyRequestFitsEveryGrant(adaptiveLentGrants, "sim-adaptive"), true);
+
   assert.equal(validateNoisyRequestFitsEveryGrant(ceilingsGrants, "sim-ceilings"), true);
   assert.equal(validateNoisyRequestFitsEveryGrant(
     protectedGrants,
@@ -235,8 +320,22 @@ try {
   const fakeShared = fakeSummary({ premiumClass: false, noisyClass: false });
   const fakeCeilings = fakeSummary({ premiumClass: true, noisyClass: true });
   const fakeProtected = fakeSummary({ premiumClass: true, noisyClass: true });
+  const fakeAdaptive = fakeSummary({ premiumClass: true, noisyClass: true });
+  const adaptiveLending = summarizeAdaptiveLendingSamples([
+    adaptiveSample(0, { lent: true }),
+    adaptiveSample(5500, { lent: true, demanding: true, pending: true }),
+    adaptiveSample(8000, { demanding: true, restored: true }),
+  ]);
+  assert.equal(adaptiveLending.noisyFloorLent, true);
+  assert.equal(adaptiveLending.noisyDemandObservedAfterLending, true);
+  assert.equal(adaptiveLending.noisyFloorRestored, true);
+  assert.equal(adaptiveLending.hardCeilingsPreservedWhileLent, true);
+  assert.equal(adaptiveLending.restorationLatencyMs, 2500);
   assert.equal(
-    tenantFairnessProof(compareTenantFairness(fakeShared, fakeCeilings, fakeProtected)).passed,
+    tenantFairnessProof(
+      compareTenantFairness(fakeShared, fakeCeilings, fakeProtected, fakeAdaptive),
+      adaptiveLending,
+    ).passed,
     true,
   );
   const starved = fakeSummary({
@@ -246,7 +345,8 @@ try {
     noisyRejects: 20,
   });
   const starvedProof = tenantFairnessProof(
-    compareTenantFairness(fakeShared, fakeCeilings, starved),
+    compareTenantFairness(fakeShared, fakeCeilings, fakeProtected, starved),
+    adaptiveLending,
   );
   assert.equal(starvedProof.passed, false, "zero noisy completions must never pass fairness");
   assert.equal(starvedProof.checks.noisyServedUnderContention, false);
@@ -269,16 +369,17 @@ try {
 
   for (let replica = 1; replica <= 4; replica += 1) {
     const yaml = readFileSync(path.join(ROOT, "demo", "classes", `tyr-r${replica}.yaml`), "utf8");
-    assert.match(yaml, /version: 0\.22\.0/);
+    assert.match(yaml, /version: 0\.23\.0/);
     assert.match(yaml, /name: sim-ceilings/);
     assert.match(yaml, /name: sim-protected/);
+    assert.match(yaml, /name: sim-adaptive/);
     assert.match(yaml, /defaultClass: noisy/);
     assert.match(yaml, /tenantIds: \[tenant-premium\]/);
     assert.match(yaml, /protectedConcurrent: 0/);
     assert.match(yaml, /protectedInFlightTokens: 0/);
     assert.match(yaml, /jwksUrl: https:\/\/host\.docker\.internal:9010\/jwks/);
   }
-  console.log("PASS  three-arm tenant fairness, feasible floor grants, starvation rejection, and identity attribution");
+  console.log("PASS  four-arm tenant fairness, adaptive floor lending/restoration proof, feasible grants, starvation rejection, and identity attribution");
 } finally {
   if (target) await new Promise((resolve) => target.server.close(resolve));
   if (identity) await identity.close().catch(() => {});

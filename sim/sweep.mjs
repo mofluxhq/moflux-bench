@@ -9,11 +9,29 @@
 
 import { spawn } from "node:child_process";
 import { once } from "node:events";
+import { createServer } from "node:net";
 
 const SIM = new URL("./provider-sim.mjs", import.meta.url).pathname;
 const R1 = 90;
 const N = 40;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function getFreePort() {
+  const server = createServer();
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    server.close();
+    throw new Error("could not allocate a free TCP port for sweep provider");
+  }
+  await new Promise((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()));
+  });
+  return address.port;
+}
 
 const speedup = (n, sigma, kappa) => n / (1 + sigma * (n - 1) + kappa * n * (n - 1));
 
@@ -33,7 +51,7 @@ const POINTS = [
 const rows = [];
 
 for (const [sigma, kappa] of POINTS) {
-  const port = 9700 + Math.floor(Math.random() * 200);
+  const port = await getFreePort();
   const child = spawn(
     process.execPath,
     [
@@ -50,14 +68,22 @@ for (const [sigma, kappa] of POINTS) {
     ],
     { stdio: ["ignore", "pipe", "inherit"] },
   );
-  await once(child.stdout, "data");
+  await Promise.race([
+    once(child.stdout, "data"),
+    once(child, "exit").then(([code, signal]) => {
+      throw new Error(
+        `provider simulator exited before becoming ready (code=${code ?? "null"}, signal=${signal ?? "null"})`,
+      );
+    }),
+  ]);
   const base = `http://127.0.0.1:${port}`;
 
   const controllers = [];
+  const requests = [];
   for (let i = 0; i < N; i += 1) {
     const controller = new AbortController();
     controllers.push(controller);
-    fetch(`${base}/v1/chat/completions`, {
+    const request = fetch(`${base}/v1/chat/completions`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -76,6 +102,7 @@ for (const [sigma, kappa] of POINTS) {
       .catch(() => {
         /* aborted at end of window */
       });
+    requests.push(request);
   }
 
   await sleep(1800); // reach steady-state decode
@@ -98,9 +125,28 @@ for (const [sigma, kappa] of POINTS) {
   });
 
   for (const controller of controllers) controller.abort();
-  await sleep(250);
-  child.kill();
-  await sleep(250);
+
+  // Do not let aborted streaming fetches keep the sweep alive indefinitely.
+  // Terminate the simulator first so its sockets close, then give both the
+  // child and request promises bounded time to settle. Escalate only if a
+  // normal SIGTERM does not stop the child.
+  const waitForExit = async (timeoutMs) => {
+    if (child.exitCode !== null || child.signalCode !== null) return true;
+    return Promise.race([
+      once(child, "exit")
+        .then(() => true)
+        .catch(() => true),
+      sleep(timeoutMs).then(() => false),
+    ]);
+  };
+
+  if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
+  if (!(await waitForExit(1000)) && child.exitCode === null && child.signalCode === null) {
+    child.kill("SIGKILL");
+    await waitForExit(1000);
+  }
+
+  await Promise.race([Promise.allSettled(requests), sleep(1000)]);
 }
 
 console.log(`\naggregate decode throughput at n=${N} concurrent streams, r1=${R1}`);

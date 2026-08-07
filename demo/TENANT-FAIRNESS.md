@@ -1,33 +1,55 @@
-# Tenant-fairness benchmark
+# Admission-class fairness and lending benchmark
 
-MoFlux Bench 0.15.0 adds a three-arm, authenticated noisy-neighbor scenario for
-Tyr 0.22.0 and Latchflo 0.8.0.
+MoFlux Bench 0.16.0 extends the authenticated noisy-neighbor scenario to a
+fourth arm that exercises demand-aware protected-floor lending with Tyr 0.23.0
+and Latchflo 0.9.0.
 
 ## What it compares
 
-Every seed creates one immutable two-workload trace and replays it through three
+Every seed creates one immutable two-workload trace and replays it through four
 Tyr pools with the same 32-request / 64,000-token physical fleet envelope:
 
 | Arm | Pool | Class policy |
 |---|---|---|
 | Pool-only | `sim-shared` | No admission classes |
 | Class ceilings | `sim-ceilings` | Premium max 8 concurrent; noisy max 24 concurrent; each class may use up to the full 64,000-token physical ceiling |
-| Protected floors | `sim-protected` | The same hard ceilings plus premium floors of 4 concurrent / 8,000 tokens and noisy floors of 4 concurrent / 36,000 tokens |
+| Static protected floors | `sim-protected` | The same hard ceilings plus premium floors of 4 concurrent / 8,000 tokens and noisy floors of 4 concurrent / 36,000 tokens |
+| Adaptive protected floors | `sim-adaptive` | The same nominal floors and hard ceilings, with Latchflo class-demand lending enabled |
 
 The premium workload is small and latency-sensitive. The noisy workload uses a
-15,000-character prompt and a 4,000-token output reservation. That shape is
-large enough for two noisy requests to consume nearly all of one replica's
-16,000-token physical grant when no floor is reserved, while one request still
-fits inside the protected noisy floor.
+15,000-character prompt and a 4,000-token output reservation. Noisy traffic
+starts five seconds after premium traffic. That initial quiet window gives the
+adaptive arm an explicit opportunity to lend the idle noisy floor before noisy
+demand appears.
 
-Before traffic starts, the runner reads every Tyr replica's applied class
-limits. It verifies the exact fleet-wide ceilings and floors and rejects the
-run unless every class-aware replica can fund one noisy request. This prevents a
-fragmented class budget from producing the misleading result "all noisy work
-was rejected, therefore fairness passed."
+This is not a provider RPM/TPM benchmark. It measures fairness and work
+conservation over live concurrency and in-flight token exposure inside one
+shared model pool.
 
-This is not a provider RPM/TPM benchmark. It measures fairness over live
-concurrency and in-flight token exposure inside one shared model pool.
+## Adaptive policy
+
+Only `sim-adaptive` enables:
+
+```json
+{
+  "admissionClassDemandPolicy": {
+    "enabled": true,
+    "reportStaleAfterMs": 5000,
+    "idleAfterMs": 1000
+  }
+}
+```
+
+The three control arms keep 120-second steady leases. The adaptive arm uses a
+3-second grant TTL so a safe floor restoration can occur within a 30-second
+benchmark seed. This is deliberate benchmark instrumentation, not a general
+production TTL recommendation.
+
+Latchflo may release the active protected floor only after every active Tyr
+replica reports the class idle. The hard class ceilings remain unchanged. When
+noisy demand returns, Latchflo stops treating the floor as lendable and restores
+the nominal floor through its lease-safe handoff; Tyr never revokes running
+requests.
 
 ## Run it
 
@@ -68,38 +90,47 @@ never records the tokens themselves or raw tenant IDs as metric labels.
 
 Each seed must show all of the following:
 
-- All three arms replayed the same trace hash.
+- All four arms replayed the same trace hash.
 - No arm caused a provider 429.
-- Both class-aware arms returned `x-admission-class: premium` for premium traffic.
-- Both class-aware arms returned `x-admission-class: noisy` for noisy traffic.
-- The protected noisy policy rejected at least one excess admission, proving the
-  configured bound was exercised.
-- Premium work completed during the protected arm's contention window.
-- Noisy work completed during the protected arm's contention window.
-- The protected noisy class completed at least four requests in the contention
-  window as a conservative anti-starvation threshold. Exact four-slot floor
-  delivery is verified separately from the applied Tyr grants; the completion
-  count alone is not a concurrency measurement.
+- Every class-aware arm attributed premium and noisy responses to the expected
+  admission class.
+- Both static and adaptive protected policies shed at least one excess noisy
+  admission, proving the configured bounds were exercised.
+- Premium and noisy work both completed during contention in the adaptive arm.
+- The adaptive noisy class completed at least four requests in the contention
+  window as a conservative anti-starvation threshold.
+- Before noisy demand, Latchflo reported the noisy floor released and Tyr's
+  applied grant set showed the noisy protected concurrency/token floor at zero.
+- While that floor was lent, Tyr's fleet-wide noisy hard ceilings remained
+  exactly 24 concurrent / 64,000 in-flight tokens.
+- After noisy demand appeared, the runner observed the nominal noisy floor
+  restored in Tyr: 4 protected concurrent / 36,000 protected tokens.
+- The same hard ceilings were still intact after restoration.
 
-The last two checks are deliberate. MoFlux Bench 0.14.0 could pass while the
-noisy class completed zero requests because it required only classification and
-rejection. Version 0.15.0 treats complete starvation as a failed fairness proof.
+The runner samples both `GET /v1/admission-class-demand?pool=sim-adaptive` and
+Tyr `/stats` during the adaptive arm. This prevents a controller-only state
+transition from being mistaken for a data-plane-applied grant.
 
-The gate does not require a particular latency or success-rate improvement.
-Those are measured outcomes and can vary with host performance. Per-seed
-observations separately report whether protected premium TTFT improved over the
-pool-only and ceiling-only arms.
+The gate intentionally does **not** require a particular success-rate, goodput,
+TTFT, or restoration-latency improvement. Those are measured outcomes and can
+vary with host performance. The benchmark is designed to answer whether
+adaptive floors recover otherwise idle protected capacity without losing their
+bounded restoration semantics; it does not assume in advance that every
+performance metric improves.
 
 ## Floor semantics
 
-Tyr 0.22.0 enforces protected capacity locally and never revokes running work.
-Latchflo 0.8.0 partitions the fleet-wide floor across the four replicas and
-updates it atomically with the surrounding pool grant.
+Tyr 0.23.0 reports bounded per-class demand and enforces the class limits in its
+currently applied Latchflo grant. Latchflo 0.9.0 owns the lending decision.
 
-An idle class floor is not automatically lent to another admission class in
-this release. Tyr reports pool-level demand to Latchflo, not per-class demand.
-The benchmark therefore proves strict floor enforcement and restoration-safe
-policy delivery, not class-level work-conserving lending.
+A configured protected floor is therefore the **nominal floor**. In the
+adaptive arm the **active floor** may temporarily be lower while the class is
+fully observed idle. The class hard ceiling does not change. A returning class
+does not preempt running borrowers; restoration is bounded by the outstanding
+lease that represents the lent allocation plus normal reconcile/poll delay.
+
+Missing, stale, or incomplete class telemetry fails protected: Latchflo keeps or
+restores the nominal floor rather than lending on uncertain demand state.
 
 ## Output
 
@@ -109,8 +140,15 @@ Runs are written beneath:
 results/runs/tenant-fairness/<run-id>/
 ```
 
-Each directory contains the immutable trace, three raw arm summaries, one
-comparison per seed, and a schema-version-2 `summary.json`. The summary records
-median success, contended goodput, protected-to-control TTFT ratios, noisy
-completions and rejections, upstream 429 totals, proof checks and observations,
-and the exact fleet-wide class floors and ceilings observed from Tyr.
+Each directory contains the immutable trace, four raw arm summaries, one
+comparison per seed, and an `adaptive-lending-seed-<n>.json` observation stream
+containing bounded controller state plus the aggregate class limits actually
+applied by Tyr. `summary.json` uses schema version 3 and records:
+
+- median success and contended goodput for all four arms;
+- TTFT and goodput ratios for static/adaptive comparisons;
+- noisy completions and local rejections;
+- upstream 429 totals;
+- per-seed lending/restoration proof state and restoration latency;
+- the exact fleet-wide class ceilings/floors and adaptive policy used by the
+  run.
