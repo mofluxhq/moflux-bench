@@ -10,7 +10,7 @@ const registrations = { "sim-interactive": 0, "sim-batch": 0 };
 for (let replica = 1; replica <= 4; replica += 1) {
   const file = path.join(ROOT, "demo", "moflux", `tyr-r${replica}.yaml`);
   const yaml = readFileSync(file, "utf8");
-  assert.match(yaml, /^    version: 0\.21\.0$/m, `${path.basename(file)} must advertise Tyr 0.21.0`);
+  assert.match(yaml, /^    version: 0\.22\.0$/m, `${path.basename(file)} must advertise Tyr 0.22.0`);
   assert.doesNotMatch(yaml, /0\.18\.0/, `${path.basename(file)} contains stale Tyr 0.18.0 metadata`);
   assert.match(yaml, /^  anthropic:\n    baseUrl: http:\/\/host\.docker\.internal:9000$/m, `${path.basename(file)} must expose the Anthropic simulator upstream`);
   const progressiveBlocks = [...yaml.matchAll(/^    progressiveReconciliation:\n      enabled: true\n      updateStepTokens: 256\n      outputSafetyMarginTokens: 256$/gm)];

@@ -66,8 +66,8 @@ pools:
       updateStepTokens: 256
       outputSafetyMarginTokens: 256
 
-  - name: sim-isolated
-    modelPrefixes: [sim-model-isolated]
+  - name: sim-ceilings
+    modelPrefixes: [sim-model-ceilings]
     estimatorModel: gpt-4o
     maxConcurrent: 0
     maxQueue: 0
@@ -90,13 +90,55 @@ pools:
       defaultClass: noisy
       classes:
         premium:
-          maxConcurrent: 8
+          protectedConcurrent: 0
+          maxConcurrent: 0
+          protectedInFlightTokens: 0
+          maxInFlightTokens: 0
         noisy:
-          maxConcurrent: 24
+          protectedConcurrent: 0
+          maxConcurrent: 0
+          protectedInFlightTokens: 0
+          maxInFlightTokens: 0
       rules:
         - admissionClass: premium
           tenantIds: [tenant-premium]
 
+  - name: sim-protected
+    modelPrefixes: [sim-model-protected]
+    estimatorModel: gpt-4o
+    maxConcurrent: 0
+    maxQueue: 0
+    limitsRevision: 0
+    admissionMode: enforce
+    inFlightTokenBudget: 0
+    defaultOutputReservation: 2048
+    adaptiveEstimation:
+      enabled: true
+      smoothing: 0.2
+      minSamples: 5
+      minCorrection: 0.5
+      maxCorrection: 2
+      maxModels: 16
+    progressiveReconciliation:
+      enabled: true
+      updateStepTokens: 256
+      outputSafetyMarginTokens: 256
+    admissionClasses:
+      defaultClass: noisy
+      classes:
+        premium:
+          protectedConcurrent: 0
+          maxConcurrent: 0
+          protectedInFlightTokens: 0
+          maxInFlightTokens: 0
+        noisy:
+          protectedConcurrent: 0
+          maxConcurrent: 0
+          protectedInFlightTokens: 0
+          maxInFlightTokens: 0
+      rules:
+        - admissionClass: premium
+          tenantIds: [tenant-premium]
 routing:
   capacityAware:
     instanceId: tyr-r4
@@ -117,7 +159,7 @@ controlPlane:
   type: latchflo
   url: http://latchflo:8080
   instanceId: tyr-r4
-  pools: [sim-shared, sim-isolated]
+  pools: [sim-shared, sim-ceilings, sim-protected]
   bootstrapTokenEnv: LATCHFLO_AGENT_BOOTSTRAP_TOKEN
   agentTokenFile: /var/lib/tyr/latchflo-agent.token
   retryIntervalMs: 500
@@ -126,7 +168,7 @@ controlPlane:
   metadata:
     region: local
     zone: demo-classes
-    version: 0.21.0
+    version: 0.22.0
     endpoint: http://tyr-r4:8787
     labels:
       environment: benchmark

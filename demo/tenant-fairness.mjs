@@ -13,6 +13,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildTrace } from "../load/trace-lib.mjs";
 import {
+  ASYNC_BULKHEAD_LLM_VERSION,
+  ASYNC_BULKHEAD_TS_VERSION,
   LATCHFLO_VERSION,
   TYR_VERSION,
   ensureDemoEnv,
@@ -33,6 +35,7 @@ import {
   tenantFairnessProof,
   tenantPoolDefinition,
   validateAdmissionClassGrantSet,
+  validateNoisyRequestFitsEveryGrant,
 } from "./tenant-fairness-lib.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -100,7 +103,7 @@ const WORKLOAD_BASE = Object.freeze({
   batchStartMs: 5000,
   batchDurationMs: OPT.durationMs - 5000,
   batchRps: 5,
-  batchInputChars: 36000,
+  batchInputChars: 15000,
   batchMaxTokens: 4000,
   maxAttempts: 3,
   backoffBaseMs: 250,
@@ -240,7 +243,8 @@ function validatePrerequisites(env) {
 async function configurePools(token, ttlMs, { allowCreate }) {
   for (const spec of [
     tenantPoolDefinition("sim-shared", ttlMs),
-    tenantPoolDefinition("sim-isolated", ttlMs, { isolated: true }),
+    tenantPoolDefinition("sim-ceilings", ttlMs, { classPolicy: "ceilings" }),
+    tenantPoolDefinition("sim-protected", ttlMs, { classPolicy: "protected" }),
   ]) {
     const { name, ...body } = spec;
     const update = await jsonRequest(`http://127.0.0.1:18080/v1/pools/${name}`, {
@@ -286,15 +290,17 @@ async function readTyrStats() {
   }));
 }
 
-function classGrantRows(statsRows) {
+function classGrantRows(statsRows, poolName) {
   return statsRows.map((row) => ({
-    pool: "sim-isolated",
+    pool: poolName,
     limits: {
       admissionClasses: Object.fromEntries(
-        Object.entries(row?.["sim-isolated"]?.admissionClasses?.classes ?? {}).map(([id, value]) => [
+        Object.entries(row?.[poolName]?.admissionClasses?.classes ?? {}).map(([id, value]) => [
           id,
           {
+            protectedConcurrent: Number(value?.limits?.protectedConcurrent ?? 0),
             maxConcurrent: Number(value?.limits?.maxConcurrent ?? 0),
+            protectedInFlightTokens: Number(value?.limits?.protectedInFlightTokens ?? 0),
             maxInFlightTokens: Number(value?.limits?.maxInFlightTokens ?? 0),
           },
         ]),
@@ -315,7 +321,7 @@ async function waitForUsableFleet() {
       if (readiness.every((status) => status === 200)) {
         const stats = await readTyrStats();
         for (const row of stats) {
-          for (const pool of ["sim-shared", "sim-isolated"]) {
+          for (const pool of ["sim-shared", "sim-ceilings", "sim-protected"]) {
             const snapshot = row?.[pool];
             if (Number(snapshot?.limits?.maxConcurrent ?? 0) < 1) {
               throw new Error(`${pool} has no usable concurrency on one replica`);
@@ -325,7 +331,24 @@ async function waitForUsableFleet() {
             }
           }
         }
-        const aggregate = validateAdmissionClassGrantSet(classGrantRows(stats));
+        const ceilingsRows = classGrantRows(stats, "sim-ceilings");
+        const protectedRows = classGrantRows(stats, "sim-protected");
+        const aggregate = {
+          ceilings: validateAdmissionClassGrantSet(
+            ceilingsRows,
+            "sim-ceilings",
+            "ceilings",
+          ),
+          protected: validateAdmissionClassGrantSet(
+            protectedRows,
+            "sim-protected",
+            "protected",
+          ),
+        };
+        validateNoisyRequestFitsEveryGrant(ceilingsRows, "sim-ceilings");
+        validateNoisyRequestFitsEveryGrant(protectedRows, "sim-protected", {
+          requireProtected: true,
+        });
         return { stats, aggregate };
       }
       last = `readiness statuses ${readiness.join(",")}`;
@@ -378,7 +401,12 @@ async function runLoadgen({ seed, model, arm, traceFile, outFile, tokens }) {
   if (!existsSync(outFile)) throw new Error(`load generator did not write ${outFile}`);
   const summary = JSON.parse(readFileSync(outFile, "utf8"));
   summary.tenantWorkloads = { interactive: "premium", batch: "noisy" };
-  summary.runtime = { tyr: TYR_VERSION, latchflo: LATCHFLO_VERSION };
+  summary.runtime = {
+    tyr: TYR_VERSION,
+    latchflo: LATCHFLO_VERSION,
+    asyncBulkheadLlm: ASYNC_BULKHEAD_LLM_VERSION,
+    asyncBulkheadTs: ASYNC_BULKHEAD_TS_VERSION,
+  };
   writeFileSync(outFile, JSON.stringify(summary, null, 2));
   return summary;
 }
@@ -391,31 +419,58 @@ function percentile(values, p) {
 
 function aggregateResults(rows, outputDir, classGrants) {
   const comparisons = rows.map((row) => row.comparison);
+  const numeric = (values) => values.filter(Number.isFinite);
   const summary = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     benchmark: "tenant-fairness",
     generatedAt: new Date().toISOString(),
-    runtime: { tyr: TYR_VERSION, latchflo: LATCHFLO_VERSION },
+    runtime: {
+      tyr: TYR_VERSION,
+      latchflo: LATCHFLO_VERSION,
+      asyncBulkheadLlm: ASYNC_BULKHEAD_LLM_VERSION,
+      asyncBulkheadTs: ASYNC_BULKHEAD_TS_VERSION,
+    },
     policy: classGrants,
     seeds: rows.map((row) => row.seed),
     passed: rows.every((row) => row.proof.passed),
     acceptance: rows.map((row) => ({ seed: row.seed, ...row.proof })),
     premium: {
-      sharedSuccessRateMedian: percentile(comparisons.map((row) => row.premium.sharedSuccessRate), 0.5),
-      isolatedSuccessRateMedian: percentile(comparisons.map((row) => row.premium.isolatedSuccessRate), 0.5),
-      successRateGainMedian: percentile(comparisons.map((row) => row.premium.successRateGain), 0.5),
-      sharedContendedGoodputRpsMedian: percentile(comparisons.map((row) => row.premium.sharedContendedGoodputRps), 0.5),
-      isolatedContendedGoodputRpsMedian: percentile(comparisons.map((row) => row.premium.isolatedContendedGoodputRps), 0.5),
-      contendedTtftRatioMedian: percentile(comparisons.map((row) => row.premium.contendedTtftRatio).filter(Number.isFinite), 0.5),
+      sharedSuccessRateMedian: percentile(comparisons.map((row) => row.premium.shared.successRate), 0.5),
+      ceilingsSuccessRateMedian: percentile(comparisons.map((row) => row.premium.ceilings.successRate), 0.5),
+      protectedSuccessRateMedian: percentile(comparisons.map((row) => row.premium.protected.successRate), 0.5),
+      sharedContendedGoodputRpsMedian: percentile(comparisons.map((row) => row.premium.shared.contendedGoodputRps), 0.5),
+      ceilingsContendedGoodputRpsMedian: percentile(comparisons.map((row) => row.premium.ceilings.contendedGoodputRps), 0.5),
+      protectedContendedGoodputRpsMedian: percentile(comparisons.map((row) => row.premium.protected.contendedGoodputRps), 0.5),
+      protectedVsSharedTtftRatioMedian: percentile(
+        numeric(comparisons.map((row) => row.premium.protectedVsSharedTtftRatio)),
+        0.5,
+      ),
+      protectedVsCeilingsTtftRatioMedian: percentile(
+        numeric(comparisons.map((row) => row.premium.protectedVsCeilingsTtftRatio)),
+        0.5,
+      ),
     },
     noisy: {
-      sharedSuccessRateMedian: percentile(comparisons.map((row) => row.noisy.sharedSuccessRate), 0.5),
-      isolatedSuccessRateMedian: percentile(comparisons.map((row) => row.noisy.isolatedSuccessRate), 0.5),
-      isolatedLocalRejectsTotal: comparisons.reduce((sum, row) => sum + row.noisy.isolatedLocalRejects, 0),
+      sharedSuccessRateMedian: percentile(comparisons.map((row) => row.noisy.shared.successRate), 0.5),
+      ceilingsSuccessRateMedian: percentile(comparisons.map((row) => row.noisy.ceilings.successRate), 0.5),
+      protectedSuccessRateMedian: percentile(comparisons.map((row) => row.noisy.protected.successRate), 0.5),
+      protectedContendedCompletionsMedian: percentile(
+        comparisons.map((row) => row.noisy.protected.contendedCompleted),
+        0.5,
+      ),
+      ceilingsLocalRejectsTotal: comparisons.reduce(
+        (sum, row) => sum + row.noisy.ceilings.localRejects,
+        0,
+      ),
+      protectedLocalRejectsTotal: comparisons.reduce(
+        (sum, row) => sum + row.noisy.protected.localRejects,
+        0,
+      ),
     },
     upstream429s: {
       sharedTotal: comparisons.reduce((sum, row) => sum + row.upstream429s.shared, 0),
-      isolatedTotal: comparisons.reduce((sum, row) => sum + row.upstream429s.isolated, 0),
+      ceilingsTotal: comparisons.reduce((sum, row) => sum + row.upstream429s.ceilings, 0),
+      protectedTotal: comparisons.reduce((sum, row) => sum + row.upstream429s.protected, 0),
     },
     results: rows.map((row) => ({ seed: row.seed, comparison: row.comparison })),
   };
@@ -448,7 +503,7 @@ try {
     }
     await waitForAgents(adminToken);
     await configurePools(adminToken, STEADY_TTL_MS, { allowCreate: false });
-    for (const pool of ["sim-shared", "sim-isolated"]) {
+    for (const pool of ["sim-shared", "sim-ceilings", "sim-protected"]) {
       await jsonRequest(`http://127.0.0.1:18080/v1/pools/${pool}/rebalance`, {
         method: "POST", token: adminToken, allowed: [200, 202],
       });
@@ -482,24 +537,35 @@ try {
         tokens: identity.tokens,
       });
       await sleep(1000);
-      const isolated = await runLoadgen({
+      const ceilings = await runLoadgen({
         seed,
-        model: "sim-model-isolated",
-        arm: "moflux-admission-classes",
+        model: "sim-model-ceilings",
+        arm: "moflux-class-ceilings",
         traceFile,
-        outFile: path.join(outputDir, `isolated-seed-${seed}.json`),
+        outFile: path.join(outputDir, `ceilings-seed-${seed}.json`),
+        tokens: identity.tokens,
+      });
+      await sleep(1000);
+      const protectedArm = await runLoadgen({
+        seed,
+        model: "sim-model-protected",
+        arm: "moflux-protected-class-floors",
+        traceFile,
+        outFile: path.join(outputDir, `protected-seed-${seed}.json`),
         tokens: identity.tokens,
       });
       await terminateHostChild(provider);
-      const comparison = compareTenantFairness(shared, isolated);
+      const comparison = compareTenantFairness(shared, ceilings, protectedArm);
       const proof = tenantFairnessProof(comparison);
       const row = { seed, comparison, proof };
       rows.push(row);
       writeFileSync(path.join(outputDir, `comparison-seed-${seed}.json`), JSON.stringify(row, null, 2));
       console.log(
-        `seed ${seed}: premium contended goodput ${comparison.premium.sharedContendedGoodputRps} -> ` +
-          `${comparison.premium.isolatedContendedGoodputRps} rps; noisy class rejects ` +
-          `${comparison.noisy.isolatedLocalRejects}; proof=${proof.passed ? "pass" : "fail"}`,
+        `seed ${seed}: premium contended goodput ` +
+          `${comparison.premium.shared.contendedGoodputRps} / ` +
+          `${comparison.premium.ceilings.contendedGoodputRps} / ` +
+          `${comparison.premium.protected.contendedGoodputRps} rps; protected noisy completions ` +
+          `${comparison.noisy.protected.contendedCompleted}; proof=${proof.passed ? "pass" : "fail"}`,
       );
       if (OPT.requireProof && !proof.passed) {
         throw new Error(`tenant-fairness proof failed for seed ${seed}: ${JSON.stringify(proof.checks)}`);

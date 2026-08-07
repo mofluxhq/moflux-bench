@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.15.0 - 2026-08-06
+
+### Added
+
+- Add a three-arm tenant benchmark that replays each immutable trace through a
+  pool-only control, a class-ceiling control, and protected admission-class
+  floors.
+- Add fleet-wide and per-replica validation for protected concurrency and token
+  grants. The runner refuses to start unless every protected replica grant can
+  fund at least one noisy request.
+- Add schema-version-2 tenant summaries with ceiling and protected outcomes,
+  protected-to-control TTFT ratios, noisy contended completions, and separate
+  proof checks versus non-gating performance observations.
+
+### Changed
+
+- Pin active licensed paths to Tyr 0.22.0, Latchflo 0.8.0,
+  async-bulkhead-llm 3.15.1, and the async-bulkhead-ts 1.0.1 dependency actually
+  shipped inside Tyr 0.22.0.
+- Replace the former 36,000-character noisy request with a 15,000-character
+  shape that can fit one protected per-replica token floor while still allowing
+  ceiling-only traffic to exhaust unprotected token headroom.
+- Configure managed admission-class tables at zero capacity until Latchflo's
+  first Tyr 0.22.0 grant atomically supplies the physical envelope, hard
+  ceilings, and protected floors.
+
+### Fixed
+
+- Fail the tenant-fairness proof when the noisy class completes no work. The
+  0.14.0 gate accepted classification plus rejection and could therefore report
+  fairness while all noisy requests were starved.
+- Prevent class-token fragmentation from invalidating the benchmark. The old
+  48,000-token noisy ceiling was divided into 12,000-token replica grants, less
+  than one approximately 14,000-token noisy reservation.
+- Keep active runtime metadata, local-image discovery, topology verification,
+  presenter assertions, documentation, and publication checks aligned with the
+  Tyr 0.22.0 / Latchflo 0.8.0 release train. Historical committed evidence is
+  not relabeled.
+- Harden the drain verifier so a missing child-process close event cannot hang
+  the repository release gate after a forced timeout.
+
 ## 0.14.0 - 2026-08-05
 
 ### Added

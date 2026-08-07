@@ -120,16 +120,34 @@ async function runLoadgen(port, extraArgs, timeoutMs) {
   });
   child.stdout.resume();
 
-  const killer = setTimeout(() => {
-    try {
-      process.kill(-child.pid, "SIGKILL");
-    } catch {
-      /* already gone */
-    }
-  }, timeoutMs);
-  const code = await new Promise((resolve) => child.on("exit", resolve));
-  clearTimeout(killer);
+  let timeoutHandle;
+  let forceResolveHandle;
+  const result = await new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutHandle);
+      clearTimeout(forceResolveHandle);
+      resolve(value);
+    };
+    child.once("error", reject);
+    child.once("close", (code, signal) => finish({ code, signal, timedOut: false }));
+    timeoutHandle = setTimeout(() => {
+      try {
+        process.kill(-child.pid, "SIGKILL");
+      } catch {
+        try { child.kill("SIGKILL"); } catch { /* already gone */ }
+      }
+      // Never let a broken child-process close event hang the repository gate.
+      forceResolveHandle = setTimeout(
+        () => finish({ code: null, signal: "SIGKILL", timedOut: true }),
+        2_000,
+      );
+    }, timeoutMs);
+  });
   activeChildren.delete(child);
+  const code = result.code;
 
   let summary = null;
   try {

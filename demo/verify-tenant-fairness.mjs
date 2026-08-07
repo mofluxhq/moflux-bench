@@ -13,6 +13,7 @@ import {
   tenantFairnessProof,
   tenantPoolDefinition,
   validateAdmissionClassGrantSet,
+  validateNoisyRequestFitsEveryGrant,
 } from "./tenant-fairness-lib.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -102,6 +103,33 @@ function runLoadgen(port, out) {
   });
 }
 
+function fakeSummary({ hash = "same", premiumClass, noisyClass, noisyCompleted = 8, noisyRejects = 9 }) {
+  return {
+    trace: { hash },
+    classes: {
+      interactive: {
+        successRate: 0.9,
+        upstreamReject: 0,
+        admissionClassResponses: premiumClass ? { premium: 20 } : {},
+        windows: { contended: { completed: 20, goodputRps: 4, ttftP95Ms: 300 } },
+      },
+      batch: {
+        successRate: 0.5,
+        upstreamReject: 0,
+        localReject: noisyRejects,
+        admissionClassResponses: noisyClass ? { noisy: 20 } : {},
+        windows: {
+          contended: {
+            completed: noisyCompleted,
+            goodputRps: noisyCompleted / 5,
+            ttftP95Ms: 800,
+          },
+        },
+      },
+    },
+  };
+}
+
 try {
   identity = await startIdentityFixture(path.join(temp, "identity"), { port: 0 });
   const jwks = await getJson(`${identity.url}/jwks`, readFileSync(identity.tls.ca));
@@ -111,46 +139,118 @@ try {
   assert.equal(decodePayload(identity.tokens.noisy).tenant_id, "tenant-noisy");
 
   const shared = tenantPoolDefinition("sim-shared", 120000);
-  const isolated = tenantPoolDefinition("sim-isolated", 120000, { isolated: true });
+  const ceilings = tenantPoolDefinition("sim-ceilings", 120000, { classPolicy: "ceilings" });
+  const protectedPool = tenantPoolDefinition("sim-protected", 120000, { classPolicy: "protected" });
   assert.equal(shared.admissionClassLimits, undefined);
-  assert.deepEqual(isolated.admissionClassLimits, TENANT_FAIRNESS_POLICY.admissionClasses);
-  const grants = [0, 1, 2, 3].map(() => ({
-    pool: "sim-isolated",
+  assert.deepEqual(ceilings.admissionClassLimits, TENANT_FAIRNESS_POLICY.classPolicies.ceilings);
+  assert.deepEqual(protectedPool.admissionClassLimits, TENANT_FAIRNESS_POLICY.classPolicies.protected);
+
+  const ceilingsGrants = [0, 1, 2, 3].map(() => ({
+    pool: "sim-ceilings",
     limits: { admissionClasses: {
-      premium: { maxConcurrent: 2, maxInFlightTokens: 4000 },
-      noisy: { maxConcurrent: 6, maxInFlightTokens: 12000 },
+      premium: {
+        protectedConcurrent: 0,
+        maxConcurrent: 2,
+        protectedInFlightTokens: 0,
+        maxInFlightTokens: 16000,
+      },
+      noisy: {
+        protectedConcurrent: 0,
+        maxConcurrent: 6,
+        protectedInFlightTokens: 0,
+        maxInFlightTokens: 16000,
+      },
     } },
   }));
-  assert.deepEqual(validateAdmissionClassGrantSet(grants), {
-    premium: { maxConcurrent: 8, maxInFlightTokens: 16000 },
-    noisy: { maxConcurrent: 24, maxInFlightTokens: 48000 },
+  const protectedGrants = [0, 1, 2, 3].map(() => ({
+    pool: "sim-protected",
+    limits: { admissionClasses: {
+      premium: {
+        protectedConcurrent: 1,
+        maxConcurrent: 2,
+        protectedInFlightTokens: 2000,
+        maxInFlightTokens: 16000,
+      },
+      noisy: {
+        protectedConcurrent: 1,
+        maxConcurrent: 6,
+        protectedInFlightTokens: 9000,
+        maxInFlightTokens: 16000,
+      },
+    } },
+  }));
+  assert.deepEqual(validateAdmissionClassGrantSet(
+    ceilingsGrants,
+    "sim-ceilings",
+    "ceilings",
+  ), {
+    premium: {
+      protectedConcurrent: 0,
+      maxConcurrent: 8,
+      protectedInFlightTokens: 0,
+      maxInFlightTokens: 64000,
+    },
+    noisy: {
+      protectedConcurrent: 0,
+      maxConcurrent: 24,
+      protectedInFlightTokens: 0,
+      maxInFlightTokens: 64000,
+    },
   });
+  assert.deepEqual(validateAdmissionClassGrantSet(
+    protectedGrants,
+    "sim-protected",
+    "protected",
+  ), {
+    premium: {
+      protectedConcurrent: 4,
+      maxConcurrent: 8,
+      protectedInFlightTokens: 8000,
+      maxInFlightTokens: 64000,
+    },
+    noisy: {
+      protectedConcurrent: 4,
+      maxConcurrent: 24,
+      protectedInFlightTokens: 36000,
+      maxInFlightTokens: 64000,
+    },
+  });
+  assert.equal(validateNoisyRequestFitsEveryGrant(ceilingsGrants, "sim-ceilings"), true);
+  assert.equal(validateNoisyRequestFitsEveryGrant(
+    protectedGrants,
+    "sim-protected",
+    { requireProtected: true },
+  ), true);
+  const fragmented = structuredClone(protectedGrants);
+  fragmented[0].limits.admissionClasses.noisy.protectedInFlightTokens = 7000;
+  assert.throws(
+    () => validateNoisyRequestFitsEveryGrant(
+      fragmented,
+      "sim-protected",
+      { requireProtected: true },
+    ),
+    /one protected request needs at least 8000/,
+  );
 
-  const fakeShared = {
-    trace: { hash: "same" },
-    classes: {
-      interactive: { successRate: 0.6, upstreamReject: 0, windows: { contended: { goodputRps: 2, ttftP95Ms: 1000 } } },
-      batch: { successRate: 0.8, upstreamReject: 0 },
-    },
-  };
-  const fakeIsolated = {
-    trace: { hash: "same" },
-    classes: {
-      interactive: {
-        successRate: 0.95,
-        upstreamReject: 0,
-        admissionClassResponses: { premium: 20 },
-        windows: { contended: { goodputRps: 5, ttftP95Ms: 300 } },
-      },
-      batch: {
-        successRate: 0.5,
-        upstreamReject: 0,
-        localReject: 9,
-        admissionClassResponses: { noisy: 20 },
-      },
-    },
-  };
-  assert.equal(tenantFairnessProof(compareTenantFairness(fakeShared, fakeIsolated)).passed, true);
+  const fakeShared = fakeSummary({ premiumClass: false, noisyClass: false });
+  const fakeCeilings = fakeSummary({ premiumClass: true, noisyClass: true });
+  const fakeProtected = fakeSummary({ premiumClass: true, noisyClass: true });
+  assert.equal(
+    tenantFairnessProof(compareTenantFairness(fakeShared, fakeCeilings, fakeProtected)).passed,
+    true,
+  );
+  const starved = fakeSummary({
+    premiumClass: true,
+    noisyClass: true,
+    noisyCompleted: 0,
+    noisyRejects: 20,
+  });
+  const starvedProof = tenantFairnessProof(
+    compareTenantFairness(fakeShared, fakeCeilings, starved),
+  );
+  assert.equal(starvedProof.passed, false, "zero noisy completions must never pass fairness");
+  assert.equal(starvedProof.checks.noisyServedUnderContention, false);
+  assert.equal(starvedProof.checks.noisyMinimumCompletions, false);
 
   target = await startTarget();
   const out = path.join(temp, "loadgen.json");
@@ -169,12 +269,16 @@ try {
 
   for (let replica = 1; replica <= 4; replica += 1) {
     const yaml = readFileSync(path.join(ROOT, "demo", "classes", `tyr-r${replica}.yaml`), "utf8");
-    assert.match(yaml, /version: 0\.21\.0/);
+    assert.match(yaml, /version: 0\.22\.0/);
+    assert.match(yaml, /name: sim-ceilings/);
+    assert.match(yaml, /name: sim-protected/);
     assert.match(yaml, /defaultClass: noisy/);
     assert.match(yaml, /tenantIds: \[tenant-premium\]/);
+    assert.match(yaml, /protectedConcurrent: 0/);
+    assert.match(yaml, /protectedInFlightTokens: 0/);
     assert.match(yaml, /jwksUrl: https:\/\/host\.docker\.internal:9010\/jwks/);
   }
-  console.log("PASS  tenant-fairness policy, identity fixture, loadgen attribution, and proof checks");
+  console.log("PASS  three-arm tenant fairness, feasible floor grants, starvation rejection, and identity attribution");
 } finally {
   if (target) await new Promise((resolve) => target.server.close(resolve));
   if (identity) await identity.close().catch(() => {});

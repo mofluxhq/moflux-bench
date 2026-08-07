@@ -105,8 +105,8 @@ if (lock.packages?.[""]?.version !== pkg.version || lock.version !== pkg.version
 }
 const example = readFileSync(path.join(ROOT, "demo/moflux/.env.example"), "utf8");
 for (const expected of [
-  "MOFLUX_TYR_IMAGE=tyr-admission-controller:0.21.0",
-  "MOFLUX_LATCHFLO_IMAGE=latchflo-control-plane:0.7.2",
+  "MOFLUX_TYR_IMAGE=tyr-admission-controller:0.22.0",
+  "MOFLUX_LATCHFLO_IMAGE=latchflo-control-plane:0.8.0",
 ]) {
   if (!example.includes(expected)) {
     findings.push(`demo/moflux/.env.example: missing pinned runtime ${expected}`);
@@ -126,8 +126,8 @@ if (!compose.includes("TYR_ROUTING_SECRET: ${TYR_ROUTING_SECRET:?Set TYR_ROUTING
 for (let replica = 1; replica <= 4; replica += 1) {
   const rel = `demo/moflux/tyr-r${replica}.yaml`;
   const yaml = readFileSync(path.join(ROOT, rel), "utf8");
-  if (!/^    version: 0\.21\.0$/m.test(yaml)) {
-    findings.push(`${rel}: control-plane metadata must identify Tyr 0.21.0`);
+  if (!/^    version: 0\.22\.0$/m.test(yaml)) {
+    findings.push(`${rel}: control-plane metadata must identify Tyr 0.22.0`);
   }
   if (!/^  anthropic:\n    baseUrl: http:\/\/host\.docker\.internal:9000$/m.test(yaml)) {
     findings.push(`${rel}: Anthropic simulator upstream is missing`);
@@ -165,15 +165,15 @@ for (let replica = 1; replica <= 4; replica += 1) {
     "jwksUrl: https://host.docker.internal:9010/jwks",
     "defaultClass: noisy",
     "tenantIds: [tenant-premium]",
-    "pools: [sim-shared, sim-isolated]",
-    "version: 0.21.0",
+    "pools: [sim-shared, sim-ceilings, sim-protected]",
+    "version: 0.22.0",
   ]) {
     if (!yaml.includes(required)) findings.push(`${rel}: missing ${required}`);
   }
   const progressiveBlock = "    progressiveReconciliation:\n      enabled: true\n      updateStepTokens: 256\n      outputSafetyMarginTokens: 256";
   const progressiveBlocks = yaml.split(progressiveBlock).length - 1;
-  if (progressiveBlocks !== 2) {
-    findings.push(`${rel}: both tenant-fairness pools must enable progressive reconciliation`);
+  if (progressiveBlocks !== 3) {
+    findings.push(`${rel}: all three tenant-fairness pools must enable progressive reconciliation`);
   }
   if (!new RegExp(`^    instanceId: tyr-r${replica}$`, "m").test(yaml)) {
     findings.push(`${rel}: routing instance ID is missing`);
@@ -182,12 +182,31 @@ for (let replica = 1; replica <= 4; replica += 1) {
 const tenantRunner = readFileSync(path.join(ROOT, "demo/tenant-fairness.mjs"), "utf8");
 for (const required of [
   'tenantPoolDefinition("sim-shared"',
-  'tenantPoolDefinition("sim-isolated"',
+  'tenantPoolDefinition("sim-ceilings"',
+  'tenantPoolDefinition("sim-protected"',
   'model: "sim-model-shared"',
-  'model: "sim-model-isolated"',
+  'model: "sim-model-ceilings"',
+  'model: "sim-model-protected"',
   "validateAdmissionClassGrantSet",
 ]) {
   if (!tenantRunner.includes(required)) findings.push(`demo/tenant-fairness.mjs: missing ${required}`);
+}
+for (const required of [
+  "validateNoisyRequestFitsEveryGrant",
+  "sim-protected",
+  "protected noisy completions",
+]) {
+  if (!tenantRunner.includes(required)) findings.push(`demo/tenant-fairness.mjs: missing ${required}`);
+}
+const tenantProof = readFileSync(path.join(ROOT, "demo/tenant-fairness-lib.mjs"), "utf8");
+for (const required of [
+  "globalProtectedConcurrent",
+  "globalProtectedInFlightTokens",
+  "noisyServedUnderContention",
+  "noisyMinimumCompletions",
+  "minimumNoisyReservationTokensPerAgent",
+]) {
+  if (!tenantProof.includes(required)) findings.push(`demo/tenant-fairness-lib.mjs: missing ${required}`);
 }
 const loadgen = readFileSync(path.join(ROOT, "load/loadgen.mjs"), "utf8");
 if (!loadgen.includes('interactiveIdentityToken: interactiveIdentityToken ? "provided" : ""') ||
@@ -208,8 +227,8 @@ if (!pkg.scripts?.["demo:progressive"]?.includes("--provider-api=anthropic") ||
     !pkg.scripts?.["demo:openai"]?.includes("--provider-api=openai")) {
   findings.push("package.json: progressive and OpenAI compatibility demo commands are required");
 }
-if (pkg.version !== "0.14.0") {
-  findings.push("package.json: the admission-class benchmark release must be version 0.14.0");
+if (pkg.version !== "0.15.0") {
+  findings.push("package.json: the protected-floor benchmark release must be version 0.15.0");
 }
 const classesScript = pkg.scripts?.["demo:classes"] ?? "";
 for (const required of ["demo/tenant-fairness.mjs", "--seeds=1-5", "--require-proof"]) {
