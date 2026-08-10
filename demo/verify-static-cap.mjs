@@ -2,7 +2,7 @@
 /**
  * Regression for Arm 2's fleet-to-local concurrency calculation.
  *
- * The v0.9.0 presenter originally divided by `OPT.replicas`, an option that
+ * The v0.10.0 presenter originally divided by `OPT.replicas`, an option that
  * did not exist in that code path. The resulting `NaN` local cap made every
  * semaphore comparison false, yielding zero provider activity with no startup
  * error. This test keeps the arithmetic explicit and verifies the replica

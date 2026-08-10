@@ -112,6 +112,26 @@ const moflux = {
       lendingObserved: true,
       floorRestored: !fail,
       restorationDurationMs: fail ? null : 500,
+      handoff: {
+        observed: true,
+        committedAt: fail ? null : "2026-08-08T20:00:27.900Z",
+        firstBatchAdmissionAt: fail ? null : "2026-08-08T20:00:28.150Z",
+        fallbackDeadline: "2026-08-08T20:00:32.000Z",
+        everyDrainApplied: true,
+        aborted: fail,
+        abortReason: fail ? "prepared_grant_expired" : null,
+        safeEventOrder: !fail,
+        commitBeforeBatchAdmission: !fail,
+        committedBeforeLeaseExpiry: !fail,
+        handoffDurationMs: fail ? null : 450,
+        demandToDrainStartMs: fail ? null : 100,
+        drainStartToAcknowledgedMs: fail ? null : 150,
+        acknowledgedToCommitMs: fail ? null : 200,
+        commitToFirstBatchAdmissionMs: fail ? null : 250,
+        demandToFirstBatchAdmissionMs: fail ? null : 700,
+        leaseTimeAvoidedMs: fail ? null : 3500,
+        appliedCapacity: { noAppliedOverallocation: !fail },
+      },
     },
   },
   tokenAccounting: {
@@ -205,7 +225,7 @@ try {
   const failing = await run(failingResults, 2);
   assert.notEqual(failing.code, 0);
   assert.match(failing.stderr, /adaptive 28\/4 acceptance gate failed/);
-  assert.match(failing.stderr, /seed 2: batch completions 0 < protected floor 4, batch floor not restored, no batch success/);
+  assert.match(failing.stderr, /seed 2: batch completions 0 < protected floor 4, batch floor not restored, handoff aborted \(prepared_grant_expired\), applied capacity safety not proven, no batch success/);
   assert.equal(
     existsSync(path.join(failingResults, "runs", "video-seed-sweep", "latest.json")),
     false,

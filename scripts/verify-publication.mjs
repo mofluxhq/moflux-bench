@@ -105,8 +105,8 @@ if (lock.packages?.[""]?.version !== pkg.version || lock.version !== pkg.version
 }
 const example = readFileSync(path.join(ROOT, "demo/moflux/.env.example"), "utf8");
 for (const expected of [
-  "MOFLUX_TYR_IMAGE=tyr-admission-controller:0.23.0",
-  "MOFLUX_LATCHFLO_IMAGE=latchflo-control-plane:0.9.0",
+  "MOFLUX_TYR_IMAGE=tyr-admission-controller:0.24.0",
+  "MOFLUX_LATCHFLO_IMAGE=latchflo-control-plane:0.10.0",
 ]) {
   if (!example.includes(expected)) {
     findings.push(`demo/moflux/.env.example: missing pinned runtime ${expected}`);
@@ -126,8 +126,8 @@ if (!compose.includes("TYR_ROUTING_SECRET: ${TYR_ROUTING_SECRET:?Set TYR_ROUTING
 for (let replica = 1; replica <= 4; replica += 1) {
   const rel = `demo/moflux/tyr-r${replica}.yaml`;
   const yaml = readFileSync(path.join(ROOT, rel), "utf8");
-  if (!/^    version: 0\.23\.0$/m.test(yaml)) {
-    findings.push(`${rel}: control-plane metadata must identify Tyr 0.23.0`);
+  if (!/^    version: 0\.24\.0$/m.test(yaml)) {
+    findings.push(`${rel}: control-plane metadata must identify Tyr 0.24.0`);
   }
   if (!/^  anthropic:\n    baseUrl: http:\/\/host\.docker\.internal:9000$/m.test(yaml)) {
     findings.push(`${rel}: Anthropic simulator upstream is missing`);
@@ -166,7 +166,7 @@ for (let replica = 1; replica <= 4; replica += 1) {
     "defaultClass: noisy",
     "tenantIds: [tenant-premium]",
     "pools: [sim-shared, sim-ceilings, sim-protected, sim-adaptive]",
-    "version: 0.23.0",
+    "version: 0.24.0",
   ]) {
     if (!yaml.includes(required)) findings.push(`${rel}: missing ${required}`);
   }
@@ -234,8 +234,8 @@ if (!pkg.scripts?.["demo:progressive"]?.includes("--provider-api=anthropic") ||
     !pkg.scripts?.["demo:openai"]?.includes("--provider-api=openai")) {
   findings.push("package.json: progressive and OpenAI compatibility demo commands are required");
 }
-if (pkg.version !== "0.16.0") {
-  findings.push("package.json: the adaptive class-lending benchmark release must be version 0.16.0");
+if (pkg.version !== "0.17.0") {
+  findings.push("package.json: the acknowledged-handoff benchmark release must be version 0.17.0");
 }
 const classesScript = pkg.scripts?.["demo:classes"] ?? "";
 for (const required of ["demo/tenant-fairness.mjs", "--seeds=1-5", "--require-proof"]) {
@@ -261,6 +261,22 @@ for (const [name, honorsRetryHints] of adaptiveScripts) {
   if (blind === honorsRetryHints) {
     findings.push(`package.json: ${name} has the wrong retry-hint mode`);
   }
+}
+
+const handoffScript = pkg.scripts?.["demo:handoff"] ?? "";
+for (const required of [
+  "--seeds=1-5",
+  "--size-distribution=lognormal",
+  "--capacity-profile=adaptive-28-4",
+  "--require-adaptive-proof",
+  "--provider-api=anthropic",
+]) {
+  if (!handoffScript.includes(required)) {
+    findings.push(`package.json: demo:handoff is missing ${required}`);
+  }
+}
+if (handoffScript.includes("--control-arms=")) {
+  findings.push("package.json: demo:handoff must stay focused on baseline versus MoFlux");
 }
 
 const lendingScript = pkg.scripts?.["demo:lending"] ?? "";

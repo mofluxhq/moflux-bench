@@ -369,7 +369,7 @@ try {
 
   for (let replica = 1; replica <= 4; replica += 1) {
     const yaml = readFileSync(path.join(ROOT, "demo", "classes", `tyr-r${replica}.yaml`), "utf8");
-    assert.match(yaml, /version: 0\.23\.0/);
+    assert.match(yaml, /version: 0\.24\.0/);
     assert.match(yaml, /name: sim-ceilings/);
     assert.match(yaml, /name: sim-protected/);
     assert.match(yaml, /name: sim-adaptive/);

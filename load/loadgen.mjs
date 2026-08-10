@@ -149,6 +149,7 @@ for (const cls of classes) {
     localRejectDetails: {},
     admissionClassResponses: {},
     firstAttemptAtMs: null,
+    firstAdmissionAtMs: null,
     firstSuccessAtMs: null,
     /**
      * Every completion, kept for the whole run.
@@ -203,10 +204,15 @@ function offsetMs() {
   return performance.now() - startedAtMonotonic;
 }
 
-/** First time this class issued an attempt, and first time one succeeded. */
+/** First attempt, first 2xx admission, and first fully completed request for each class. */
 function markAttempt(cls) {
   const s = stats[cls];
   if (s.firstAttemptAtMs === null) s.firstAttemptAtMs = +offsetMs().toFixed(1);
+}
+
+function markAdmission(cls) {
+  const s = stats[cls];
+  if (s.firstAdmissionAtMs === null) s.firstAdmissionAtMs = +offsetMs().toFixed(1);
 }
 
 function markSuccess(cls) {
@@ -512,7 +518,11 @@ async function issue(entry) {
           continue;
         }
 
-        // 2xx: drain the stream, capture TTFT and output tokens. A replica may
+        // 2xx: the admission decision has succeeded. Record it before stream
+        // execution so handoff latency is not conflated with provider service time.
+        markAdmission(cls);
+
+        // Drain the stream, capture TTFT and output tokens. A replica may
         // disappear after the headers have arrived; in that case Undici throws
         // while iterating response.body rather than from fetch() itself. Treat
         // that as a retryable transport failure, not an unhandled rejection.
@@ -849,6 +859,8 @@ const summary = {
     out: CONFIG.out ? "requested" : "",
   },
   generatorSaturated,
+  startedAt: new Date(startedAt).toISOString(),
+  startedAtEpochMs: startedAt,
   wallClockMs: Date.now() - startedAt,
   trace: {
     version: TRACE.version,
@@ -888,29 +900,20 @@ for (const cls of classes) {
      */
     bindingConstraint: bindingConstraint(s),
     firstAttemptAtMs: s.firstAttemptAtMs,
+    firstAdmissionAtMs: s.firstAdmissionAtMs,
     firstSuccessAtMs: s.firstSuccessAtMs,
-    /**
-     * How long this class waited between first asking and first being served.
-     * Under a lent-out floor this is the reassertion cost: the time the
-     * borrowing class needed to hand a slot back.
-     */
+    /** Admission-layer wait only: first attempt until the first 2xx response. */
     admissionGapMs:
+      s.firstAttemptAtMs === null || s.firstAdmissionAtMs === null
+        ? null
+        : +(s.firstAdmissionAtMs - s.firstAttemptAtMs).toFixed(1),
+    /** End-to-end wait to the first fully completed request. */
+    firstSuccessGapMs:
       s.firstAttemptAtMs === null || s.firstSuccessAtMs === null
         ? null
         : +(s.firstSuccessAtMs - s.firstAttemptAtMs).toFixed(1),
     /** The run split at batch arrival. See phaseWindows(). */
     windows: phaseWindows(s),
-    firstAttemptAtMs: s.firstAttemptAtMs,
-    firstSuccessAtMs: s.firstSuccessAtMs,
-    /**
-     * How long this class waited between first asking and first being served.
-     * Under a lent-out floor this is the reassertion cost: the time the
-     * borrowing class needed to give a slot back.
-     */
-    admissionGapMs:
-      s.firstAttemptAtMs === null || s.firstSuccessAtMs === null
-        ? null
-        : +(s.firstSuccessAtMs - s.firstAttemptAtMs).toFixed(1),
     retryHints: {
       received: s.retryHints.received,
       applied: s.retryHints.applied,

@@ -196,6 +196,26 @@ const adaptiveRecords = records.map((record) => {
       lendingObserved: true,
       floorRestored: true,
       restorationDurationMs: 500,
+      handoff: {
+        observed: true,
+        committedAt: "2026-08-08T20:00:27.900Z",
+        firstBatchAdmissionAt: "2026-08-08T20:00:28.150Z",
+        fallbackDeadline: "2026-08-08T20:00:32.000Z",
+        everyDrainApplied: true,
+        aborted: false,
+        abortReason: null,
+        safeEventOrder: true,
+        commitBeforeBatchAdmission: true,
+        committedBeforeLeaseExpiry: true,
+        handoffDurationMs: 450,
+        demandToDrainStartMs: 100,
+        drainStartToAcknowledgedMs: 150,
+        acknowledgedToCommitMs: 200,
+        commitToFirstBatchAdmissionMs: 250,
+        demandToFirstBatchAdmissionMs: 700,
+        leaseTimeAvoidedMs: 3500,
+        appliedCapacity: { noAppliedOverallocation: true },
+      },
     },
   };
   return { ...record, moflux };
@@ -215,6 +235,12 @@ assert.equal(adaptive.adaptiveProof.batchTargetSeeds, 2);
 assert.equal(adaptive.adaptiveProof.occupancyObservedSeeds, 2);
 assert.equal(adaptive.adaptiveProof.controllerObservedSeeds, 2);
 assert.equal(adaptive.adaptiveProof.floorRestoredSeeds, 2);
+assert.equal(adaptive.adaptiveProof.handoffObservedSeeds, 2);
+assert.equal(adaptive.adaptiveProof.handoffCommittedSeeds, 2);
+assert.equal(adaptive.adaptiveProof.safeHandoffSeeds, 2);
+assert.equal(adaptive.adaptiveProof.commitBeforeAdmissionSeeds, 2);
+assert.equal(adaptive.adaptiveProof.handoffBeatLeaseExpirySeeds, 2);
+assert.equal(adaptive.adaptiveProof.noAppliedOverallocationSeeds, 2);
 assert.equal(adaptive.adaptiveProof.batchServedSeeds, 2);
 assert.equal(adaptiveProofFailureMessage(adaptive.adaptiveProof), null);
 

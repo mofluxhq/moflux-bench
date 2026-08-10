@@ -495,6 +495,11 @@ function printAggregate(summary) {
         "occupancy proof": `${adaptive.occupancyObservedSeeds}/${adaptive.seeds}`,
         "controller proof": `${adaptive.controllerObservedSeeds}/${adaptive.seeds}`,
         "floor restored": `${adaptive.floorRestoredSeeds}/${adaptive.seeds}`,
+        "handoff": `${adaptive.handoffObservedSeeds}/${adaptive.seeds}`,
+        "committed": `${adaptive.handoffCommittedSeeds}/${adaptive.seeds}`,
+        "safe order": `${adaptive.safeHandoffSeeds}/${adaptive.seeds}`,
+        "no double allocation": `${adaptive.noAppliedOverallocationSeeds}/${adaptive.seeds}`,
+        "beat lease expiry": `${adaptive.handoffBeatLeaseExpirySeeds}/${adaptive.seeds}`,
         "batch served": `${adaptive.batchServedSeeds}/${adaptive.seeds}`,
       },
     ]);
@@ -513,7 +518,14 @@ function printAggregate(summary) {
         "floor restored": `${lending.floorRestoredSeeds}/${summary.seeds.length} seeds`,
         "borrowed slots": range(lending.borrowedSlots, count),
         "restore duration": range(lending.floorRestorationDurationMs, (value) => `${value.toFixed(0)}ms`),
-        "batch first-service gap": range(lending.batchFloorAdmissionGapMs, (value) => `${value.toFixed(0)}ms`),
+        "batch admission gap": range(lending.batchFloorAdmissionGapMs, (value) => `${value.toFixed(0)}ms`),
+        "batch completion gap": range(lending.batchFloorFirstSuccessGapMs, (value) => `${value.toFixed(0)}ms`),
+        "demand → drain": range(lending.demandToDrainStartMs, (value) => `${value.toFixed(0)}ms`),
+        "drain → ack": range(lending.drainStartToAcknowledgedMs, (value) => `${value.toFixed(0)}ms`),
+        "ack → commit": range(lending.acknowledgedToCommitMs, (value) => `${value.toFixed(0)}ms`),
+        "commit → batch": range(lending.commitToFirstBatchAdmissionMs, (value) => `${value.toFixed(0)}ms`),
+        "demand → batch": range(lending.demandToFirstBatchAdmissionMs, (value) => `${value.toFixed(0)}ms`),
+        "lease time avoided": range(lending.leaseTimeAvoidedMs, (value) => `${value.toFixed(0)}ms`),
       },
     ]);
   }

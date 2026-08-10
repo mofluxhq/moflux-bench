@@ -22,6 +22,7 @@ const tests = [
   ["demo/verify-local-image-build.mjs", 30_000],
   ["demo/verify-capacity.mjs", 30_000],
   ["demo/verify-adaptive-profile.mjs", 30_000],
+  ["demo/verify-demand-bootstrap.mjs", 30_000],
   ["demo/verify-adaptive-seed-sweep.mjs", 60_000],
   ["demo/verify-topology.mjs", 30_000],
   ["demo/verify-telemetry-relay.mjs", 30_000],

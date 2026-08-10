@@ -31,6 +31,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { RedisClient } from "../arms/redis-client.mjs";
 import { lendingComparison, lendingMetrics } from "./lending-lib.mjs";
+import { bootstrapCapacityGroup, findFreshDemandReport } from "./demand-bootstrap-lib.mjs";
 import {
   DEFAULT_CAPACITY_GROUP_NAME,
   buildDemandAwareCapacityGroup,
@@ -187,7 +188,7 @@ const OPT = Object.freeze({
   batchConcurrencySlots: configuredBatchConcurrencySlots,
   batchConcurrencyPercent: configuredBatchConcurrencyPercent,
   batchTokenPercent: configuredBatchTokenPercent,
-  grantTtlMs: num("grant-ttl-ms", lendingRequested ? 6000 : 120000),
+  grantTtlMs: num("grant-ttl-ms", lendingRequested ? 11000 : 120000),
   enrollmentGrantTtlMs: num("enrollment-grant-ttl-ms", lendingRequested ? 2000 : 5000),
   seed: num("seed", 7),
   // Comma-separated control arms replayed on the same trace between the
@@ -210,6 +211,7 @@ const OPT = Object.freeze({
   lendingReportStaleAfterMs: num("lending-report-stale-after-ms", 6000),
   lendingIdleAfterMs: num("lending-idle-after-ms", 3000),
   lendingMaxStarvationMs: num("lending-max-starvation-ms", 5000),
+  handoffSampleIntervalMs: num("handoff-sample-interval-ms", 500),
   /**
    * "uniform" reproduces the version-1 trace exactly, so every result recorded
    * before this option existed stays reproducible. "lognormal" draws a size
@@ -415,6 +417,7 @@ for (const [flagName, value, minimum] of [
   ["--lending-report-stale-after-ms", OPT.lendingReportStaleAfterMs, 1000],
   ["--lending-idle-after-ms", OPT.lendingIdleAfterMs, 0],
   ["--lending-max-starvation-ms", OPT.lendingMaxStarvationMs, 1000],
+  ["--handoff-sample-interval-ms", OPT.handoffSampleIntervalMs, 100],
 ]) {
   if (!Number.isSafeInteger(value) || value < minimum) {
     throw new Error(`${flagName} must be an integer of at least ${minimum}`);
@@ -422,7 +425,7 @@ for (const [flagName, value, minimum] of [
 }
 const REQUIRED_GRANT_RUNWAY_MS = OPT.phaseMs + 10000;
 const REQUIRED_INITIAL_GRANT_RUNWAY_MS = OPT.lending
-  ? Math.max(1000, Math.min(2500, Math.floor(OPT.grantTtlMs / 2)))
+  ? Math.max(1000, OPT.grantTtlMs - 1500)
   : REQUIRED_GRANT_RUNWAY_MS;
 if (!OPT.lending && OPT.mode !== "baseline" && OPT.grantTtlMs < REQUIRED_GRANT_RUNWAY_MS + 5000) {
   throw new Error(
@@ -600,6 +603,13 @@ const CAPACITY_GROUP = OPT.lending
       },
     }))
   : null;
+
+// Pre-benchmark heartbeats correctly report no demand. If demand-aware lending
+// is armed during Docker enrollment, a slow-starting replica can arrive after
+// idleAfterMs and the controller can legally release the whole protected floor
+// before measured traffic exists. Keep the exact capacity group installed but
+// disable lending until fresh demand from this run is observed.
+const BOOTSTRAP_CAPACITY_GROUP = bootstrapCapacityGroup(CAPACITY_GROUP);
 
 const PROVIDER = Object.freeze({
   api: OPT.providerApi,
@@ -1006,13 +1016,13 @@ async function configurePools(token, grantTtlMs, { allowCreate }) {
   }
 }
 
-async function configureCapacityGroup(token, { allowCreate }) {
-  if (!CAPACITY_GROUP) return null;
+async function configureCapacityGroup(token, { allowCreate, capacityGroup = CAPACITY_GROUP } = {}) {
+  if (!capacityGroup) return null;
   const base = "http://127.0.0.1:18080";
-  const update = await jsonRequest(`${base}/v1/capacity-groups/${CAPACITY_GROUP.name}`, {
+  const update = await jsonRequest(`${base}/v1/capacity-groups/${capacityGroup.name}`, {
     method: "PUT",
     token,
-    body: CAPACITY_GROUP,
+    body: capacityGroup,
     allowed: [200, 404, 405],
   });
   if (update.status === 200) return update.body;
@@ -1024,12 +1034,12 @@ async function configureCapacityGroup(token, { allowCreate }) {
   const created = await jsonRequest(`${base}/v1/capacity-groups`, {
     method: "POST",
     token,
-    body: CAPACITY_GROUP,
+    body: capacityGroup,
     allowed: [200, 201, 409],
   });
   if (created.status === 409) {
     throw new Error(
-      `${CAPACITY_GROUP.name} already exists but could not be replaced safely; reset the demo state and retry`,
+      `${capacityGroup.name} already exists but could not be replaced safely; reset the demo state and retry`,
     );
   }
   return created.body;
@@ -1094,7 +1104,10 @@ async function startControlPlane(env) {
   // long lease to expire. Use a short enrollment lease, then promote the pool
   // definition after all expected agents are visible.
   await configurePools(token, OPT.enrollmentGrantTtlMs, { allowCreate: true });
-  await configureCapacityGroup(token, { allowCreate: true });
+  await configureCapacityGroup(token, {
+    allowCreate: true,
+    capacityGroup: BOOTSTRAP_CAPACITY_GROUP,
+  });
 }
 
 async function waitForAgents(token) {
@@ -1155,7 +1168,10 @@ async function startTyr(env) {
     allowCreate: false,
   });
   if (CAPACITY_GROUP) {
-    await configureCapacityGroup(env.LATCHFLO_ADMIN_TOKEN, { allowCreate: false });
+    await configureCapacityGroup(env.LATCHFLO_ADMIN_TOKEN, {
+      allowCreate: false,
+      capacityGroup: BOOTSTRAP_CAPACITY_GROUP,
+    });
     await jsonRequest(
       `http://127.0.0.1:18080/v1/capacity-groups/${CAPACITY_GROUP.name}/rebalance`,
       {
@@ -1175,6 +1191,56 @@ async function startTyr(env) {
   }
 
   return waitForUsableTyrFleet();
+}
+
+async function activateDemandAwareLending(token, measuredRunStartedAtMs, loadgen) {
+  if (!CAPACITY_GROUP) return null;
+  const base = "http://127.0.0.1:18080";
+  const deadline = Date.now() + Math.max(15_000, Math.min(30_000, WORKLOAD.batchStartMs));
+  let last = "no fresh interactive demand report";
+
+  while (Date.now() < deadline) {
+    if (loadgen?.exitCode !== null || loadgen?.signalCode !== null) {
+      throw new Error("load generator exited before demand-aware lending was armed");
+    }
+    try {
+      const response = await jsonRequest(`${base}/v1/demand?pool=sim-interactive`, {
+        token,
+        allowed: [200],
+      });
+      const report = findFreshDemandReport(response.body?.demand, {
+        pool: "sim-interactive",
+        sinceMs: measuredRunStartedAtMs,
+      });
+      if (report) {
+        const activatedAtMs = Date.now();
+        await configureCapacityGroup(token, {
+          allowCreate: false,
+          capacityGroup: CAPACITY_GROUP,
+        });
+        await jsonRequest(
+          `${base}/v1/capacity-groups/${CAPACITY_GROUP.name}/rebalance`,
+          { method: "POST", token, allowed: [200, 202] },
+        );
+        return {
+          observedDemandAt: report.receivedAt,
+          activatedAt: new Date(activatedAtMs).toISOString(),
+          activationDelayMs: activatedAtMs - measuredRunStartedAtMs,
+        };
+      }
+      const reports = Array.isArray(response.body?.demand) ? response.body.demand : [];
+      last = reports.length === 0
+        ? "no interactive demand reports"
+        : `latest reports haveDemand=${reports.map((entry) => entry?.hasDemand === true).join(",")}`;
+    } catch (error) {
+      last = error instanceof Error ? error.message : String(error);
+    }
+    await sleep(250);
+  }
+
+  throw new Error(
+    `timed out arming demand-aware lending after measured traffic started; last result: ${last}`,
+  );
 }
 
 function providerArgs() {
@@ -1287,12 +1353,26 @@ function assertNoControlSemantics(summary) {
   }
 }
 
-async function runLoadgen({ interactiveTargets, batchTargets, armLabel, outFile }) {
+async function runLoadgen({ interactiveTargets, batchTargets, armLabel, outFile, whileRunning = null }) {
   rmSync(outFile, { force: true });
   const loadgen = launchNode("loadgen", "load/loadgen.mjs", loadgenArgs({ interactiveTargets, batchTargets, armLabel, outFile }));
+  const measuredRunStartedAtMs = Date.now();
+  let sideError = null;
+  let sideResult = null;
+  const sideTask = typeof whileRunning === "function"
+    ? Promise.resolve()
+        .then(() => whileRunning({ measuredRunStartedAtMs, loadgen }))
+        .then((value) => { sideResult = value; })
+        .catch(async (error) => {
+          sideError = error;
+          await terminateHostChild(loadgen);
+        })
+    : null;
   const exit = await new Promise((resolve) => {
     loadgen.on("close", (code, signal) => resolve({ code, signal }));
   });
+  if (sideTask) await sideTask;
+  if (sideError) throw sideError;
   if (exit.code !== 0) {
     throw new Error(
       `load generator failed (${exit.signal ? `signal ${exit.signal}` : `exit code ${exit.code}`})`,
@@ -1301,7 +1381,7 @@ async function runLoadgen({ interactiveTargets, batchTargets, armLabel, outFile 
   if (!existsSync(outFile)) throw new Error(`load generator did not write ${outFile}`);
   const summary = JSON.parse(readFileSync(outFile, "utf8"));
   await verifyArmTelemetry(armLabel, summary);
-  return summary;
+  return { summary, sideResult };
 }
 
 async function readProviderCounters() {
@@ -1323,17 +1403,135 @@ async function readTyrStats() {
   );
 }
 
-async function readControllerLendingEvidence(token) {
+
+function appliedCapacitySample(statsRows, observedAtMs = Date.now()) {
+  const poolCapacity = (poolName) => {
+    let maxConcurrent = 0;
+    let tokenBudget = 0;
+    const grants = [];
+    for (const row of statsRows) {
+      const pool = row?.[poolName];
+      if (!pool) continue;
+      maxConcurrent += Number(pool?.limits?.maxConcurrent ?? 0);
+      tokenBudget += Number(pool?.tokenBudget?.budget ?? pool?.limits?.tokenBudget?.budget ?? 0);
+      const provenance = pool?.tyr?.provenance?.current;
+      if (provenance?.grantId) {
+        grants.push({
+          grantId: provenance.grantId,
+          revision: provenance.revision,
+          expiresAt: provenance.expiresAt,
+        });
+      }
+    }
+    return { maxConcurrent, tokenBudget, grants };
+  };
+  const interactive = poolCapacity("sim-interactive");
+  const batch = poolCapacity("sim-batch");
+  return {
+    observedAt: new Date(observedAtMs).toISOString(),
+    interactive,
+    batch,
+    total: {
+      maxConcurrent: interactive.maxConcurrent + batch.maxConcurrent,
+      tokenBudget: interactive.tokenBudget + batch.tokenBudget,
+    },
+  };
+}
+
+function summarizeAppliedCapacity(samples, errors = []) {
+  const overConcurrent = samples.filter(
+    (sample) => sample.total.maxConcurrent > OPT.envelope,
+  );
+  const overTokens = samples.filter(
+    (sample) => sample.total.tokenBudget > OPT.tokenBudget,
+  );
+  return {
+    sampleIntervalMs: OPT.handoffSampleIntervalMs,
+    samples: samples.length,
+    readErrors: errors.length,
+    errors: errors.slice(0, 20),
+    samplingComplete: samples.length > 0 && errors.length === 0,
+    noAppliedOverallocation:
+      samples.length > 0 && errors.length === 0 && overConcurrent.length === 0 && overTokens.length === 0,
+    maxObservedTotalConcurrent: samples.reduce(
+      (max, sample) => Math.max(max, sample.total.maxConcurrent),
+      0,
+    ),
+    maxObservedTotalTokens: samples.reduce(
+      (max, sample) => Math.max(max, sample.total.tokenBudget),
+      0,
+    ),
+    observedLentPartition: samples.some(
+      (sample) =>
+        sample.interactive.maxConcurrent > CAPACITY.interactiveConcurrencySlots &&
+        sample.batch.maxConcurrent < CAPACITY.batchConcurrencySlots,
+    ),
+    observedRestoredPartition: samples.some(
+      (sample) =>
+        sample.interactive.maxConcurrent <= CAPACITY.interactiveConcurrencySlots &&
+        sample.batch.maxConcurrent >= CAPACITY.batchConcurrencySlots,
+    ),
+    violations: [
+      ...overConcurrent.map((sample) => ({
+        kind: "concurrency",
+        observedAt: sample.observedAt,
+        allocated: sample.total.maxConcurrent,
+        envelope: OPT.envelope,
+      })),
+      ...overTokens.map((sample) => ({
+        kind: "tokens",
+        observedAt: sample.observedAt,
+        allocated: sample.total.tokenBudget,
+        envelope: OPT.tokenBudget,
+      })),
+    ],
+    timeline: samples,
+  };
+}
+
+function startAppliedCapacityObserver() {
+  if (!OPT.lending) {
+    return { stop: async () => null };
+  }
+  let stopping = false;
+  const samples = [];
+  const errors = [];
+  const done = (async () => {
+    while (!stopping) {
+      const observedAtMs = Date.now();
+      try {
+        samples.push(appliedCapacitySample(await readTyrStats(), observedAtMs));
+      } catch (error) {
+        errors.push({
+          observedAt: new Date(observedAtMs).toISOString(),
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+      if (!stopping) await sleep(OPT.handoffSampleIntervalMs);
+    }
+  })();
+  return {
+    stop: async () => {
+      stopping = true;
+      await done;
+      return summarizeAppliedCapacity(samples, errors);
+    },
+  };
+}
+
+async function readControllerLendingEvidence(token, loadSummary, appliedCapacity = null) {
   if (!CAPACITY_GROUP) return null;
   const base = "http://127.0.0.1:18080";
-  const [eventsResponse, demandResponse, rebalanceResponse] = await Promise.all([
+  // Reconcile first, then fetch evidence. In 0.16.0 these three requests were
+  // concurrent, so a handoff committed by the final rebalance could race the
+  // event read and disappear from the published proof record.
+  const rebalanceResponse = await jsonRequest(
+    `${base}/v1/capacity-groups/${CAPACITY_GROUP.name}/rebalance`,
+    { method: "POST", token, allowed: [200, 202] },
+  );
+  const [eventsResponse, demandResponse] = await Promise.all([
     jsonRequest(`${base}/v1/events?limit=1000`, { token, allowed: [200] }),
     jsonRequest(`${base}/v1/demand`, { token, allowed: [200] }),
-    jsonRequest(`${base}/v1/capacity-groups/${CAPACITY_GROUP.name}/rebalance`, {
-      method: "POST",
-      token,
-      allowed: [200, 202],
-    }),
   ]);
   const batch = CAPACITY_GROUP.members.find((member) => member.pool === "sim-batch");
   if (!batch) throw new Error("demand-aware capacity group is missing sim-batch");
@@ -1345,6 +1543,9 @@ async function readControllerLendingEvidence(token) {
     batchPool: batch.pool,
     batchGuaranteedMaxConcurrent: batch.guaranteedMaxConcurrent,
     batchGuaranteedTokenBudget: batch.guaranteedTokenBudget,
+    loadgenStartedAtEpochMs: loadSummary?.startedAtEpochMs ?? null,
+    batchFirstAdmissionAtMs: loadSummary?.classes?.batch?.firstAdmissionAtMs ?? null,
+    appliedCapacity,
   });
 }
 
@@ -1537,7 +1738,7 @@ async function runLocalArm({ name, replicaArm, replicaFlags, armLabel, file, nee
 
     const outFile = path.join(RESULTS, file);
     rmSync(outFile, { force: true });
-    const summary = await runLoadgen({
+    const { summary } = await runLoadgen({
       interactiveTargets: INTERACTIVE_PORTS.map((port) => `http://127.0.0.1:${port}`),
       batchTargets: BATCH_PORTS.map((port) => `http://127.0.0.1:${port}`),
       armLabel,
@@ -1666,12 +1867,26 @@ async function runMoflux(env) {
     }, OPT.faultAtMs);
   }
 
-  const summary = await runLoadgen({
-    interactiveTargets: INTERACTIVE_PORTS.map((port) => `http://127.0.0.1:${port}`),
-    batchTargets: BATCH_PORTS.map((port) => `http://127.0.0.1:${port}`),
-    armLabel: OPT.fault ? "moflux-enforce-fault" : "moflux-enforce",
-    outFile,
-  });
+  const capacityObserver = startAppliedCapacityObserver();
+  let summary;
+  let appliedCapacity;
+  let demandPolicyActivation = null;
+  try {
+    const run = await runLoadgen({
+      interactiveTargets: INTERACTIVE_PORTS.map((port) => `http://127.0.0.1:${port}`),
+      batchTargets: BATCH_PORTS.map((port) => `http://127.0.0.1:${port}`),
+      armLabel: OPT.fault ? "moflux-enforce-fault" : "moflux-enforce",
+      outFile,
+      whileRunning: CAPACITY_GROUP
+        ? ({ measuredRunStartedAtMs, loadgen }) =>
+            activateDemandAwareLending(env.LATCHFLO_ADMIN_TOKEN, measuredRunStartedAtMs, loadgen)
+        : null,
+    });
+    summary = run.summary;
+    demandPolicyActivation = run.sideResult;
+  } finally {
+    appliedCapacity = await capacityObserver.stop();
+  }
   const simCounters = await readProviderCounters();
 
   // In a fault run r4 may be gone. Aggregate all remaining stats and preserve
@@ -1686,7 +1901,11 @@ async function runMoflux(env) {
     }
   }
   const after = aggregateTokenAccounting(afterRows);
-  const controlPlaneLending = await readControllerLendingEvidence(env.LATCHFLO_ADMIN_TOKEN);
+  const controlPlaneLending = await readControllerLendingEvidence(
+    env.LATCHFLO_ADMIN_TOKEN,
+    summary,
+    appliedCapacity,
+  );
   const tokenAccounting = subtractAccounting(after, before);
   const grossRecoveryRate =
     tokenAccounting.totalReserved > 0
@@ -1723,6 +1942,7 @@ async function runMoflux(env) {
     tokenBudget: OPT.tokenBudget,
     capacityGroup: CAPACITY_GROUP,
     demandPolicy: CAPACITY.demandPolicy,
+    demandPolicyActivation,
     pools: RESOLVED_CAPACITY,
     liveGrants,
   };

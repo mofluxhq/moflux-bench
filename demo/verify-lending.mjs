@@ -70,8 +70,8 @@ function buckets(idle, contended) {
   );
 }
 
-const servedBatch = { success: 12, firstAttemptAtMs: 15_100, firstSuccessAtMs: 15_400, admissionGapMs: 300 };
-const starvedBatch = { success: 0, firstAttemptAtMs: 15_100, firstSuccessAtMs: null, admissionGapMs: null };
+const servedBatch = { success: 12, firstAttemptAtMs: 15_100, firstAdmissionAtMs: 15_300, firstSuccessAtMs: 15_400, admissionGapMs: 200, firstSuccessGapMs: 300 };
+const starvedBatch = { success: 0, firstAttemptAtMs: 15_100, firstAdmissionAtMs: null, firstSuccessAtMs: null, admissionGapMs: null, firstSuccessGapMs: null };
 
 // ── window arithmetic ────────────────────────────────────────────────
 {
@@ -133,7 +133,7 @@ const starvedBatch = { success: 0, firstAttemptAtMs: 15_100, firstSuccessAtMs: n
   check("occupancy above the interactive ceiling counts as borrowed", metrics.idleWindow.borrowed === true);
   check("all four idle batch slots are observed as borrowed", metrics.idleWindow.borrowedSlots === 4);
   check("a served batch class marks the floor reasserted", metrics.floorReassertion.reasserted === true);
-  check("reassertion cost is the batch admission gap", metrics.floorReassertion.admissionGapMs === 300);
+  check("reassertion cost is the batch admission gap", metrics.floorReassertion.admissionGapMs === 200);
   check("handover cost is reported as a percentage", metrics.handoverCostPercent > 0);
 }
 
@@ -182,7 +182,7 @@ const starvedBatch = { success: 0, firstAttemptAtMs: 15_100, firstSuccessAtMs: n
     envelope: ENVELOPE,
   });
   const lendingArm = lendingMetrics({
-    summary: runSummary({ idleRate: 6, contendedRate: 4, batch: { ...servedBatch, admissionGapMs: 900, firstSuccessAtMs: 16_000 } }),
+    summary: runSummary({ idleRate: 6, contendedRate: 4, batch: { ...servedBatch, firstAdmissionAtMs: 16_000, admissionGapMs: 900, firstSuccessAtMs: 16_100, firstSuccessGapMs: 1000 } }),
     peakActiveBySecond: buckets(32, 32),
     batchArrivalMs: BATCH_ARRIVAL_MS,
     runEndMs: RUN_END_MS,
@@ -193,7 +193,7 @@ const starvedBatch = { success: 0, firstAttemptAtMs: 15_100, firstSuccessAtMs: n
   check("lending is observed only when idle occupancy actually rose", comparison.lendingObserved === true);
   check("the gain is four slots", comparison.idlePeakActiveGain === 4);
   check("idle goodput improvement is reported", comparison.idleGoodputChangePercent > 0);
-  check("the reassertion cost of lending is surfaced", comparison.reassertionCostMs === 600);
+  check("the reassertion cost of lending is surfaced", comparison.reassertionCostMs === 700);
   check("both policies returned the floor", comparison.bothReasserted === true);
 
   // Same policy compared with itself must report no lending.
@@ -391,6 +391,106 @@ const starvedBatch = { success: 0, firstAttemptAtMs: 15_100, firstSuccessAtMs: n
   check("controller evidence records a pending floor restore", proof.floorRestorePendingObserved === true);
   check("controller evidence proves the floor was restored", proof.floorRestored === true);
   check("controller evidence measures restoration duration", proof.restorationDurationMs === 4000);
+
+  const handoffEvents = [
+    {
+      id: 20,
+      type: "capacity_group.lending_observed",
+      entityType: "capacity_group",
+      entityId: "sim-workloads",
+      createdAt: "2026-08-01T20:00:05.000Z",
+      payload: {},
+    },
+    {
+      id: 30,
+      type: "capacity_group.handoff_prepared",
+      entityType: "capacity_group",
+      entityId: "sim-workloads",
+      createdAt: "2026-08-01T20:00:27.200Z",
+      payload: {
+        handoffId: "restore-1",
+        grants: [
+          {
+            grantId: "interactive-drain",
+            instanceId: "tyr-r4",
+            pool: "sim-interactive",
+            role: "drain",
+            limits: { maxConcurrent: 7, tokenBudget: { budget: 6000 } },
+          },
+          {
+            grantId: "batch-expand",
+            instanceId: "tyr-r4",
+            pool: "sim-batch",
+            role: "staged",
+            limits: { maxConcurrent: 4, tokenBudget: { budget: 40000 } },
+          },
+        ],
+      },
+    },
+    {
+      id: 31,
+      type: "capacity_group.floor_restore_pending",
+      entityType: "capacity_group",
+      entityId: "sim-workloads",
+      createdAt: "2026-08-01T20:00:27.201Z",
+      payload: {
+        handoffId: "restore-1",
+        pools: ["sim-batch"],
+        floorRestorationDeadline: "2026-08-01T20:00:32.000Z",
+      },
+    },
+    {
+      id: 32,
+      type: "capacity_group.handoff_grant_applied",
+      entityType: "grant",
+      entityId: "interactive-drain",
+      createdAt: "2026-08-01T20:00:27.450Z",
+      payload: { handoffId: "restore-1", capacityGroup: "sim-workloads" },
+    },
+    {
+      id: 33,
+      type: "capacity_group.handoff_committed",
+      entityType: "capacity_group",
+      entityId: "sim-workloads",
+      createdAt: "2026-08-01T20:00:27.900Z",
+      payload: { handoffId: "restore-1", grants: [] },
+    },
+  ];
+  const handoffProof = summarizeControllerLending({
+    events: handoffEvents,
+    demand: [{
+      pool: "sim-batch",
+      instanceId: "tyr-r4",
+      receivedAt: "2026-08-01T20:00:28.000Z",
+      stateSince: "2026-08-01T20:00:27.000Z",
+      hasDemand: true,
+      inFlight: 1,
+      pending: 2,
+    }],
+    finalRebalance: {
+      demandAware: true,
+      members: [
+        { pool: "sim-interactive", allocated: { maxConcurrent: 28, tokenBudget: 24000 } },
+        { pool: "sim-batch", allocated: { maxConcurrent: 4, tokenBudget: 40000 } },
+      ],
+    },
+    batchGuaranteedMaxConcurrent: 4,
+    batchGuaranteedTokenBudget: 40000,
+    loadgenStartedAtEpochMs: Date.parse("2026-08-01T20:00:00.000Z"),
+    batchFirstAdmissionAtMs: 28200,
+    appliedCapacity: {
+      noAppliedOverallocation: true,
+      observedLentPartition: true,
+      observedRestoredPartition: true,
+    },
+  });
+  check("0.10 handoff is identified as the floor-restoration handoff", handoffProof.handoff.observed === true);
+  check("every drain grant was acknowledged before commit", handoffProof.handoff.safeEventOrder === true);
+  check("handoff commit precedes first batch admission", handoffProof.handoff.commitBeforeBatchAdmission === true);
+  check("handoff commits before the lease fallback", handoffProof.handoff.committedBeforeLeaseExpiry === true);
+  check("handoff avoids 4.1s of lease waiting", handoffProof.handoff.leaseTimeAvoidedMs === 4100);
+  check("demand-to-first-admission excludes provider completion time", handoffProof.handoff.demandToFirstBatchAdmissionMs === 1200);
+  check("data-plane applied-capacity proof is preserved", handoffProof.handoff.appliedCapacity.noAppliedOverallocation === true);
 
   const occupancyOnly = summarizeControllerLending({
     events: [],

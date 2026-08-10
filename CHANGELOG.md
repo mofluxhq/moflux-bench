@@ -1,5 +1,53 @@
 # Changelog
 
+## 0.17.0 - 2026-08-08
+
+### Added
+
+- Add a focused `demo:handoff` five-seed release proof for the demand-aware
+  `adaptive-28-4` policy without the additional control arms.
+- Record the load generator's wall-clock start and first accepted response per
+  class so Latchflo events and request admission share one timeline.
+- Collect the Latchflo 0.10.0 restoration handoff chain: demand detection, drain
+  preparation, every drain-grant `applied` acknowledgement, commit, lease
+  fallback deadline, and the first batch admission.
+- Sample Tyr applied pool capacity every 500 ms during lending runs and require
+  that aggregate concurrency and token allocations never exceed the physical
+  envelope.
+- Report per-stage handoff latency, lease time avoided, batch admission delay,
+  and first-completion delay separately in seed and aggregate results.
+
+### Changed
+
+- Pin active licensed benchmark paths to Tyr 0.24.0 and Latchflo 0.10.0 while
+  retaining async-bulkhead-llm 3.15.1 and the async-bulkhead-ts 1.0.1 runtime
+  shipped by Tyr. Historical committed evidence is not relabeled.
+- Strengthen `--require-adaptive-proof`: every seed must observe a restoration
+  handoff, prove ordered drain ACKs before commit, prove commit before first
+  batch admission and before lease fallback, and prove no sampled applied
+  capacity over-allocation.
+- Bump the heterogeneous seed-sweep result schema to version 2 for the new
+  handoff and admission-timing evidence.
+
+### Fixed
+
+- Prevent demand-aware startup from deadlocking on legitimate pre-benchmark idle heartbeats. Adaptive runs now install the 28/4 capacity group with lending temporarily disabled, wait for a simultaneous usable Tyr grant set, and arm the measured demand policy only after a fresh interactive demand report from the running load generator. Slow Docker enrollment can no longer turn an idle pre-run period into zero-token grants such as `sim-interactive on Tyr 8101 received 0 tokens`.
+- Stabilize the acknowledged-handoff proof without weakening its safety gate: demand-aware runs now use an 11-second grant TTL and wait for a fresh steady-state grant set with at least 9.5 seconds remaining before load starts. With the default 27-second batch arrival, this leaves at least 4.5 seconds on the contemporaneous lease for the ACK + fresh-occupancy + commit path instead of randomly landing just before expiry.
+- Report an observed-but-uncommitted or aborted handoff directly. Missing commit evidence no longer cascades into misleading `batch admitted before handoff commit` and `handoff did not beat lease expiry` diagnostics when those comparisons were never observable.
+- Make `batchFloorAdmissionGapMs` end at the first batch 2xx response instead of
+  the first fully completed request. Version 0.16.0 mixed provider execution
+  time into the admission/reclamation measurement; completion delay is now
+  reported separately as `batchFloorFirstSuccessGapMs`.
+- Reconcile the capacity group before reading final controller events so a
+  handoff committed by that rebalance cannot race the evidence fetch and vanish
+  from the proof record.
+- Treat any Tyr applied-capacity sampling error as incomplete safety evidence
+  instead of allowing a partially observed run to pass the no-double-allocation
+  gate.
+- Keep ignored local `.env`, macOS metadata, and generated `results/runs/**`
+  trees out of the release source so publication verification operates on a
+  reproducible repository rather than developer-machine artifacts.
+
 ## 0.16.0 - 2026-08-07
 
 ### Added

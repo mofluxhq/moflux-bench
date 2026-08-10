@@ -78,7 +78,7 @@ export function percentile(values, p) {
 export function windowedInteractive(summary, batchArrivalMs, runEndMs) {
   // The load generator computes this split itself from a record that survives
   // metrics pruning. Trust it when present; fall back to raw samples only for
-  // synthetic fixtures and pre-0.9.0 result files.
+  // synthetic fixtures and pre-0.10.0 result files.
   const emitted = summary?.classes?.interactive?.windows;
   if (emitted && emitted.boundaryMs === batchArrivalMs) {
     return { idle: emitted.idle, contended: emitted.contended };
@@ -144,11 +144,15 @@ export function lendingMetrics({
     },
     floorReassertion: {
       batchFirstAttemptAtMs: batch.firstAttemptAtMs ?? null,
+      batchFirstAdmissionAtMs: batch.firstAdmissionAtMs ?? null,
       batchFirstSuccessAtMs: batch.firstSuccessAtMs ?? null,
-      /** Time from batch first asking to batch first being served. */
+      /** Admission-layer reclaim cost; provider execution time is excluded. */
       admissionGapMs: batch.admissionGapMs ?? null,
+      /** End-to-end time to the first fully completed batch request. */
+      firstSuccessGapMs: batch.firstSuccessGapMs ?? null,
       batchSuccess: batch.success ?? 0,
-      /** A floor that is never reasserted is a starved pool, not lending. */
+      admitted: batch.firstAdmissionAtMs !== null && batch.firstAdmissionAtMs !== undefined,
+      /** A floor that never completes work is still a failed restoration outcome. */
       reasserted: (batch.success ?? 0) > 0,
     },
     /**
