@@ -1,6 +1,11 @@
 {
   "arm": "baseline-no-control",
   "seed": 3,
+  "drain": {
+    "elapsedMs": 18966,
+    "idleMs": 20000,
+    "maxMs": 180000
+  },
   "config": {
     "targets": [
       "http://127.0.0.1:8101",
@@ -22,6 +27,7 @@
     "metricsPushIntervalMs": 1000,
     "metricsRelayRequired": true,
     "armLabel": "baseline-no-control",
+    "providerApi": "anthropic",
     "durationMs": 45000,
     "seed": 3,
     "interactiveModel": "sim-model-interactive",
@@ -32,8 +38,8 @@
     "interactiveSizeSigma": 0.75,
     "batchSizeSigma": 0,
     "interactiveMaxTokens": 400,
-    "batchStartMs": 15750,
-    "batchDurationMs": 22500,
+    "batchStartMs": 27000,
+    "batchDurationMs": 15750,
     "batchRps": 3,
     "batchInputChars": 24000,
     "batchMaxTokens": 3000,
@@ -41,38 +47,47 @@
     "backoffBaseMs": 250,
     "honorRetryHints": true,
     "inFlightCeiling": 3000,
+    "drainIdleMs": 20000,
+    "drainMaxMs": 180000,
     "windowMs": 30000,
     "traceFile": "provided",
     "traceOut": "",
-    "out": "requested"
+    "out": "requested",
+    "interactiveIdentityToken": "",
+    "batchIdentityToken": ""
   },
   "generatorSaturated": 0,
-  "wallClockMs": 54161,
+  "startedAt": "2026-08-10T23:17:52.909Z",
+  "startedAtEpochMs": 1786403872909,
+  "wallClockMs": 63557,
   "trace": {
     "version": 2,
-    "hash": "67219f04b275f7cc416cc7a93080f12ba64dafa8073ab5d04d399eebb10b5640",
+    "hash": "c4b6e8626491864a4e36599d956ce333705740ceb5b373f82e8c9a45c83a35f3",
     "planned": {
       "interactive": 300,
-      "batch": 59,
-      "total": 359
+      "batch": 46,
+      "total": 346
     },
     "source": "provided"
   },
   "classes": {
     "interactive": {
       "logical": 300,
-      "attempts": 695,
-      "success": 206,
-      "successRate": 0.6867,
-      "retryAmplification": 2.317,
+      "attempts": 585,
+      "success": 231,
+      "successRate": 0.77,
+      "retryAmplification": 1.95,
       "localReject": 0,
       "localRejectReasons": {},
       "localRejectPools": {},
       "localRejectDetails": [],
-      "upstreamReject": 489,
+      "admissionClassResponses": {
+        "unclassified": 585
+      },
+      "upstreamReject": 354,
       "serverError": 0,
       "transportError": 0,
-      "exhausted": 94,
+      "exhausted": 69,
       "requestSizes": {
         "n": 300,
         "min": 170,
@@ -87,65 +102,70 @@
         "tokenBoundShare": null,
         "exercisedTokenAwareness": false
       },
-      "firstAttemptAtMs": 33.7,
-      "firstSuccessAtMs": 265.6,
-      "admissionGapMs": 231.9,
+      "firstAttemptAtMs": 34.1,
+      "firstAdmissionAtMs": 198.2,
+      "firstSuccessAtMs": 807.5,
+      "admissionGapMs": 164.1,
+      "firstSuccessGapMs": 773.4,
       "windows": {
-        "boundaryMs": 15750,
+        "boundaryMs": 27000,
         "endMs": 45000,
         "idle": {
-          "completed": 78,
-          "goodputRps": 4.952,
-          "p50Ms": 2702.1162920000006,
-          "p95Ms": 9004.165459,
-          "ttftP50Ms": 421.8245000000006,
-          "ttftP95Ms": 1579.8222499999993
+          "completed": 142,
+          "goodputRps": 5.259,
+          "p50Ms": 4397.555709,
+          "p95Ms": 9877.284583,
+          "ttftP50Ms": 824.2307499999997,
+          "ttftP95Ms": 3705.3263339999976
         },
         "contended": {
-          "completed": 95,
-          "goodputRps": 3.248,
-          "p50Ms": 7180.648750000004,
-          "p95Ms": 13305.788459,
-          "ttftP50Ms": 2674.3585420000018,
-          "ttftP95Ms": 6483.970459000004
+          "completed": 68,
+          "goodputRps": 3.778,
+          "p50Ms": 6908.516000000003,
+          "p95Ms": 12741.955584,
+          "ttftP50Ms": 2180.5483750000058,
+          "ttftP95Ms": 5707.804124999999
         },
-        "drainCompleted": 33
+        "drainCompleted": 21
       },
       "retryHints": {
-        "received": 489,
-        "applied": 342,
+        "received": 354,
+        "applied": 254,
         "blindSleepMs": 0,
-        "hintedSleepMs": 613887,
-        "totalSleepMs": 613887
+        "hintedSleepMs": 435450,
+        "totalSleepMs": 435450
       },
-      "outputTokens": 41797,
+      "outputTokens": 46959,
       "latencyMs": {
-        "p50": 8514.9,
-        "p95": 16992.2,
-        "p99": 24914.5
+        "p50": 8500.9,
+        "p95": 15911.3,
+        "p99": 17831.7
       },
       "ttftMs": {
-        "p50": 4752.8,
-        "p95": 6982.3,
-        "p99": 7657.7
+        "p50": 4282.4,
+        "p95": 7323.8,
+        "p99": 9528.3
       }
     },
     "batch": {
-      "logical": 59,
-      "attempts": 186,
+      "logical": 46,
+      "attempts": 123,
       "success": 26,
-      "successRate": 0.4407,
-      "retryAmplification": 3.153,
+      "successRate": 0.5652,
+      "retryAmplification": 2.674,
       "localReject": 0,
       "localRejectReasons": {},
       "localRejectPools": {},
       "localRejectDetails": [],
-      "upstreamReject": 160,
+      "admissionClassResponses": {
+        "unclassified": 123
+      },
+      "upstreamReject": 97,
       "serverError": 0,
       "transportError": 0,
-      "exhausted": 33,
+      "exhausted": 20,
       "requestSizes": {
-        "n": 59,
+        "n": 46,
         "min": 24000,
         "p50": 24000,
         "p95": 24000,
@@ -158,11 +178,13 @@
         "tokenBoundShare": null,
         "exercisedTokenAwareness": false
       },
-      "firstAttemptAtMs": 15806.2,
-      "firstSuccessAtMs": 34980,
-      "admissionGapMs": 19173.8,
+      "firstAttemptAtMs": 27055.5,
+      "firstAdmissionAtMs": 42382.3,
+      "firstSuccessAtMs": 43568.1,
+      "admissionGapMs": 15326.8,
+      "firstSuccessGapMs": 16512.6,
       "windows": {
-        "boundaryMs": 15750,
+        "boundaryMs": 27000,
         "endMs": 45000,
         "idle": {
           "completed": 0,
@@ -173,120 +195,130 @@
           "ttftP95Ms": 0
         },
         "contended": {
-          "completed": 10,
-          "goodputRps": 0.342,
-          "p50Ms": 21074.530333000002,
-          "p95Ms": 24222.632583000002,
-          "ttftP50Ms": 16955.516792000002,
-          "ttftP95Ms": 18181.474417
+          "completed": 1,
+          "goodputRps": 0.056,
+          "p50Ms": 16512.707375,
+          "p95Ms": 16512.707375,
+          "ttftP50Ms": 15347.324499999999,
+          "ttftP95Ms": 15347.324499999999
         },
-        "drainCompleted": 16
+        "drainCompleted": 25
       },
       "retryHints": {
-        "received": 160,
-        "applied": 111,
+        "received": 97,
+        "applied": 70,
         "blindSleepMs": 0,
-        "hintedSleepMs": 204021,
-        "totalSleepMs": 204021
+        "hintedSleepMs": 125864,
+        "totalSleepMs": 125864
       },
-      "outputTokens": 7934,
+      "outputTokens": 10187,
       "latencyMs": {
-        "p50": 22567,
-        "p95": 33150.7,
-        "p99": 33951
+        "p50": 20835,
+        "p95": 30490.7,
+        "p99": 33841.8
       },
       "ttftMs": {
-        "p50": 17448.1,
-        "p95": 20424.1,
-        "p99": 20716.1
+        "p50": 16400.6,
+        "p95": 18821,
+        "p99": 20141.7
       }
     }
   },
   "simCounters": {
-    "received": 881,
-    "admitted": 232,
-    "rejected429": 649,
+    "received": 708,
+    "admitted": 257,
+    "rejected429": 451,
     "failed500": 0,
-    "completed": 232,
+    "completed": 257,
     "disconnected": 0,
-    "trueInputTokens": 259288,
-    "trueOutputTokens": 49731,
+    "trueInputTokens": 268920,
+    "trueOutputTokens": 57146,
     "peakActive": 32,
     "peakQueue": 8,
     "peakActiveBySecond": [
       0,
       0,
-      1,
+      2,
+      5,
       7,
-      8,
-      15,
-      15,
-      18,
-      18,
-      23,
-      21,
-      20,
-      30,
-      32,
-      32,
-      32,
-      32,
-      32,
-      32,
-      32,
-      32,
-      32,
-      32,
-      32,
-      32,
-      32,
-      32,
-      32,
-      32,
-      32,
-      32,
-      32,
-      32,
-      32,
-      32,
-      32,
-      32,
-      32,
-      32,
-      32,
-      32,
-      32,
-      32,
-      32,
-      32,
-      32,
-      32,
-      32,
-      32,
-      32,
-      32,
-      32,
-      28,
-      22,
+      16,
       17,
-      10,
-      6
+      20,
+      22,
+      26,
+      23,
+      24,
+      29,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      31,
+      28,
+      24,
+      22,
+      16,
+      13,
+      8,
+      4,
+      4,
+      1,
+      1,
+      1,
+      1,
+      1
     ],
-    "emittedTokens": 49731,
-    "ticks": 2717,
-    "tickDtSum": 56.76600000000176
+    "emittedTokens": 57146,
+    "ticks": 3167,
+    "tickDtSum": 66.1650000000019
   },
   "coordinatorLatencyMs": 0,
   "scenario": {
-    "id": "7c7a252cfc9a",
+    "id": "1db8b8f67224",
     "workload": {
       "durationMs": 45000,
       "seed": 3,
       "interactiveRps": 6,
       "interactiveInputChars": 1200,
       "interactiveMaxTokens": 400,
-      "batchStartMs": 15750,
-      "batchDurationMs": 22500,
+      "batchStartMs": 27000,
+      "batchDurationMs": 15750,
       "batchRps": 3,
       "batchInputChars": 24000,
       "batchMaxTokens": 3000,
@@ -296,9 +328,11 @@
       "interactiveSizeSigma": 0.75,
       "batchSizeSigma": 0,
       "inFlightCeiling": 3000,
-      "windowMs": 30000
+      "windowMs": 30000,
+      "honorRetryHints": true
     },
     "provider": {
+      "api": "anthropic",
       "envelope": 32,
       "queue": 8,
       "sigma": 0.25,
@@ -310,13 +344,13 @@
     },
     "trace": {
       "version": 2,
-      "hash": "67219f04b275f7cc416cc7a93080f12ba64dafa8073ab5d04d399eebb10b5640",
+      "hash": "c4b6e8626491864a4e36599d956ce333705740ceb5b373f82e8c9a45c83a35f3",
       "planned": {
         "interactive": 300,
-        "batch": 59,
-        "total": 359
+        "batch": 46,
+        "total": 346
       },
-      "evidence": "results/scenario-trace.json"
+      "evidence": "results/runs/video-seed-sweep/20260810T230707Z/scratch/scenario-trace.json"
     },
     "routing": {
       "interactiveReplicas": [
@@ -329,5 +363,46 @@
         "http://127.0.0.1:8104"
       ]
     }
+  },
+  "lending": {
+    "batchArrivalMs": 27000,
+    "interactiveCeiling": 32,
+    "envelope": 32,
+    "idleWindow": {
+      "peakActive": 32,
+      "borrowedSlots": 0,
+      "borrowed": false,
+      "interactive": {
+        "completed": 142,
+        "goodputRps": 5.259,
+        "p50Ms": 4397.555709,
+        "p95Ms": 9877.284583,
+        "ttftP50Ms": 824.2307499999997,
+        "ttftP95Ms": 3705.3263339999976
+      }
+    },
+    "contendedWindow": {
+      "peakActive": 32,
+      "interactive": {
+        "completed": 68,
+        "goodputRps": 3.778,
+        "p50Ms": 6908.516000000003,
+        "p95Ms": 12741.955584,
+        "ttftP50Ms": 2180.5483750000058,
+        "ttftP95Ms": 5707.804124999999
+      }
+    },
+    "floorReassertion": {
+      "batchFirstAttemptAtMs": 27055.5,
+      "batchFirstAdmissionAtMs": 42382.3,
+      "batchFirstSuccessAtMs": 43568.1,
+      "admissionGapMs": 15326.8,
+      "firstSuccessGapMs": 16512.6,
+      "batchSuccess": 26,
+      "admitted": true,
+      "reasserted": true
+    },
+    "handoverCostPercent": 28.16,
+    "controlPlane": null
   }
 }

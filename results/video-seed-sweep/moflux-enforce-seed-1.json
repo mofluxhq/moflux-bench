@@ -1,6 +1,11 @@
 {
   "arm": "moflux-enforce",
   "seed": 1,
+  "drain": {
+    "elapsedMs": 6056,
+    "idleMs": 20000,
+    "maxMs": 180000
+  },
   "config": {
     "targets": [
       "http://127.0.0.1:8101",
@@ -22,6 +27,7 @@
     "metricsPushIntervalMs": 1000,
     "metricsRelayRequired": true,
     "armLabel": "moflux-enforce",
+    "providerApi": "anthropic",
     "durationMs": 45000,
     "seed": 1,
     "interactiveModel": "sim-model-interactive",
@@ -32,8 +38,8 @@
     "interactiveSizeSigma": 0.75,
     "batchSizeSigma": 0,
     "interactiveMaxTokens": 400,
-    "batchStartMs": 15750,
-    "batchDurationMs": 22500,
+    "batchStartMs": 27000,
+    "batchDurationMs": 15750,
     "batchRps": 3,
     "batchInputChars": 24000,
     "batchMaxTokens": 3000,
@@ -41,66 +47,75 @@
     "backoffBaseMs": 250,
     "honorRetryHints": true,
     "inFlightCeiling": 3000,
+    "drainIdleMs": 20000,
+    "drainMaxMs": 180000,
     "windowMs": 30000,
     "traceFile": "provided",
     "traceOut": "",
-    "out": "requested"
+    "out": "requested",
+    "interactiveIdentityToken": "",
+    "batchIdentityToken": ""
   },
   "generatorSaturated": 0,
-  "wallClockMs": 51410,
+  "startedAt": "2026-08-10T23:11:25.600Z",
+  "startedAtEpochMs": 1786403485600,
+  "wallClockMs": 51025,
   "trace": {
     "version": 2,
-    "hash": "61379b436b2967289291e89a891ab9e82da4b6ee216ad9e0123abe871b2a7b84",
+    "hash": "513875712584ce7f31723a46f0353ce06aa630f732a4d31f598a2f4068529a47",
     "planned": {
       "interactive": 278,
-      "batch": 60,
-      "total": 338
+      "batch": 45,
+      "total": 323
     },
     "source": "provided"
   },
   "classes": {
     "interactive": {
       "logical": 278,
-      "attempts": 442,
-      "success": 260,
-      "successRate": 0.9353,
-      "retryAmplification": 1.59,
-      "localReject": 182,
+      "attempts": 353,
+      "success": 271,
+      "successRate": 0.9748,
+      "retryAmplification": 1.27,
+      "localReject": 82,
       "localRejectReasons": {
-        "budget_limit": 174,
-        "concurrency_limit": 8
+        "concurrency_limit": 47,
+        "budget_limit": 35
       },
       "localRejectPools": {
-        "sim-interactive": 182
+        "sim-interactive": 82
       },
       "localRejectDetails": [
         {
           "pool": "sim-interactive",
-          "reason": "budget_limit",
-          "count": 174,
-          "requestedMin": 317,
-          "requestedMax": 2904,
-          "availableMin": 3,
-          "availableMax": 1953,
-          "budgetMin": 7500,
-          "budgetMax": 7500
+          "reason": "concurrency_limit",
+          "count": 47,
+          "requestedMin": 296,
+          "requestedMax": 2198,
+          "availableMin": 495,
+          "availableMax": 11806,
+          "budgetMin": 6000,
+          "budgetMax": 16000
         },
         {
           "pool": "sim-interactive",
-          "reason": "concurrency_limit",
-          "count": 8,
-          "requestedMin": 368,
-          "requestedMax": 972,
-          "availableMin": 688,
-          "availableMax": 2120,
-          "budgetMin": 7500,
-          "budgetMax": 7500
+          "reason": "budget_limit",
+          "count": 35,
+          "requestedMin": 325,
+          "requestedMax": 2242,
+          "availableMin": 0,
+          "availableMax": 1856,
+          "budgetMin": 0,
+          "budgetMax": 6000
         }
       ],
+      "admissionClassResponses": {
+        "unclassified": 353
+      },
       "upstreamReject": 0,
       "serverError": 0,
       "transportError": 0,
-      "exhausted": 18,
+      "exhausted": 7,
       "requestSizes": {
         "n": 278,
         "min": 179,
@@ -110,86 +125,103 @@
         "spread": 26.8
       },
       "bindingConstraint": {
-        "budgetLimited": 174,
-        "concurrencyLimited": 8,
-        "tokenBoundShare": 0.956,
+        "budgetLimited": 35,
+        "concurrencyLimited": 47,
+        "tokenBoundShare": 0.4268,
         "exercisedTokenAwareness": true
       },
-      "firstAttemptAtMs": 403.2,
-      "firstSuccessAtMs": 965.9,
-      "admissionGapMs": 562.7,
+      "firstAttemptAtMs": 405.7,
+      "firstAdmissionAtMs": 532.8,
+      "firstSuccessAtMs": 693,
+      "admissionGapMs": 127.1,
+      "firstSuccessGapMs": 287.3,
       "windows": {
-        "boundaryMs": 15750,
+        "boundaryMs": 27000,
         "endMs": 45000,
         "idle": {
-          "completed": 66,
-          "goodputRps": 4.19,
-          "p50Ms": 2761.942249999999,
-          "p95Ms": 6519.195749999999,
-          "ttftP50Ms": 453.517167,
-          "ttftP95Ms": 2198.006541999999
+          "completed": 145,
+          "goodputRps": 5.37,
+          "p50Ms": 3191.1141659999994,
+          "p95Ms": 7984.075124999999,
+          "ttftP50Ms": 595.4098750000003,
+          "ttftP95Ms": 1945.8784579999992
         },
         "contended": {
-          "completed": 161,
-          "goodputRps": 5.504,
-          "p50Ms": 4596.424374999999,
-          "p95Ms": 11467.380582999998,
-          "ttftP50Ms": 893.725124999999,
-          "ttftP95Ms": 3994.923500000001
+          "completed": 94,
+          "goodputRps": 5.222,
+          "p50Ms": 4550.425292,
+          "p95Ms": 10570.668125,
+          "ttftP50Ms": 862.625082999999,
+          "ttftP95Ms": 2983.125208999998
         },
-        "drainCompleted": 33
+        "drainCompleted": 32
       },
       "retryHints": {
-        "received": 182,
-        "applied": 139,
+        "received": 82,
+        "applied": 59,
         "blindSleepMs": 0,
-        "hintedSleepMs": 278800,
-        "totalSleepMs": 278800
+        "hintedSleepMs": 98759,
+        "totalSleepMs": 98759
       },
-      "outputTokens": 55163,
+      "outputTokens": 53677,
       "latencyMs": {
-        "p50": 4650.4,
-        "p95": 11487.8,
-        "p99": 17030
+        "p50": 4652,
+        "p95": 10408.9,
+        "p99": 17394.8
       },
       "ttftMs": {
-        "p50": 912,
-        "p95": 4509.2,
-        "p99": 7631.9
+        "p50": 912.8,
+        "p95": 3042.7,
+        "p99": 4986.3
       }
     },
     "batch": {
-      "logical": 60,
-      "attempts": 236,
-      "success": 2,
-      "successRate": 0.0333,
-      "retryAmplification": 3.933,
-      "localReject": 234,
+      "logical": 45,
+      "attempts": 175,
+      "success": 4,
+      "successRate": 0.0889,
+      "retryAmplification": 3.889,
+      "localReject": 171,
       "localRejectReasons": {
-        "budget_limit": 234
+        "budget_limit": 168,
+        "concurrency_limit": 3
       },
       "localRejectPools": {
-        "sim-batch": 234
+        "sim-batch": 171
       },
       "localRejectDetails": [
         {
           "pool": "sim-batch",
           "reason": "budget_limit",
-          "count": 234,
+          "count": 168,
           "requestedMin": 9008,
           "requestedMax": 9008,
-          "availableMin": 992,
-          "availableMax": 992,
-          "budgetMin": 10000,
-          "budgetMax": 10000
+          "availableMin": 0,
+          "availableMax": 3968,
+          "budgetMin": 0,
+          "budgetMax": 40000
+        },
+        {
+          "pool": "sim-batch",
+          "reason": "concurrency_limit",
+          "count": 3,
+          "requestedMin": 9008,
+          "requestedMax": 9008,
+          "availableMin": 9976,
+          "availableMax": 21992,
+          "budgetMin": 40000,
+          "budgetMax": 40000
         }
       ],
+      "admissionClassResponses": {
+        "unclassified": 175
+      },
       "upstreamReject": 0,
       "serverError": 0,
       "transportError": 0,
-      "exhausted": 58,
+      "exhausted": 41,
       "requestSizes": {
-        "n": 60,
+        "n": 45,
         "min": 24000,
         "p50": 24000,
         "p95": 24000,
@@ -197,16 +229,18 @@
         "spread": 1
       },
       "bindingConstraint": {
-        "budgetLimited": 234,
-        "concurrencyLimited": 0,
-        "tokenBoundShare": 1,
+        "budgetLimited": 168,
+        "concurrencyLimited": 3,
+        "tokenBoundShare": 0.9825,
         "exercisedTokenAwareness": true
       },
-      "firstAttemptAtMs": 16038,
-      "firstSuccessAtMs": 36374,
-      "admissionGapMs": 20336,
+      "firstAttemptAtMs": 27287.8,
+      "firstAdmissionAtMs": 43288.4,
+      "firstSuccessAtMs": 45049.2,
+      "admissionGapMs": 16000.6,
+      "firstSuccessGapMs": 17761.4,
       "windows": {
-        "boundaryMs": 15750,
+        "boundaryMs": 27000,
         "endMs": 45000,
         "idle": {
           "completed": 0,
@@ -217,45 +251,45 @@
           "ttftP95Ms": 0
         },
         "contended": {
-          "completed": 1,
-          "goodputRps": 0.034,
-          "p50Ms": 20336.080334000002,
-          "p95Ms": 20336.080334000002,
-          "ttftP50Ms": 13192.412124999999,
-          "ttftP95Ms": 13192.412124999999
+          "completed": 0,
+          "goodputRps": 0,
+          "p50Ms": 0,
+          "p95Ms": 0,
+          "ttftP50Ms": 0,
+          "ttftP95Ms": 0
         },
-        "drainCompleted": 1
+        "drainCompleted": 4
       },
       "retryHints": {
         "received": 0,
         "applied": 0,
-        "blindSleepMs": 219752,
+        "blindSleepMs": 160270,
         "hintedSleepMs": 0,
-        "totalSleepMs": 219752
+        "totalSleepMs": 160270
       },
-      "outputTokens": 497,
+      "outputTokens": 418,
       "latencyMs": {
-        "p50": 20336.1,
-        "p95": 20336.1,
-        "p99": 20336.1
+        "p50": 16661.3,
+        "p95": 17514,
+        "p99": 17514
       },
       "ttftMs": {
-        "p50": 13192.4,
-        "p95": 13192.4,
-        "p99": 13192.4
+        "p50": 15431.6,
+        "p95": 16031.3,
+        "p99": 16031.3
       }
     }
   },
   "simCounters": {
-    "received": 262,
-    "admitted": 262,
+    "received": 275,
+    "admitted": 275,
     "rejected429": 0,
     "failed500": 0,
-    "completed": 262,
+    "completed": 275,
     "disconnected": 0,
-    "trueInputTokens": 126509,
-    "trueOutputTokens": 55660,
-    "peakActive": 31,
+    "trueInputTokens": 146862,
+    "trueOutputTokens": 54095,
+    "peakActive": 32,
     "peakQueue": 1,
     "peakActiveBySecond": [
       0,
@@ -266,76 +300,74 @@
       0,
       0,
       0,
-      0,
-      0,
-      4,
       4,
       5,
-      7,
-      13,
-      21,
-      23,
-      26,
-      26,
-      27,
-      26,
-      25,
-      28,
-      28,
-      28,
-      29,
-      31,
-      30,
-      30,
-      30,
-      30,
-      29,
-      30,
-      30,
-      30,
-      31,
-      30,
-      28,
-      27,
-      24,
-      26,
-      23,
-      26,
-      28,
-      29,
-      31,
-      31,
-      31,
-      31,
-      30,
-      31,
-      31,
-      30,
-      30,
-      29,
-      28,
-      27,
-      22,
-      15,
+      8,
       11,
-      4,
-      2
+      18,
+      25,
+      23,
+      21,
+      27,
+      31,
+      29,
+      25,
+      23,
+      23,
+      24,
+      25,
+      31,
+      32,
+      29,
+      31,
+      32,
+      31,
+      32,
+      32,
+      30,
+      30,
+      28,
+      25,
+      23,
+      24,
+      27,
+      27,
+      29,
+      31,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      27,
+      31,
+      31,
+      32,
+      32,
+      29,
+      26,
+      14,
+      10,
+      3,
+      1
     ],
-    "emittedTokens": 55660,
-    "ticks": 2955,
-    "tickDtSum": 61.765000000001294
+    "emittedTokens": 54095,
+    "ticks": 2850,
+    "tickDtSum": 59.60400000000167
   },
   "coordinatorLatencyMs": 0,
   "scenario": {
-    "id": "bd2d26d31eef",
+    "id": "ae76eb03b3ff",
     "workload": {
       "durationMs": 45000,
       "seed": 1,
       "interactiveRps": 6,
       "interactiveInputChars": 1200,
       "interactiveMaxTokens": 400,
-      "batchStartMs": 15750,
-      "batchDurationMs": 22500,
+      "batchStartMs": 27000,
+      "batchDurationMs": 15750,
       "batchRps": 3,
       "batchInputChars": 24000,
       "batchMaxTokens": 3000,
@@ -345,9 +377,11 @@
       "interactiveSizeSigma": 0.75,
       "batchSizeSigma": 0,
       "inFlightCeiling": 3000,
-      "windowMs": 30000
+      "windowMs": 30000,
+      "honorRetryHints": true
     },
     "provider": {
+      "api": "anthropic",
       "envelope": 32,
       "queue": 8,
       "sigma": 0.25,
@@ -359,13 +393,13 @@
     },
     "trace": {
       "version": 2,
-      "hash": "61379b436b2967289291e89a891ab9e82da4b6ee216ad9e0123abe871b2a7b84",
+      "hash": "513875712584ce7f31723a46f0353ce06aa630f732a4d31f598a2f4068529a47",
       "planned": {
         "interactive": 278,
-        "batch": 60,
-        "total": 338
+        "batch": 45,
+        "total": 323
       },
-      "evidence": "results/scenario-trace.json"
+      "evidence": "results/runs/video-seed-sweep/20260810T230707Z/scratch/scenario-trace.json"
     },
     "routing": {
       "interactiveReplicas": [
@@ -379,62 +413,4858 @@
       ]
     }
   },
+  "lending": {
+    "batchArrivalMs": 27000,
+    "interactiveCeiling": 28,
+    "envelope": 32,
+    "idleWindow": {
+      "peakActive": 32,
+      "borrowedSlots": 4,
+      "borrowed": true,
+      "interactive": {
+        "completed": 145,
+        "goodputRps": 5.37,
+        "p50Ms": 3191.1141659999994,
+        "p95Ms": 7984.075124999999,
+        "ttftP50Ms": 595.4098750000003,
+        "ttftP95Ms": 1945.8784579999992
+      }
+    },
+    "contendedWindow": {
+      "peakActive": 32,
+      "interactive": {
+        "completed": 94,
+        "goodputRps": 5.222,
+        "p50Ms": 4550.425292,
+        "p95Ms": 10570.668125,
+        "ttftP50Ms": 862.625082999999,
+        "ttftP95Ms": 2983.125208999998
+      }
+    },
+    "floorReassertion": {
+      "batchFirstAttemptAtMs": 27287.8,
+      "batchFirstAdmissionAtMs": 43288.4,
+      "batchFirstSuccessAtMs": 45049.2,
+      "admissionGapMs": 16000.6,
+      "firstSuccessGapMs": 17761.4,
+      "batchSuccess": 4,
+      "admitted": true,
+      "reasserted": true
+    },
+    "handoverCostPercent": 2.76,
+    "controlPlane": {
+      "group": "sim-workloads",
+      "demandAware": true,
+      "lendingObserved": true,
+      "lendingEvents": [
+        {
+          "id": 72,
+          "createdAt": "2026-08-10T23:11:27.147Z",
+          "lenders": [
+            {
+              "pool": "sim-batch",
+              "released": {
+                "maxConcurrent": 4,
+                "tokenBudget": 40000
+              }
+            }
+          ],
+          "borrowers": [
+            {
+              "pool": "sim-interactive",
+              "borrowed": {
+                "maxConcurrent": 4,
+                "tokenBudget": 40000
+              }
+            }
+          ]
+        },
+        {
+          "id": 135,
+          "createdAt": "2026-08-10T23:11:37.352Z",
+          "lenders": [
+            {
+              "pool": "sim-batch",
+              "released": {
+                "maxConcurrent": 4,
+                "tokenBudget": 40000
+              }
+            }
+          ],
+          "borrowers": [
+            {
+              "pool": "sim-interactive",
+              "borrowed": {
+                "maxConcurrent": 4,
+                "tokenBudget": 40000
+              }
+            }
+          ]
+        },
+        {
+          "id": 201,
+          "createdAt": "2026-08-10T23:11:48.364Z",
+          "lenders": [
+            {
+              "pool": "sim-batch",
+              "released": {
+                "maxConcurrent": 4,
+                "tokenBudget": 40000
+              }
+            }
+          ],
+          "borrowers": [
+            {
+              "pool": "sim-interactive",
+              "borrowed": {
+                "maxConcurrent": 4,
+                "tokenBudget": 40000
+              }
+            }
+          ]
+        }
+      ],
+      "floorRestorePendingObserved": true,
+      "floorRestorationDeadline": "2026-08-10T23:11:59.360Z",
+      "floorRestored": true,
+      "floorRestoredAt": "2026-08-10T23:11:55.903Z",
+      "restorationDurationMs": 11614,
+      "handoff": {
+        "observed": true,
+        "handoffId": "64e461de-4a61-47cd-8ea8-5bb3f9cbc8d6",
+        "drainGrants": 4,
+        "appliedDrainGrants": 4,
+        "everyDrainApplied": true,
+        "aborted": false,
+        "abortReason": null,
+        "demandDetectedAt": "2026-08-10T23:11:54.774Z",
+        "demandDetectionSource": "capacity_group.floor_restore_pending",
+        "drainStartedAt": "2026-08-10T23:11:54.761Z",
+        "capacityAcknowledgedAt": "2026-08-10T23:11:55.898Z",
+        "committedAt": "2026-08-10T23:11:55.903Z",
+        "firstBatchAdmissionAt": "2026-08-10T23:12:08.888Z",
+        "fallbackDeadline": "2026-08-10T23:11:59.360Z",
+        "demandToDrainStartMs": 0,
+        "drainStartToAcknowledgedMs": 1137,
+        "acknowledgedToCommitMs": 5,
+        "commitToFirstBatchAdmissionMs": 12985.39990234375,
+        "demandToFirstBatchAdmissionMs": 14114.39990234375,
+        "handoffDurationMs": 1142,
+        "leaseTimeAvoidedMs": 3457,
+        "safeEventOrder": true,
+        "commitBeforeBatchAdmission": true,
+        "committedBeforeLeaseExpiry": true,
+        "appliedCapacity": {
+          "sampleIntervalMs": 500,
+          "samples": 102,
+          "readErrors": 0,
+          "errors": [],
+          "samplingComplete": true,
+          "noAppliedOverallocation": true,
+          "maxObservedTotalConcurrent": 32,
+          "maxObservedTotalTokens": 64000,
+          "observedLentPartition": true,
+          "observedRestoredPartition": true,
+          "violations": [],
+          "timeline": [
+            {
+              "observedAt": "2026-08-10T23:11:25.511Z",
+              "interactive": {
+                "maxConcurrent": 28,
+                "tokenBudget": 24000,
+                "grants": [
+                  {
+                    "grantId": "0226d216-4d36-476f-b376-0e13d4b66c45",
+                    "revision": 3,
+                    "expiresAt": "2026-08-10T23:11:35.323Z"
+                  },
+                  {
+                    "grantId": "2ea92a4c-205a-4b8f-8ae8-ef8b3c5e350b",
+                    "revision": 5,
+                    "expiresAt": "2026-08-10T23:11:35.323Z"
+                  },
+                  {
+                    "grantId": "ca2c9ff2-a0fa-41a1-9002-4c22db2f547b",
+                    "revision": 7,
+                    "expiresAt": "2026-08-10T23:11:35.323Z"
+                  },
+                  {
+                    "grantId": "6db8e684-71de-4c9a-8f4b-50b90be9ea52",
+                    "revision": 9,
+                    "expiresAt": "2026-08-10T23:11:35.323Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 4,
+                "tokenBudget": 40000,
+                "grants": [
+                  {
+                    "grantId": "faf4be11-645a-498b-bcd1-4643664ee65b",
+                    "revision": 11,
+                    "expiresAt": "2026-08-10T23:11:35.323Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:26.023Z",
+              "interactive": {
+                "maxConcurrent": 28,
+                "tokenBudget": 24000,
+                "grants": [
+                  {
+                    "grantId": "0226d216-4d36-476f-b376-0e13d4b66c45",
+                    "revision": 3,
+                    "expiresAt": "2026-08-10T23:11:35.323Z"
+                  },
+                  {
+                    "grantId": "2ea92a4c-205a-4b8f-8ae8-ef8b3c5e350b",
+                    "revision": 5,
+                    "expiresAt": "2026-08-10T23:11:35.323Z"
+                  },
+                  {
+                    "grantId": "ca2c9ff2-a0fa-41a1-9002-4c22db2f547b",
+                    "revision": 7,
+                    "expiresAt": "2026-08-10T23:11:35.323Z"
+                  },
+                  {
+                    "grantId": "6db8e684-71de-4c9a-8f4b-50b90be9ea52",
+                    "revision": 9,
+                    "expiresAt": "2026-08-10T23:11:35.323Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 4,
+                "tokenBudget": 40000,
+                "grants": [
+                  {
+                    "grantId": "faf4be11-645a-498b-bcd1-4643664ee65b",
+                    "revision": 11,
+                    "expiresAt": "2026-08-10T23:11:35.323Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:26.559Z",
+              "interactive": {
+                "maxConcurrent": 28,
+                "tokenBudget": 24000,
+                "grants": [
+                  {
+                    "grantId": "0226d216-4d36-476f-b376-0e13d4b66c45",
+                    "revision": 3,
+                    "expiresAt": "2026-08-10T23:11:35.323Z"
+                  },
+                  {
+                    "grantId": "2ea92a4c-205a-4b8f-8ae8-ef8b3c5e350b",
+                    "revision": 5,
+                    "expiresAt": "2026-08-10T23:11:35.323Z"
+                  },
+                  {
+                    "grantId": "ca2c9ff2-a0fa-41a1-9002-4c22db2f547b",
+                    "revision": 7,
+                    "expiresAt": "2026-08-10T23:11:35.323Z"
+                  },
+                  {
+                    "grantId": "6db8e684-71de-4c9a-8f4b-50b90be9ea52",
+                    "revision": 9,
+                    "expiresAt": "2026-08-10T23:11:35.323Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 4,
+                "tokenBudget": 40000,
+                "grants": [
+                  {
+                    "grantId": "faf4be11-645a-498b-bcd1-4643664ee65b",
+                    "revision": 11,
+                    "expiresAt": "2026-08-10T23:11:35.323Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:27.065Z",
+              "interactive": {
+                "maxConcurrent": 28,
+                "tokenBudget": 24000,
+                "grants": [
+                  {
+                    "grantId": "0226d216-4d36-476f-b376-0e13d4b66c45",
+                    "revision": 3,
+                    "expiresAt": "2026-08-10T23:11:35.323Z"
+                  },
+                  {
+                    "grantId": "2ea92a4c-205a-4b8f-8ae8-ef8b3c5e350b",
+                    "revision": 5,
+                    "expiresAt": "2026-08-10T23:11:35.323Z"
+                  },
+                  {
+                    "grantId": "ca2c9ff2-a0fa-41a1-9002-4c22db2f547b",
+                    "revision": 7,
+                    "expiresAt": "2026-08-10T23:11:35.323Z"
+                  },
+                  {
+                    "grantId": "6db8e684-71de-4c9a-8f4b-50b90be9ea52",
+                    "revision": 9,
+                    "expiresAt": "2026-08-10T23:11:35.323Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 4,
+                "tokenBudget": 40000,
+                "grants": [
+                  {
+                    "grantId": "faf4be11-645a-498b-bcd1-4643664ee65b",
+                    "revision": 11,
+                    "expiresAt": "2026-08-10T23:11:35.323Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:27.570Z",
+              "interactive": {
+                "maxConcurrent": 30,
+                "tokenBudget": 44000,
+                "grants": [
+                  {
+                    "grantId": "0226d216-4d36-476f-b376-0e13d4b66c45",
+                    "revision": 3,
+                    "expiresAt": "2026-08-10T23:11:35.323Z"
+                  },
+                  {
+                    "grantId": "12fde287-4ad6-49dd-a1b4-30d0b8e1660c",
+                    "revision": 15,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "871398c2-2f68-47de-bc97-00308cae6bf0",
+                    "revision": 17,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "6db8e684-71de-4c9a-8f4b-50b90be9ea52",
+                    "revision": 9,
+                    "expiresAt": "2026-08-10T23:11:35.323Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "136e93e9-0d9b-4069-ac55-cc83410cdafa",
+                    "revision": 21,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 30,
+                "tokenBudget": 44000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:28.076Z",
+              "interactive": {
+                "maxConcurrent": 30,
+                "tokenBudget": 44000,
+                "grants": [
+                  {
+                    "grantId": "0226d216-4d36-476f-b376-0e13d4b66c45",
+                    "revision": 3,
+                    "expiresAt": "2026-08-10T23:11:35.323Z"
+                  },
+                  {
+                    "grantId": "12fde287-4ad6-49dd-a1b4-30d0b8e1660c",
+                    "revision": 15,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "871398c2-2f68-47de-bc97-00308cae6bf0",
+                    "revision": 17,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "6db8e684-71de-4c9a-8f4b-50b90be9ea52",
+                    "revision": 9,
+                    "expiresAt": "2026-08-10T23:11:35.323Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "136e93e9-0d9b-4069-ac55-cc83410cdafa",
+                    "revision": 21,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 30,
+                "tokenBudget": 44000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:28.582Z",
+              "interactive": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000,
+                "grants": [
+                  {
+                    "grantId": "2721aa54-7de5-4740-8c34-768a6f2b10b4",
+                    "revision": 13,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "12fde287-4ad6-49dd-a1b4-30d0b8e1660c",
+                    "revision": 15,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "871398c2-2f68-47de-bc97-00308cae6bf0",
+                    "revision": 17,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "a44ec336-5e05-432f-a7bd-9ddeb4757d54",
+                    "revision": 19,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "136e93e9-0d9b-4069-ac55-cc83410cdafa",
+                    "revision": 21,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:29.087Z",
+              "interactive": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000,
+                "grants": [
+                  {
+                    "grantId": "2721aa54-7de5-4740-8c34-768a6f2b10b4",
+                    "revision": 13,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "12fde287-4ad6-49dd-a1b4-30d0b8e1660c",
+                    "revision": 15,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "871398c2-2f68-47de-bc97-00308cae6bf0",
+                    "revision": 17,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "a44ec336-5e05-432f-a7bd-9ddeb4757d54",
+                    "revision": 19,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "136e93e9-0d9b-4069-ac55-cc83410cdafa",
+                    "revision": 21,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:29.592Z",
+              "interactive": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000,
+                "grants": [
+                  {
+                    "grantId": "2721aa54-7de5-4740-8c34-768a6f2b10b4",
+                    "revision": 13,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "12fde287-4ad6-49dd-a1b4-30d0b8e1660c",
+                    "revision": 15,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "871398c2-2f68-47de-bc97-00308cae6bf0",
+                    "revision": 17,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "a44ec336-5e05-432f-a7bd-9ddeb4757d54",
+                    "revision": 19,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "136e93e9-0d9b-4069-ac55-cc83410cdafa",
+                    "revision": 21,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:30.096Z",
+              "interactive": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000,
+                "grants": [
+                  {
+                    "grantId": "2721aa54-7de5-4740-8c34-768a6f2b10b4",
+                    "revision": 13,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "12fde287-4ad6-49dd-a1b4-30d0b8e1660c",
+                    "revision": 15,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "871398c2-2f68-47de-bc97-00308cae6bf0",
+                    "revision": 17,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "a44ec336-5e05-432f-a7bd-9ddeb4757d54",
+                    "revision": 19,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "136e93e9-0d9b-4069-ac55-cc83410cdafa",
+                    "revision": 21,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:30.601Z",
+              "interactive": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000,
+                "grants": [
+                  {
+                    "grantId": "2721aa54-7de5-4740-8c34-768a6f2b10b4",
+                    "revision": 13,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "12fde287-4ad6-49dd-a1b4-30d0b8e1660c",
+                    "revision": 15,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "871398c2-2f68-47de-bc97-00308cae6bf0",
+                    "revision": 17,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "a44ec336-5e05-432f-a7bd-9ddeb4757d54",
+                    "revision": 19,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "136e93e9-0d9b-4069-ac55-cc83410cdafa",
+                    "revision": 21,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:31.106Z",
+              "interactive": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000,
+                "grants": [
+                  {
+                    "grantId": "2721aa54-7de5-4740-8c34-768a6f2b10b4",
+                    "revision": 13,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "12fde287-4ad6-49dd-a1b4-30d0b8e1660c",
+                    "revision": 15,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "871398c2-2f68-47de-bc97-00308cae6bf0",
+                    "revision": 17,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "a44ec336-5e05-432f-a7bd-9ddeb4757d54",
+                    "revision": 19,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "136e93e9-0d9b-4069-ac55-cc83410cdafa",
+                    "revision": 21,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:31.613Z",
+              "interactive": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000,
+                "grants": [
+                  {
+                    "grantId": "2721aa54-7de5-4740-8c34-768a6f2b10b4",
+                    "revision": 13,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "12fde287-4ad6-49dd-a1b4-30d0b8e1660c",
+                    "revision": 15,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "871398c2-2f68-47de-bc97-00308cae6bf0",
+                    "revision": 17,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "a44ec336-5e05-432f-a7bd-9ddeb4757d54",
+                    "revision": 19,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "136e93e9-0d9b-4069-ac55-cc83410cdafa",
+                    "revision": 21,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:32.119Z",
+              "interactive": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000,
+                "grants": [
+                  {
+                    "grantId": "2721aa54-7de5-4740-8c34-768a6f2b10b4",
+                    "revision": 13,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "12fde287-4ad6-49dd-a1b4-30d0b8e1660c",
+                    "revision": 15,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "871398c2-2f68-47de-bc97-00308cae6bf0",
+                    "revision": 17,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "a44ec336-5e05-432f-a7bd-9ddeb4757d54",
+                    "revision": 19,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "136e93e9-0d9b-4069-ac55-cc83410cdafa",
+                    "revision": 21,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:32.623Z",
+              "interactive": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000,
+                "grants": [
+                  {
+                    "grantId": "2721aa54-7de5-4740-8c34-768a6f2b10b4",
+                    "revision": 13,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "12fde287-4ad6-49dd-a1b4-30d0b8e1660c",
+                    "revision": 15,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "871398c2-2f68-47de-bc97-00308cae6bf0",
+                    "revision": 17,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "a44ec336-5e05-432f-a7bd-9ddeb4757d54",
+                    "revision": 19,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "136e93e9-0d9b-4069-ac55-cc83410cdafa",
+                    "revision": 21,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:33.128Z",
+              "interactive": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000,
+                "grants": [
+                  {
+                    "grantId": "2721aa54-7de5-4740-8c34-768a6f2b10b4",
+                    "revision": 13,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "12fde287-4ad6-49dd-a1b4-30d0b8e1660c",
+                    "revision": 15,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "871398c2-2f68-47de-bc97-00308cae6bf0",
+                    "revision": 17,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "a44ec336-5e05-432f-a7bd-9ddeb4757d54",
+                    "revision": 19,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "136e93e9-0d9b-4069-ac55-cc83410cdafa",
+                    "revision": 21,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:33.633Z",
+              "interactive": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000,
+                "grants": [
+                  {
+                    "grantId": "2721aa54-7de5-4740-8c34-768a6f2b10b4",
+                    "revision": 13,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "12fde287-4ad6-49dd-a1b4-30d0b8e1660c",
+                    "revision": 15,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "871398c2-2f68-47de-bc97-00308cae6bf0",
+                    "revision": 17,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "a44ec336-5e05-432f-a7bd-9ddeb4757d54",
+                    "revision": 19,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "136e93e9-0d9b-4069-ac55-cc83410cdafa",
+                    "revision": 21,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:34.137Z",
+              "interactive": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000,
+                "grants": [
+                  {
+                    "grantId": "2721aa54-7de5-4740-8c34-768a6f2b10b4",
+                    "revision": 13,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "12fde287-4ad6-49dd-a1b4-30d0b8e1660c",
+                    "revision": 15,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "871398c2-2f68-47de-bc97-00308cae6bf0",
+                    "revision": 17,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "a44ec336-5e05-432f-a7bd-9ddeb4757d54",
+                    "revision": 19,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "136e93e9-0d9b-4069-ac55-cc83410cdafa",
+                    "revision": 21,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:34.642Z",
+              "interactive": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000,
+                "grants": [
+                  {
+                    "grantId": "2721aa54-7de5-4740-8c34-768a6f2b10b4",
+                    "revision": 13,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "12fde287-4ad6-49dd-a1b4-30d0b8e1660c",
+                    "revision": 15,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "871398c2-2f68-47de-bc97-00308cae6bf0",
+                    "revision": 17,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "a44ec336-5e05-432f-a7bd-9ddeb4757d54",
+                    "revision": 19,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "136e93e9-0d9b-4069-ac55-cc83410cdafa",
+                    "revision": 21,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:35.148Z",
+              "interactive": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000,
+                "grants": [
+                  {
+                    "grantId": "2721aa54-7de5-4740-8c34-768a6f2b10b4",
+                    "revision": 13,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "12fde287-4ad6-49dd-a1b4-30d0b8e1660c",
+                    "revision": 15,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "871398c2-2f68-47de-bc97-00308cae6bf0",
+                    "revision": 17,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "a44ec336-5e05-432f-a7bd-9ddeb4757d54",
+                    "revision": 19,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "136e93e9-0d9b-4069-ac55-cc83410cdafa",
+                    "revision": 21,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:35.652Z",
+              "interactive": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000,
+                "grants": [
+                  {
+                    "grantId": "2721aa54-7de5-4740-8c34-768a6f2b10b4",
+                    "revision": 13,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "12fde287-4ad6-49dd-a1b4-30d0b8e1660c",
+                    "revision": 15,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "871398c2-2f68-47de-bc97-00308cae6bf0",
+                    "revision": 17,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "a44ec336-5e05-432f-a7bd-9ddeb4757d54",
+                    "revision": 19,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "136e93e9-0d9b-4069-ac55-cc83410cdafa",
+                    "revision": 21,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:36.157Z",
+              "interactive": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000,
+                "grants": [
+                  {
+                    "grantId": "2721aa54-7de5-4740-8c34-768a6f2b10b4",
+                    "revision": 13,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "12fde287-4ad6-49dd-a1b4-30d0b8e1660c",
+                    "revision": 15,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "871398c2-2f68-47de-bc97-00308cae6bf0",
+                    "revision": 17,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "a44ec336-5e05-432f-a7bd-9ddeb4757d54",
+                    "revision": 19,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "136e93e9-0d9b-4069-ac55-cc83410cdafa",
+                    "revision": 21,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:36.662Z",
+              "interactive": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000,
+                "grants": [
+                  {
+                    "grantId": "2721aa54-7de5-4740-8c34-768a6f2b10b4",
+                    "revision": 13,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "12fde287-4ad6-49dd-a1b4-30d0b8e1660c",
+                    "revision": 15,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "871398c2-2f68-47de-bc97-00308cae6bf0",
+                    "revision": 17,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "a44ec336-5e05-432f-a7bd-9ddeb4757d54",
+                    "revision": 19,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "136e93e9-0d9b-4069-ac55-cc83410cdafa",
+                    "revision": 21,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:37.166Z",
+              "interactive": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000,
+                "grants": [
+                  {
+                    "grantId": "2721aa54-7de5-4740-8c34-768a6f2b10b4",
+                    "revision": 13,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "12fde287-4ad6-49dd-a1b4-30d0b8e1660c",
+                    "revision": 15,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "871398c2-2f68-47de-bc97-00308cae6bf0",
+                    "revision": 17,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "a44ec336-5e05-432f-a7bd-9ddeb4757d54",
+                    "revision": 19,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "136e93e9-0d9b-4069-ac55-cc83410cdafa",
+                    "revision": 21,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:37.670Z",
+              "interactive": {
+                "maxConcurrent": 16,
+                "tokenBudget": 32000,
+                "grants": [
+                  {
+                    "grantId": "523c72b1-8401-4286-afa8-343a24f508bb",
+                    "revision": 23,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "12fde287-4ad6-49dd-a1b4-30d0b8e1660c",
+                    "revision": 16,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "871398c2-2f68-47de-bc97-00308cae6bf0",
+                    "revision": 18,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "a3f76ae2-67a9-43fc-b13c-50150ff7dd16",
+                    "revision": 29,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "e6d22240-4440-4c67-b03c-82080f92ef50",
+                    "revision": 31,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 16,
+                "tokenBudget": 32000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:38.176Z",
+              "interactive": {
+                "maxConcurrent": 24,
+                "tokenBudget": 48000,
+                "grants": [
+                  {
+                    "grantId": "523c72b1-8401-4286-afa8-343a24f508bb",
+                    "revision": 23,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "547d0b70-62bb-4f80-ac63-50d042f04160",
+                    "revision": 25,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "871398c2-2f68-47de-bc97-00308cae6bf0",
+                    "revision": 18,
+                    "expiresAt": "2026-08-10T23:11:37.285Z"
+                  },
+                  {
+                    "grantId": "a3f76ae2-67a9-43fc-b13c-50150ff7dd16",
+                    "revision": 29,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "e6d22240-4440-4c67-b03c-82080f92ef50",
+                    "revision": 31,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 24,
+                "tokenBudget": 48000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:38.681Z",
+              "interactive": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000,
+                "grants": [
+                  {
+                    "grantId": "523c72b1-8401-4286-afa8-343a24f508bb",
+                    "revision": 23,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "547d0b70-62bb-4f80-ac63-50d042f04160",
+                    "revision": 25,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "d4a64b14-f88c-4607-aa44-9cdfffc0996f",
+                    "revision": 27,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "a3f76ae2-67a9-43fc-b13c-50150ff7dd16",
+                    "revision": 29,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "e6d22240-4440-4c67-b03c-82080f92ef50",
+                    "revision": 31,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:39.186Z",
+              "interactive": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000,
+                "grants": [
+                  {
+                    "grantId": "523c72b1-8401-4286-afa8-343a24f508bb",
+                    "revision": 23,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "547d0b70-62bb-4f80-ac63-50d042f04160",
+                    "revision": 25,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "d4a64b14-f88c-4607-aa44-9cdfffc0996f",
+                    "revision": 27,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "a3f76ae2-67a9-43fc-b13c-50150ff7dd16",
+                    "revision": 29,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "e6d22240-4440-4c67-b03c-82080f92ef50",
+                    "revision": 31,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:39.690Z",
+              "interactive": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000,
+                "grants": [
+                  {
+                    "grantId": "523c72b1-8401-4286-afa8-343a24f508bb",
+                    "revision": 23,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "547d0b70-62bb-4f80-ac63-50d042f04160",
+                    "revision": 25,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "d4a64b14-f88c-4607-aa44-9cdfffc0996f",
+                    "revision": 27,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "a3f76ae2-67a9-43fc-b13c-50150ff7dd16",
+                    "revision": 29,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "e6d22240-4440-4c67-b03c-82080f92ef50",
+                    "revision": 31,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:40.196Z",
+              "interactive": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000,
+                "grants": [
+                  {
+                    "grantId": "523c72b1-8401-4286-afa8-343a24f508bb",
+                    "revision": 23,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "547d0b70-62bb-4f80-ac63-50d042f04160",
+                    "revision": 25,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "d4a64b14-f88c-4607-aa44-9cdfffc0996f",
+                    "revision": 27,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "a3f76ae2-67a9-43fc-b13c-50150ff7dd16",
+                    "revision": 29,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "e6d22240-4440-4c67-b03c-82080f92ef50",
+                    "revision": 31,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:40.700Z",
+              "interactive": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000,
+                "grants": [
+                  {
+                    "grantId": "523c72b1-8401-4286-afa8-343a24f508bb",
+                    "revision": 23,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "547d0b70-62bb-4f80-ac63-50d042f04160",
+                    "revision": 25,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "d4a64b14-f88c-4607-aa44-9cdfffc0996f",
+                    "revision": 27,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "a3f76ae2-67a9-43fc-b13c-50150ff7dd16",
+                    "revision": 29,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "e6d22240-4440-4c67-b03c-82080f92ef50",
+                    "revision": 31,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:41.205Z",
+              "interactive": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000,
+                "grants": [
+                  {
+                    "grantId": "523c72b1-8401-4286-afa8-343a24f508bb",
+                    "revision": 23,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "547d0b70-62bb-4f80-ac63-50d042f04160",
+                    "revision": 25,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "d4a64b14-f88c-4607-aa44-9cdfffc0996f",
+                    "revision": 27,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "a3f76ae2-67a9-43fc-b13c-50150ff7dd16",
+                    "revision": 29,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "e6d22240-4440-4c67-b03c-82080f92ef50",
+                    "revision": 31,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:41.712Z",
+              "interactive": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000,
+                "grants": [
+                  {
+                    "grantId": "523c72b1-8401-4286-afa8-343a24f508bb",
+                    "revision": 23,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "547d0b70-62bb-4f80-ac63-50d042f04160",
+                    "revision": 25,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "d4a64b14-f88c-4607-aa44-9cdfffc0996f",
+                    "revision": 27,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "a3f76ae2-67a9-43fc-b13c-50150ff7dd16",
+                    "revision": 29,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "e6d22240-4440-4c67-b03c-82080f92ef50",
+                    "revision": 31,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:42.217Z",
+              "interactive": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000,
+                "grants": [
+                  {
+                    "grantId": "523c72b1-8401-4286-afa8-343a24f508bb",
+                    "revision": 23,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "547d0b70-62bb-4f80-ac63-50d042f04160",
+                    "revision": 25,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "d4a64b14-f88c-4607-aa44-9cdfffc0996f",
+                    "revision": 27,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "a3f76ae2-67a9-43fc-b13c-50150ff7dd16",
+                    "revision": 29,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "e6d22240-4440-4c67-b03c-82080f92ef50",
+                    "revision": 31,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:42.721Z",
+              "interactive": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000,
+                "grants": [
+                  {
+                    "grantId": "523c72b1-8401-4286-afa8-343a24f508bb",
+                    "revision": 23,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "547d0b70-62bb-4f80-ac63-50d042f04160",
+                    "revision": 25,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "d4a64b14-f88c-4607-aa44-9cdfffc0996f",
+                    "revision": 27,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "a3f76ae2-67a9-43fc-b13c-50150ff7dd16",
+                    "revision": 29,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "e6d22240-4440-4c67-b03c-82080f92ef50",
+                    "revision": 31,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:43.226Z",
+              "interactive": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000,
+                "grants": [
+                  {
+                    "grantId": "523c72b1-8401-4286-afa8-343a24f508bb",
+                    "revision": 23,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "547d0b70-62bb-4f80-ac63-50d042f04160",
+                    "revision": 25,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "d4a64b14-f88c-4607-aa44-9cdfffc0996f",
+                    "revision": 27,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "a3f76ae2-67a9-43fc-b13c-50150ff7dd16",
+                    "revision": 29,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "e6d22240-4440-4c67-b03c-82080f92ef50",
+                    "revision": 31,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:43.731Z",
+              "interactive": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000,
+                "grants": [
+                  {
+                    "grantId": "523c72b1-8401-4286-afa8-343a24f508bb",
+                    "revision": 23,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "547d0b70-62bb-4f80-ac63-50d042f04160",
+                    "revision": 25,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "d4a64b14-f88c-4607-aa44-9cdfffc0996f",
+                    "revision": 27,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "a3f76ae2-67a9-43fc-b13c-50150ff7dd16",
+                    "revision": 29,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "e6d22240-4440-4c67-b03c-82080f92ef50",
+                    "revision": 31,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:44.239Z",
+              "interactive": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000,
+                "grants": [
+                  {
+                    "grantId": "523c72b1-8401-4286-afa8-343a24f508bb",
+                    "revision": 23,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "547d0b70-62bb-4f80-ac63-50d042f04160",
+                    "revision": 25,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "d4a64b14-f88c-4607-aa44-9cdfffc0996f",
+                    "revision": 27,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "a3f76ae2-67a9-43fc-b13c-50150ff7dd16",
+                    "revision": 29,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "e6d22240-4440-4c67-b03c-82080f92ef50",
+                    "revision": 31,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:44.743Z",
+              "interactive": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000,
+                "grants": [
+                  {
+                    "grantId": "523c72b1-8401-4286-afa8-343a24f508bb",
+                    "revision": 23,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "547d0b70-62bb-4f80-ac63-50d042f04160",
+                    "revision": 25,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "d4a64b14-f88c-4607-aa44-9cdfffc0996f",
+                    "revision": 27,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "a3f76ae2-67a9-43fc-b13c-50150ff7dd16",
+                    "revision": 29,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "e6d22240-4440-4c67-b03c-82080f92ef50",
+                    "revision": 31,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:45.247Z",
+              "interactive": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000,
+                "grants": [
+                  {
+                    "grantId": "523c72b1-8401-4286-afa8-343a24f508bb",
+                    "revision": 23,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "547d0b70-62bb-4f80-ac63-50d042f04160",
+                    "revision": 25,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "d4a64b14-f88c-4607-aa44-9cdfffc0996f",
+                    "revision": 27,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "a3f76ae2-67a9-43fc-b13c-50150ff7dd16",
+                    "revision": 29,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "e6d22240-4440-4c67-b03c-82080f92ef50",
+                    "revision": 31,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:45.751Z",
+              "interactive": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000,
+                "grants": [
+                  {
+                    "grantId": "523c72b1-8401-4286-afa8-343a24f508bb",
+                    "revision": 23,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "547d0b70-62bb-4f80-ac63-50d042f04160",
+                    "revision": 25,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "d4a64b14-f88c-4607-aa44-9cdfffc0996f",
+                    "revision": 27,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "a3f76ae2-67a9-43fc-b13c-50150ff7dd16",
+                    "revision": 29,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "e6d22240-4440-4c67-b03c-82080f92ef50",
+                    "revision": 31,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:46.255Z",
+              "interactive": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000,
+                "grants": [
+                  {
+                    "grantId": "523c72b1-8401-4286-afa8-343a24f508bb",
+                    "revision": 23,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "547d0b70-62bb-4f80-ac63-50d042f04160",
+                    "revision": 25,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "d4a64b14-f88c-4607-aa44-9cdfffc0996f",
+                    "revision": 27,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "a3f76ae2-67a9-43fc-b13c-50150ff7dd16",
+                    "revision": 29,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "e6d22240-4440-4c67-b03c-82080f92ef50",
+                    "revision": 31,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:46.759Z",
+              "interactive": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000,
+                "grants": [
+                  {
+                    "grantId": "523c72b1-8401-4286-afa8-343a24f508bb",
+                    "revision": 23,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "547d0b70-62bb-4f80-ac63-50d042f04160",
+                    "revision": 25,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "d4a64b14-f88c-4607-aa44-9cdfffc0996f",
+                    "revision": 27,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "a3f76ae2-67a9-43fc-b13c-50150ff7dd16",
+                    "revision": 29,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "e6d22240-4440-4c67-b03c-82080f92ef50",
+                    "revision": 31,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:47.263Z",
+              "interactive": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000,
+                "grants": [
+                  {
+                    "grantId": "523c72b1-8401-4286-afa8-343a24f508bb",
+                    "revision": 23,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "547d0b70-62bb-4f80-ac63-50d042f04160",
+                    "revision": 25,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "d4a64b14-f88c-4607-aa44-9cdfffc0996f",
+                    "revision": 27,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "a3f76ae2-67a9-43fc-b13c-50150ff7dd16",
+                    "revision": 29,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "e6d22240-4440-4c67-b03c-82080f92ef50",
+                    "revision": 31,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:47.768Z",
+              "interactive": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000,
+                "grants": [
+                  {
+                    "grantId": "523c72b1-8401-4286-afa8-343a24f508bb",
+                    "revision": 23,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "547d0b70-62bb-4f80-ac63-50d042f04160",
+                    "revision": 25,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "d4a64b14-f88c-4607-aa44-9cdfffc0996f",
+                    "revision": 27,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "a3f76ae2-67a9-43fc-b13c-50150ff7dd16",
+                    "revision": 29,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "e6d22240-4440-4c67-b03c-82080f92ef50",
+                    "revision": 31,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:48.271Z",
+              "interactive": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000,
+                "grants": [
+                  {
+                    "grantId": "523c72b1-8401-4286-afa8-343a24f508bb",
+                    "revision": 23,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "547d0b70-62bb-4f80-ac63-50d042f04160",
+                    "revision": 25,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "d4a64b14-f88c-4607-aa44-9cdfffc0996f",
+                    "revision": 27,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "a3f76ae2-67a9-43fc-b13c-50150ff7dd16",
+                    "revision": 29,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "e6d22240-4440-4c67-b03c-82080f92ef50",
+                    "revision": 31,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:48.775Z",
+              "interactive": {
+                "maxConcurrent": 16,
+                "tokenBudget": 32000,
+                "grants": [
+                  {
+                    "grantId": "523c72b1-8401-4286-afa8-343a24f508bb",
+                    "revision": 24,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  },
+                  {
+                    "grantId": "1012b7af-6506-412f-ab1a-774a461b0810",
+                    "revision": 35,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  },
+                  {
+                    "grantId": "75d4b433-d7e7-4e59-a938-ca69626246f1",
+                    "revision": 37,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  },
+                  {
+                    "grantId": "a3f76ae2-67a9-43fc-b13c-50150ff7dd16",
+                    "revision": 30,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "e6d22240-4440-4c67-b03c-82080f92ef50",
+                    "revision": 32,
+                    "expiresAt": "2026-08-10T23:11:48.345Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 16,
+                "tokenBudget": 32000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:49.280Z",
+              "interactive": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000,
+                "grants": [
+                  {
+                    "grantId": "cc60ef19-7606-404a-8243-efb82faf2f5d",
+                    "revision": 33,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  },
+                  {
+                    "grantId": "1012b7af-6506-412f-ab1a-774a461b0810",
+                    "revision": 35,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  },
+                  {
+                    "grantId": "75d4b433-d7e7-4e59-a938-ca69626246f1",
+                    "revision": 37,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  },
+                  {
+                    "grantId": "1b03fc31-9953-444c-b2b7-e65bb83bfdb1",
+                    "revision": 39,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "4b2e61c8-7358-451b-879f-5f931b2da8c8",
+                    "revision": 41,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:49.784Z",
+              "interactive": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000,
+                "grants": [
+                  {
+                    "grantId": "cc60ef19-7606-404a-8243-efb82faf2f5d",
+                    "revision": 33,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  },
+                  {
+                    "grantId": "1012b7af-6506-412f-ab1a-774a461b0810",
+                    "revision": 35,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  },
+                  {
+                    "grantId": "75d4b433-d7e7-4e59-a938-ca69626246f1",
+                    "revision": 37,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  },
+                  {
+                    "grantId": "1b03fc31-9953-444c-b2b7-e65bb83bfdb1",
+                    "revision": 39,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "4b2e61c8-7358-451b-879f-5f931b2da8c8",
+                    "revision": 41,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:50.287Z",
+              "interactive": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000,
+                "grants": [
+                  {
+                    "grantId": "cc60ef19-7606-404a-8243-efb82faf2f5d",
+                    "revision": 33,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  },
+                  {
+                    "grantId": "1012b7af-6506-412f-ab1a-774a461b0810",
+                    "revision": 35,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  },
+                  {
+                    "grantId": "75d4b433-d7e7-4e59-a938-ca69626246f1",
+                    "revision": 37,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  },
+                  {
+                    "grantId": "1b03fc31-9953-444c-b2b7-e65bb83bfdb1",
+                    "revision": 39,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "4b2e61c8-7358-451b-879f-5f931b2da8c8",
+                    "revision": 41,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:50.791Z",
+              "interactive": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000,
+                "grants": [
+                  {
+                    "grantId": "cc60ef19-7606-404a-8243-efb82faf2f5d",
+                    "revision": 33,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  },
+                  {
+                    "grantId": "1012b7af-6506-412f-ab1a-774a461b0810",
+                    "revision": 35,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  },
+                  {
+                    "grantId": "75d4b433-d7e7-4e59-a938-ca69626246f1",
+                    "revision": 37,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  },
+                  {
+                    "grantId": "1b03fc31-9953-444c-b2b7-e65bb83bfdb1",
+                    "revision": 39,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "4b2e61c8-7358-451b-879f-5f931b2da8c8",
+                    "revision": 41,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:51.295Z",
+              "interactive": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000,
+                "grants": [
+                  {
+                    "grantId": "cc60ef19-7606-404a-8243-efb82faf2f5d",
+                    "revision": 33,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  },
+                  {
+                    "grantId": "1012b7af-6506-412f-ab1a-774a461b0810",
+                    "revision": 35,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  },
+                  {
+                    "grantId": "75d4b433-d7e7-4e59-a938-ca69626246f1",
+                    "revision": 37,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  },
+                  {
+                    "grantId": "1b03fc31-9953-444c-b2b7-e65bb83bfdb1",
+                    "revision": 39,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "4b2e61c8-7358-451b-879f-5f931b2da8c8",
+                    "revision": 41,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:51.800Z",
+              "interactive": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000,
+                "grants": [
+                  {
+                    "grantId": "cc60ef19-7606-404a-8243-efb82faf2f5d",
+                    "revision": 33,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  },
+                  {
+                    "grantId": "1012b7af-6506-412f-ab1a-774a461b0810",
+                    "revision": 35,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  },
+                  {
+                    "grantId": "75d4b433-d7e7-4e59-a938-ca69626246f1",
+                    "revision": 37,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  },
+                  {
+                    "grantId": "1b03fc31-9953-444c-b2b7-e65bb83bfdb1",
+                    "revision": 39,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "4b2e61c8-7358-451b-879f-5f931b2da8c8",
+                    "revision": 41,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:52.303Z",
+              "interactive": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000,
+                "grants": [
+                  {
+                    "grantId": "cc60ef19-7606-404a-8243-efb82faf2f5d",
+                    "revision": 33,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  },
+                  {
+                    "grantId": "1012b7af-6506-412f-ab1a-774a461b0810",
+                    "revision": 35,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  },
+                  {
+                    "grantId": "75d4b433-d7e7-4e59-a938-ca69626246f1",
+                    "revision": 37,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  },
+                  {
+                    "grantId": "1b03fc31-9953-444c-b2b7-e65bb83bfdb1",
+                    "revision": 39,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "4b2e61c8-7358-451b-879f-5f931b2da8c8",
+                    "revision": 41,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:52.807Z",
+              "interactive": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000,
+                "grants": [
+                  {
+                    "grantId": "cc60ef19-7606-404a-8243-efb82faf2f5d",
+                    "revision": 33,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  },
+                  {
+                    "grantId": "1012b7af-6506-412f-ab1a-774a461b0810",
+                    "revision": 35,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  },
+                  {
+                    "grantId": "75d4b433-d7e7-4e59-a938-ca69626246f1",
+                    "revision": 37,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  },
+                  {
+                    "grantId": "1b03fc31-9953-444c-b2b7-e65bb83bfdb1",
+                    "revision": 39,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "4b2e61c8-7358-451b-879f-5f931b2da8c8",
+                    "revision": 41,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:53.312Z",
+              "interactive": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000,
+                "grants": [
+                  {
+                    "grantId": "cc60ef19-7606-404a-8243-efb82faf2f5d",
+                    "revision": 33,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  },
+                  {
+                    "grantId": "1012b7af-6506-412f-ab1a-774a461b0810",
+                    "revision": 35,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  },
+                  {
+                    "grantId": "75d4b433-d7e7-4e59-a938-ca69626246f1",
+                    "revision": 37,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  },
+                  {
+                    "grantId": "1b03fc31-9953-444c-b2b7-e65bb83bfdb1",
+                    "revision": 39,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "4b2e61c8-7358-451b-879f-5f931b2da8c8",
+                    "revision": 41,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:53.816Z",
+              "interactive": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000,
+                "grants": [
+                  {
+                    "grantId": "cc60ef19-7606-404a-8243-efb82faf2f5d",
+                    "revision": 33,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  },
+                  {
+                    "grantId": "1012b7af-6506-412f-ab1a-774a461b0810",
+                    "revision": 35,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  },
+                  {
+                    "grantId": "75d4b433-d7e7-4e59-a938-ca69626246f1",
+                    "revision": 37,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  },
+                  {
+                    "grantId": "1b03fc31-9953-444c-b2b7-e65bb83bfdb1",
+                    "revision": 39,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "4b2e61c8-7358-451b-879f-5f931b2da8c8",
+                    "revision": 41,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:54.321Z",
+              "interactive": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000,
+                "grants": [
+                  {
+                    "grantId": "cc60ef19-7606-404a-8243-efb82faf2f5d",
+                    "revision": 33,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  },
+                  {
+                    "grantId": "1012b7af-6506-412f-ab1a-774a461b0810",
+                    "revision": 35,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  },
+                  {
+                    "grantId": "75d4b433-d7e7-4e59-a938-ca69626246f1",
+                    "revision": 37,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  },
+                  {
+                    "grantId": "1b03fc31-9953-444c-b2b7-e65bb83bfdb1",
+                    "revision": 39,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "4b2e61c8-7358-451b-879f-5f931b2da8c8",
+                    "revision": 41,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:54.825Z",
+              "interactive": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000,
+                "grants": [
+                  {
+                    "grantId": "cc60ef19-7606-404a-8243-efb82faf2f5d",
+                    "revision": 33,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  },
+                  {
+                    "grantId": "1012b7af-6506-412f-ab1a-774a461b0810",
+                    "revision": 35,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  },
+                  {
+                    "grantId": "75d4b433-d7e7-4e59-a938-ca69626246f1",
+                    "revision": 37,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  },
+                  {
+                    "grantId": "1b03fc31-9953-444c-b2b7-e65bb83bfdb1",
+                    "revision": 39,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "4b2e61c8-7358-451b-879f-5f931b2da8c8",
+                    "revision": 41,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:55.329Z",
+              "interactive": {
+                "maxConcurrent": 31,
+                "tokenBudget": 54000,
+                "grants": [
+                  {
+                    "grantId": "cc60ef19-7606-404a-8243-efb82faf2f5d",
+                    "revision": 33,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  },
+                  {
+                    "grantId": "1012b7af-6506-412f-ab1a-774a461b0810",
+                    "revision": 35,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  },
+                  {
+                    "grantId": "75d4b433-d7e7-4e59-a938-ca69626246f1",
+                    "revision": 37,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  },
+                  {
+                    "grantId": "36a95443-9836-434d-9963-a8f3a7bd0875",
+                    "revision": 49,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "4b2e61c8-7358-451b-879f-5f931b2da8c8",
+                    "revision": 41,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 31,
+                "tokenBudget": 54000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:55.833Z",
+              "interactive": {
+                "maxConcurrent": 29,
+                "tokenBudget": 34000,
+                "grants": [
+                  {
+                    "grantId": "1264a9ab-0f20-4b0d-9938-4ff400e10b15",
+                    "revision": 43,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "680961bc-9be6-4bb0-9180-54112ab2f52c",
+                    "revision": 45,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "75d4b433-d7e7-4e59-a938-ca69626246f1",
+                    "revision": 37,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  },
+                  {
+                    "grantId": "36a95443-9836-434d-9963-a8f3a7bd0875",
+                    "revision": 49,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "4b2e61c8-7358-451b-879f-5f931b2da8c8",
+                    "revision": 41,
+                    "expiresAt": "2026-08-10T23:11:59.360Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 29,
+                "tokenBudget": 34000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:56.339Z",
+              "interactive": {
+                "maxConcurrent": 28,
+                "tokenBudget": 24000,
+                "grants": [
+                  {
+                    "grantId": "1264a9ab-0f20-4b0d-9938-4ff400e10b15",
+                    "revision": 43,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "680961bc-9be6-4bb0-9180-54112ab2f52c",
+                    "revision": 45,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "b9cf80d9-39aa-45c7-831c-c575f7b18ef6",
+                    "revision": 47,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "36a95443-9836-434d-9963-a8f3a7bd0875",
+                    "revision": 49,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 4,
+                "tokenBudget": 40000,
+                "grants": [
+                  {
+                    "grantId": "4890c8d2-d41c-45dc-af1b-7ab942283cb5",
+                    "revision": 51,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:56.843Z",
+              "interactive": {
+                "maxConcurrent": 28,
+                "tokenBudget": 24000,
+                "grants": [
+                  {
+                    "grantId": "1264a9ab-0f20-4b0d-9938-4ff400e10b15",
+                    "revision": 43,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "680961bc-9be6-4bb0-9180-54112ab2f52c",
+                    "revision": 45,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "b9cf80d9-39aa-45c7-831c-c575f7b18ef6",
+                    "revision": 47,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "36a95443-9836-434d-9963-a8f3a7bd0875",
+                    "revision": 49,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 4,
+                "tokenBudget": 40000,
+                "grants": [
+                  {
+                    "grantId": "4890c8d2-d41c-45dc-af1b-7ab942283cb5",
+                    "revision": 51,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:57.348Z",
+              "interactive": {
+                "maxConcurrent": 28,
+                "tokenBudget": 24000,
+                "grants": [
+                  {
+                    "grantId": "1264a9ab-0f20-4b0d-9938-4ff400e10b15",
+                    "revision": 43,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "680961bc-9be6-4bb0-9180-54112ab2f52c",
+                    "revision": 45,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "b9cf80d9-39aa-45c7-831c-c575f7b18ef6",
+                    "revision": 47,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "36a95443-9836-434d-9963-a8f3a7bd0875",
+                    "revision": 49,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 4,
+                "tokenBudget": 40000,
+                "grants": [
+                  {
+                    "grantId": "4890c8d2-d41c-45dc-af1b-7ab942283cb5",
+                    "revision": 51,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:57.852Z",
+              "interactive": {
+                "maxConcurrent": 28,
+                "tokenBudget": 24000,
+                "grants": [
+                  {
+                    "grantId": "1264a9ab-0f20-4b0d-9938-4ff400e10b15",
+                    "revision": 43,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "680961bc-9be6-4bb0-9180-54112ab2f52c",
+                    "revision": 45,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "b9cf80d9-39aa-45c7-831c-c575f7b18ef6",
+                    "revision": 47,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "36a95443-9836-434d-9963-a8f3a7bd0875",
+                    "revision": 49,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 4,
+                "tokenBudget": 40000,
+                "grants": [
+                  {
+                    "grantId": "4890c8d2-d41c-45dc-af1b-7ab942283cb5",
+                    "revision": 51,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:58.356Z",
+              "interactive": {
+                "maxConcurrent": 28,
+                "tokenBudget": 24000,
+                "grants": [
+                  {
+                    "grantId": "1264a9ab-0f20-4b0d-9938-4ff400e10b15",
+                    "revision": 43,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "680961bc-9be6-4bb0-9180-54112ab2f52c",
+                    "revision": 45,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "b9cf80d9-39aa-45c7-831c-c575f7b18ef6",
+                    "revision": 47,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "36a95443-9836-434d-9963-a8f3a7bd0875",
+                    "revision": 49,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 4,
+                "tokenBudget": 40000,
+                "grants": [
+                  {
+                    "grantId": "4890c8d2-d41c-45dc-af1b-7ab942283cb5",
+                    "revision": 51,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:58.860Z",
+              "interactive": {
+                "maxConcurrent": 28,
+                "tokenBudget": 24000,
+                "grants": [
+                  {
+                    "grantId": "1264a9ab-0f20-4b0d-9938-4ff400e10b15",
+                    "revision": 43,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "680961bc-9be6-4bb0-9180-54112ab2f52c",
+                    "revision": 45,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "b9cf80d9-39aa-45c7-831c-c575f7b18ef6",
+                    "revision": 47,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "36a95443-9836-434d-9963-a8f3a7bd0875",
+                    "revision": 49,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 4,
+                "tokenBudget": 40000,
+                "grants": [
+                  {
+                    "grantId": "4890c8d2-d41c-45dc-af1b-7ab942283cb5",
+                    "revision": 51,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:59.364Z",
+              "interactive": {
+                "maxConcurrent": 28,
+                "tokenBudget": 24000,
+                "grants": [
+                  {
+                    "grantId": "1264a9ab-0f20-4b0d-9938-4ff400e10b15",
+                    "revision": 43,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "680961bc-9be6-4bb0-9180-54112ab2f52c",
+                    "revision": 45,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "b9cf80d9-39aa-45c7-831c-c575f7b18ef6",
+                    "revision": 47,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "36a95443-9836-434d-9963-a8f3a7bd0875",
+                    "revision": 49,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 4,
+                "tokenBudget": 40000,
+                "grants": [
+                  {
+                    "grantId": "4890c8d2-d41c-45dc-af1b-7ab942283cb5",
+                    "revision": 51,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:11:59.869Z",
+              "interactive": {
+                "maxConcurrent": 28,
+                "tokenBudget": 24000,
+                "grants": [
+                  {
+                    "grantId": "1264a9ab-0f20-4b0d-9938-4ff400e10b15",
+                    "revision": 43,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "680961bc-9be6-4bb0-9180-54112ab2f52c",
+                    "revision": 45,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "b9cf80d9-39aa-45c7-831c-c575f7b18ef6",
+                    "revision": 47,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "36a95443-9836-434d-9963-a8f3a7bd0875",
+                    "revision": 49,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 4,
+                "tokenBudget": 40000,
+                "grants": [
+                  {
+                    "grantId": "4890c8d2-d41c-45dc-af1b-7ab942283cb5",
+                    "revision": 51,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:12:00.374Z",
+              "interactive": {
+                "maxConcurrent": 28,
+                "tokenBudget": 24000,
+                "grants": [
+                  {
+                    "grantId": "1264a9ab-0f20-4b0d-9938-4ff400e10b15",
+                    "revision": 43,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "680961bc-9be6-4bb0-9180-54112ab2f52c",
+                    "revision": 45,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "b9cf80d9-39aa-45c7-831c-c575f7b18ef6",
+                    "revision": 47,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "36a95443-9836-434d-9963-a8f3a7bd0875",
+                    "revision": 49,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 4,
+                "tokenBudget": 40000,
+                "grants": [
+                  {
+                    "grantId": "4890c8d2-d41c-45dc-af1b-7ab942283cb5",
+                    "revision": 51,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:12:00.878Z",
+              "interactive": {
+                "maxConcurrent": 28,
+                "tokenBudget": 24000,
+                "grants": [
+                  {
+                    "grantId": "1264a9ab-0f20-4b0d-9938-4ff400e10b15",
+                    "revision": 43,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "680961bc-9be6-4bb0-9180-54112ab2f52c",
+                    "revision": 45,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "b9cf80d9-39aa-45c7-831c-c575f7b18ef6",
+                    "revision": 47,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "36a95443-9836-434d-9963-a8f3a7bd0875",
+                    "revision": 49,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 4,
+                "tokenBudget": 40000,
+                "grants": [
+                  {
+                    "grantId": "4890c8d2-d41c-45dc-af1b-7ab942283cb5",
+                    "revision": 51,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:12:01.382Z",
+              "interactive": {
+                "maxConcurrent": 28,
+                "tokenBudget": 24000,
+                "grants": [
+                  {
+                    "grantId": "1264a9ab-0f20-4b0d-9938-4ff400e10b15",
+                    "revision": 43,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "680961bc-9be6-4bb0-9180-54112ab2f52c",
+                    "revision": 45,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "b9cf80d9-39aa-45c7-831c-c575f7b18ef6",
+                    "revision": 47,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "36a95443-9836-434d-9963-a8f3a7bd0875",
+                    "revision": 49,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 4,
+                "tokenBudget": 40000,
+                "grants": [
+                  {
+                    "grantId": "4890c8d2-d41c-45dc-af1b-7ab942283cb5",
+                    "revision": 51,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:12:01.889Z",
+              "interactive": {
+                "maxConcurrent": 28,
+                "tokenBudget": 24000,
+                "grants": [
+                  {
+                    "grantId": "1264a9ab-0f20-4b0d-9938-4ff400e10b15",
+                    "revision": 43,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "680961bc-9be6-4bb0-9180-54112ab2f52c",
+                    "revision": 45,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "b9cf80d9-39aa-45c7-831c-c575f7b18ef6",
+                    "revision": 47,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "36a95443-9836-434d-9963-a8f3a7bd0875",
+                    "revision": 49,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 4,
+                "tokenBudget": 40000,
+                "grants": [
+                  {
+                    "grantId": "4890c8d2-d41c-45dc-af1b-7ab942283cb5",
+                    "revision": 51,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:12:02.393Z",
+              "interactive": {
+                "maxConcurrent": 28,
+                "tokenBudget": 24000,
+                "grants": [
+                  {
+                    "grantId": "1264a9ab-0f20-4b0d-9938-4ff400e10b15",
+                    "revision": 43,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "680961bc-9be6-4bb0-9180-54112ab2f52c",
+                    "revision": 45,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "b9cf80d9-39aa-45c7-831c-c575f7b18ef6",
+                    "revision": 47,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "36a95443-9836-434d-9963-a8f3a7bd0875",
+                    "revision": 49,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 4,
+                "tokenBudget": 40000,
+                "grants": [
+                  {
+                    "grantId": "4890c8d2-d41c-45dc-af1b-7ab942283cb5",
+                    "revision": 51,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:12:02.896Z",
+              "interactive": {
+                "maxConcurrent": 28,
+                "tokenBudget": 24000,
+                "grants": [
+                  {
+                    "grantId": "1264a9ab-0f20-4b0d-9938-4ff400e10b15",
+                    "revision": 43,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "680961bc-9be6-4bb0-9180-54112ab2f52c",
+                    "revision": 45,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "b9cf80d9-39aa-45c7-831c-c575f7b18ef6",
+                    "revision": 47,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "36a95443-9836-434d-9963-a8f3a7bd0875",
+                    "revision": 49,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 4,
+                "tokenBudget": 40000,
+                "grants": [
+                  {
+                    "grantId": "4890c8d2-d41c-45dc-af1b-7ab942283cb5",
+                    "revision": 51,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:12:03.400Z",
+              "interactive": {
+                "maxConcurrent": 28,
+                "tokenBudget": 24000,
+                "grants": [
+                  {
+                    "grantId": "1264a9ab-0f20-4b0d-9938-4ff400e10b15",
+                    "revision": 43,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "680961bc-9be6-4bb0-9180-54112ab2f52c",
+                    "revision": 45,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "b9cf80d9-39aa-45c7-831c-c575f7b18ef6",
+                    "revision": 47,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "36a95443-9836-434d-9963-a8f3a7bd0875",
+                    "revision": 49,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 4,
+                "tokenBudget": 40000,
+                "grants": [
+                  {
+                    "grantId": "4890c8d2-d41c-45dc-af1b-7ab942283cb5",
+                    "revision": 51,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:12:03.905Z",
+              "interactive": {
+                "maxConcurrent": 28,
+                "tokenBudget": 24000,
+                "grants": [
+                  {
+                    "grantId": "1264a9ab-0f20-4b0d-9938-4ff400e10b15",
+                    "revision": 43,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "680961bc-9be6-4bb0-9180-54112ab2f52c",
+                    "revision": 45,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "b9cf80d9-39aa-45c7-831c-c575f7b18ef6",
+                    "revision": 47,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "36a95443-9836-434d-9963-a8f3a7bd0875",
+                    "revision": 49,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 4,
+                "tokenBudget": 40000,
+                "grants": [
+                  {
+                    "grantId": "4890c8d2-d41c-45dc-af1b-7ab942283cb5",
+                    "revision": 51,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:12:04.408Z",
+              "interactive": {
+                "maxConcurrent": 28,
+                "tokenBudget": 24000,
+                "grants": [
+                  {
+                    "grantId": "1264a9ab-0f20-4b0d-9938-4ff400e10b15",
+                    "revision": 43,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "680961bc-9be6-4bb0-9180-54112ab2f52c",
+                    "revision": 45,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "b9cf80d9-39aa-45c7-831c-c575f7b18ef6",
+                    "revision": 47,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "36a95443-9836-434d-9963-a8f3a7bd0875",
+                    "revision": 49,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 4,
+                "tokenBudget": 40000,
+                "grants": [
+                  {
+                    "grantId": "4890c8d2-d41c-45dc-af1b-7ab942283cb5",
+                    "revision": 51,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:12:04.912Z",
+              "interactive": {
+                "maxConcurrent": 28,
+                "tokenBudget": 24000,
+                "grants": [
+                  {
+                    "grantId": "1264a9ab-0f20-4b0d-9938-4ff400e10b15",
+                    "revision": 43,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "680961bc-9be6-4bb0-9180-54112ab2f52c",
+                    "revision": 45,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "b9cf80d9-39aa-45c7-831c-c575f7b18ef6",
+                    "revision": 47,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "36a95443-9836-434d-9963-a8f3a7bd0875",
+                    "revision": 49,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 4,
+                "tokenBudget": 40000,
+                "grants": [
+                  {
+                    "grantId": "4890c8d2-d41c-45dc-af1b-7ab942283cb5",
+                    "revision": 51,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:12:05.416Z",
+              "interactive": {
+                "maxConcurrent": 28,
+                "tokenBudget": 24000,
+                "grants": [
+                  {
+                    "grantId": "1264a9ab-0f20-4b0d-9938-4ff400e10b15",
+                    "revision": 43,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "680961bc-9be6-4bb0-9180-54112ab2f52c",
+                    "revision": 45,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "b9cf80d9-39aa-45c7-831c-c575f7b18ef6",
+                    "revision": 47,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "36a95443-9836-434d-9963-a8f3a7bd0875",
+                    "revision": 49,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 4,
+                "tokenBudget": 40000,
+                "grants": [
+                  {
+                    "grantId": "4890c8d2-d41c-45dc-af1b-7ab942283cb5",
+                    "revision": 51,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:12:05.920Z",
+              "interactive": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "1264a9ab-0f20-4b0d-9938-4ff400e10b15",
+                    "revision": 44,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "680961bc-9be6-4bb0-9180-54112ab2f52c",
+                    "revision": 46,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "b9cf80d9-39aa-45c7-831c-c575f7b18ef6",
+                    "revision": 48,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "36a95443-9836-434d-9963-a8f3a7bd0875",
+                    "revision": 50,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "4890c8d2-d41c-45dc-af1b-7ab942283cb5",
+                    "revision": 52,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:12:06.424Z",
+              "interactive": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "1264a9ab-0f20-4b0d-9938-4ff400e10b15",
+                    "revision": 44,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "680961bc-9be6-4bb0-9180-54112ab2f52c",
+                    "revision": 46,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "b9cf80d9-39aa-45c7-831c-c575f7b18ef6",
+                    "revision": 48,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "36a95443-9836-434d-9963-a8f3a7bd0875",
+                    "revision": 50,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0,
+                "grants": [
+                  {
+                    "grantId": "4890c8d2-d41c-45dc-af1b-7ab942283cb5",
+                    "revision": 52,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 0,
+                "tokenBudget": 0
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:12:06.929Z",
+              "interactive": {
+                "maxConcurrent": 21,
+                "tokenBudget": 18000,
+                "grants": [
+                  {
+                    "grantId": "1264a9ab-0f20-4b0d-9938-4ff400e10b15",
+                    "revision": 44,
+                    "expiresAt": "2026-08-10T23:12:05.761Z"
+                  },
+                  {
+                    "grantId": "b1309dd8-4b07-4922-ac7a-1bdd7986323c",
+                    "revision": 55,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "f2411ba8-17f7-445b-8d0a-e76452d73fb0",
+                    "revision": 57,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "ed3ef2ec-b67e-42e5-8d23-14625b1091cc",
+                    "revision": 59,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 4,
+                "tokenBudget": 40000,
+                "grants": [
+                  {
+                    "grantId": "5055d296-849a-4860-b859-319ab9e8b128",
+                    "revision": 61,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 25,
+                "tokenBudget": 58000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:12:07.434Z",
+              "interactive": {
+                "maxConcurrent": 28,
+                "tokenBudget": 24000,
+                "grants": [
+                  {
+                    "grantId": "bb842504-51ac-4a4b-bf2e-66d3ad81b558",
+                    "revision": 53,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "b1309dd8-4b07-4922-ac7a-1bdd7986323c",
+                    "revision": 55,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "f2411ba8-17f7-445b-8d0a-e76452d73fb0",
+                    "revision": 57,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "ed3ef2ec-b67e-42e5-8d23-14625b1091cc",
+                    "revision": 59,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 4,
+                "tokenBudget": 40000,
+                "grants": [
+                  {
+                    "grantId": "5055d296-849a-4860-b859-319ab9e8b128",
+                    "revision": 61,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:12:07.938Z",
+              "interactive": {
+                "maxConcurrent": 28,
+                "tokenBudget": 24000,
+                "grants": [
+                  {
+                    "grantId": "bb842504-51ac-4a4b-bf2e-66d3ad81b558",
+                    "revision": 53,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "b1309dd8-4b07-4922-ac7a-1bdd7986323c",
+                    "revision": 55,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "f2411ba8-17f7-445b-8d0a-e76452d73fb0",
+                    "revision": 57,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "ed3ef2ec-b67e-42e5-8d23-14625b1091cc",
+                    "revision": 59,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 4,
+                "tokenBudget": 40000,
+                "grants": [
+                  {
+                    "grantId": "5055d296-849a-4860-b859-319ab9e8b128",
+                    "revision": 61,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:12:08.443Z",
+              "interactive": {
+                "maxConcurrent": 28,
+                "tokenBudget": 24000,
+                "grants": [
+                  {
+                    "grantId": "bb842504-51ac-4a4b-bf2e-66d3ad81b558",
+                    "revision": 53,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "b1309dd8-4b07-4922-ac7a-1bdd7986323c",
+                    "revision": 55,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "f2411ba8-17f7-445b-8d0a-e76452d73fb0",
+                    "revision": 57,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "ed3ef2ec-b67e-42e5-8d23-14625b1091cc",
+                    "revision": 59,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 4,
+                "tokenBudget": 40000,
+                "grants": [
+                  {
+                    "grantId": "5055d296-849a-4860-b859-319ab9e8b128",
+                    "revision": 61,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:12:08.947Z",
+              "interactive": {
+                "maxConcurrent": 28,
+                "tokenBudget": 24000,
+                "grants": [
+                  {
+                    "grantId": "bb842504-51ac-4a4b-bf2e-66d3ad81b558",
+                    "revision": 53,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "b1309dd8-4b07-4922-ac7a-1bdd7986323c",
+                    "revision": 55,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "f2411ba8-17f7-445b-8d0a-e76452d73fb0",
+                    "revision": 57,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "ed3ef2ec-b67e-42e5-8d23-14625b1091cc",
+                    "revision": 59,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 4,
+                "tokenBudget": 40000,
+                "grants": [
+                  {
+                    "grantId": "5055d296-849a-4860-b859-319ab9e8b128",
+                    "revision": 61,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:12:09.453Z",
+              "interactive": {
+                "maxConcurrent": 28,
+                "tokenBudget": 24000,
+                "grants": [
+                  {
+                    "grantId": "bb842504-51ac-4a4b-bf2e-66d3ad81b558",
+                    "revision": 53,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "b1309dd8-4b07-4922-ac7a-1bdd7986323c",
+                    "revision": 55,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "f2411ba8-17f7-445b-8d0a-e76452d73fb0",
+                    "revision": 57,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "ed3ef2ec-b67e-42e5-8d23-14625b1091cc",
+                    "revision": 59,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 4,
+                "tokenBudget": 40000,
+                "grants": [
+                  {
+                    "grantId": "5055d296-849a-4860-b859-319ab9e8b128",
+                    "revision": 61,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:12:09.957Z",
+              "interactive": {
+                "maxConcurrent": 28,
+                "tokenBudget": 24000,
+                "grants": [
+                  {
+                    "grantId": "bb842504-51ac-4a4b-bf2e-66d3ad81b558",
+                    "revision": 53,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "b1309dd8-4b07-4922-ac7a-1bdd7986323c",
+                    "revision": 55,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "f2411ba8-17f7-445b-8d0a-e76452d73fb0",
+                    "revision": 57,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "ed3ef2ec-b67e-42e5-8d23-14625b1091cc",
+                    "revision": 59,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 4,
+                "tokenBudget": 40000,
+                "grants": [
+                  {
+                    "grantId": "5055d296-849a-4860-b859-319ab9e8b128",
+                    "revision": 61,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:12:10.460Z",
+              "interactive": {
+                "maxConcurrent": 28,
+                "tokenBudget": 24000,
+                "grants": [
+                  {
+                    "grantId": "bb842504-51ac-4a4b-bf2e-66d3ad81b558",
+                    "revision": 53,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "b1309dd8-4b07-4922-ac7a-1bdd7986323c",
+                    "revision": 55,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "f2411ba8-17f7-445b-8d0a-e76452d73fb0",
+                    "revision": 57,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "ed3ef2ec-b67e-42e5-8d23-14625b1091cc",
+                    "revision": 59,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 4,
+                "tokenBudget": 40000,
+                "grants": [
+                  {
+                    "grantId": "5055d296-849a-4860-b859-319ab9e8b128",
+                    "revision": 61,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:12:10.965Z",
+              "interactive": {
+                "maxConcurrent": 28,
+                "tokenBudget": 24000,
+                "grants": [
+                  {
+                    "grantId": "bb842504-51ac-4a4b-bf2e-66d3ad81b558",
+                    "revision": 53,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "b1309dd8-4b07-4922-ac7a-1bdd7986323c",
+                    "revision": 55,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "f2411ba8-17f7-445b-8d0a-e76452d73fb0",
+                    "revision": 57,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "ed3ef2ec-b67e-42e5-8d23-14625b1091cc",
+                    "revision": 59,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 4,
+                "tokenBudget": 40000,
+                "grants": [
+                  {
+                    "grantId": "5055d296-849a-4860-b859-319ab9e8b128",
+                    "revision": 61,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:12:11.470Z",
+              "interactive": {
+                "maxConcurrent": 28,
+                "tokenBudget": 24000,
+                "grants": [
+                  {
+                    "grantId": "bb842504-51ac-4a4b-bf2e-66d3ad81b558",
+                    "revision": 53,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "b1309dd8-4b07-4922-ac7a-1bdd7986323c",
+                    "revision": 55,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "f2411ba8-17f7-445b-8d0a-e76452d73fb0",
+                    "revision": 57,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "ed3ef2ec-b67e-42e5-8d23-14625b1091cc",
+                    "revision": 59,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 4,
+                "tokenBudget": 40000,
+                "grants": [
+                  {
+                    "grantId": "5055d296-849a-4860-b859-319ab9e8b128",
+                    "revision": 61,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:12:11.975Z",
+              "interactive": {
+                "maxConcurrent": 28,
+                "tokenBudget": 24000,
+                "grants": [
+                  {
+                    "grantId": "bb842504-51ac-4a4b-bf2e-66d3ad81b558",
+                    "revision": 53,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "b1309dd8-4b07-4922-ac7a-1bdd7986323c",
+                    "revision": 55,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "f2411ba8-17f7-445b-8d0a-e76452d73fb0",
+                    "revision": 57,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "ed3ef2ec-b67e-42e5-8d23-14625b1091cc",
+                    "revision": 59,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 4,
+                "tokenBudget": 40000,
+                "grants": [
+                  {
+                    "grantId": "5055d296-849a-4860-b859-319ab9e8b128",
+                    "revision": 61,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:12:12.480Z",
+              "interactive": {
+                "maxConcurrent": 28,
+                "tokenBudget": 24000,
+                "grants": [
+                  {
+                    "grantId": "bb842504-51ac-4a4b-bf2e-66d3ad81b558",
+                    "revision": 53,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "b1309dd8-4b07-4922-ac7a-1bdd7986323c",
+                    "revision": 55,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "f2411ba8-17f7-445b-8d0a-e76452d73fb0",
+                    "revision": 57,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "ed3ef2ec-b67e-42e5-8d23-14625b1091cc",
+                    "revision": 59,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 4,
+                "tokenBudget": 40000,
+                "grants": [
+                  {
+                    "grantId": "5055d296-849a-4860-b859-319ab9e8b128",
+                    "revision": 61,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:12:12.985Z",
+              "interactive": {
+                "maxConcurrent": 28,
+                "tokenBudget": 24000,
+                "grants": [
+                  {
+                    "grantId": "bb842504-51ac-4a4b-bf2e-66d3ad81b558",
+                    "revision": 53,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "b1309dd8-4b07-4922-ac7a-1bdd7986323c",
+                    "revision": 55,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "f2411ba8-17f7-445b-8d0a-e76452d73fb0",
+                    "revision": 57,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "ed3ef2ec-b67e-42e5-8d23-14625b1091cc",
+                    "revision": 59,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 4,
+                "tokenBudget": 40000,
+                "grants": [
+                  {
+                    "grantId": "5055d296-849a-4860-b859-319ab9e8b128",
+                    "revision": 61,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:12:13.490Z",
+              "interactive": {
+                "maxConcurrent": 28,
+                "tokenBudget": 24000,
+                "grants": [
+                  {
+                    "grantId": "bb842504-51ac-4a4b-bf2e-66d3ad81b558",
+                    "revision": 53,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "b1309dd8-4b07-4922-ac7a-1bdd7986323c",
+                    "revision": 55,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "f2411ba8-17f7-445b-8d0a-e76452d73fb0",
+                    "revision": 57,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "ed3ef2ec-b67e-42e5-8d23-14625b1091cc",
+                    "revision": 59,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 4,
+                "tokenBudget": 40000,
+                "grants": [
+                  {
+                    "grantId": "5055d296-849a-4860-b859-319ab9e8b128",
+                    "revision": 61,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:12:13.998Z",
+              "interactive": {
+                "maxConcurrent": 28,
+                "tokenBudget": 24000,
+                "grants": [
+                  {
+                    "grantId": "bb842504-51ac-4a4b-bf2e-66d3ad81b558",
+                    "revision": 53,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "b1309dd8-4b07-4922-ac7a-1bdd7986323c",
+                    "revision": 55,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "f2411ba8-17f7-445b-8d0a-e76452d73fb0",
+                    "revision": 57,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "ed3ef2ec-b67e-42e5-8d23-14625b1091cc",
+                    "revision": 59,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 4,
+                "tokenBudget": 40000,
+                "grants": [
+                  {
+                    "grantId": "5055d296-849a-4860-b859-319ab9e8b128",
+                    "revision": 61,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:12:14.503Z",
+              "interactive": {
+                "maxConcurrent": 28,
+                "tokenBudget": 24000,
+                "grants": [
+                  {
+                    "grantId": "bb842504-51ac-4a4b-bf2e-66d3ad81b558",
+                    "revision": 53,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "b1309dd8-4b07-4922-ac7a-1bdd7986323c",
+                    "revision": 55,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "f2411ba8-17f7-445b-8d0a-e76452d73fb0",
+                    "revision": 57,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "ed3ef2ec-b67e-42e5-8d23-14625b1091cc",
+                    "revision": 59,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 4,
+                "tokenBudget": 40000,
+                "grants": [
+                  {
+                    "grantId": "5055d296-849a-4860-b859-319ab9e8b128",
+                    "revision": 61,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:12:15.010Z",
+              "interactive": {
+                "maxConcurrent": 28,
+                "tokenBudget": 24000,
+                "grants": [
+                  {
+                    "grantId": "bb842504-51ac-4a4b-bf2e-66d3ad81b558",
+                    "revision": 53,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "b1309dd8-4b07-4922-ac7a-1bdd7986323c",
+                    "revision": 55,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "f2411ba8-17f7-445b-8d0a-e76452d73fb0",
+                    "revision": 57,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "ed3ef2ec-b67e-42e5-8d23-14625b1091cc",
+                    "revision": 59,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 4,
+                "tokenBudget": 40000,
+                "grants": [
+                  {
+                    "grantId": "5055d296-849a-4860-b859-319ab9e8b128",
+                    "revision": 61,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:12:15.517Z",
+              "interactive": {
+                "maxConcurrent": 28,
+                "tokenBudget": 24000,
+                "grants": [
+                  {
+                    "grantId": "bb842504-51ac-4a4b-bf2e-66d3ad81b558",
+                    "revision": 53,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "b1309dd8-4b07-4922-ac7a-1bdd7986323c",
+                    "revision": 55,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "f2411ba8-17f7-445b-8d0a-e76452d73fb0",
+                    "revision": 57,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "ed3ef2ec-b67e-42e5-8d23-14625b1091cc",
+                    "revision": 59,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 4,
+                "tokenBudget": 40000,
+                "grants": [
+                  {
+                    "grantId": "5055d296-849a-4860-b859-319ab9e8b128",
+                    "revision": 61,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:12:16.022Z",
+              "interactive": {
+                "maxConcurrent": 28,
+                "tokenBudget": 24000,
+                "grants": [
+                  {
+                    "grantId": "bb842504-51ac-4a4b-bf2e-66d3ad81b558",
+                    "revision": 53,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "b1309dd8-4b07-4922-ac7a-1bdd7986323c",
+                    "revision": 55,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "f2411ba8-17f7-445b-8d0a-e76452d73fb0",
+                    "revision": 57,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "ed3ef2ec-b67e-42e5-8d23-14625b1091cc",
+                    "revision": 59,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 4,
+                "tokenBudget": 40000,
+                "grants": [
+                  {
+                    "grantId": "5055d296-849a-4860-b859-319ab9e8b128",
+                    "revision": 61,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            },
+            {
+              "observedAt": "2026-08-10T23:12:16.530Z",
+              "interactive": {
+                "maxConcurrent": 28,
+                "tokenBudget": 24000,
+                "grants": [
+                  {
+                    "grantId": "bb842504-51ac-4a4b-bf2e-66d3ad81b558",
+                    "revision": 53,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "b1309dd8-4b07-4922-ac7a-1bdd7986323c",
+                    "revision": 55,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "f2411ba8-17f7-445b-8d0a-e76452d73fb0",
+                    "revision": 57,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  },
+                  {
+                    "grantId": "ed3ef2ec-b67e-42e5-8d23-14625b1091cc",
+                    "revision": 59,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  }
+                ]
+              },
+              "batch": {
+                "maxConcurrent": 4,
+                "tokenBudget": 40000,
+                "grants": [
+                  {
+                    "grantId": "5055d296-849a-4860-b859-319ab9e8b128",
+                    "revision": 61,
+                    "expiresAt": "2026-08-10T23:12:17.384Z"
+                  }
+                ]
+              },
+              "total": {
+                "maxConcurrent": 32,
+                "tokenBudget": 64000
+              }
+            }
+          ]
+        }
+      },
+      "finalMembers": [
+        {
+          "pool": "sim-interactive",
+          "priority": 100,
+          "activeAgents": 4,
+          "demand": {
+            "pool": "sim-interactive",
+            "activeAgents": 4,
+            "freshAgents": 4,
+            "inFlight": 5,
+            "pending": 0,
+            "recentAdmissions": 0,
+            "recentRejections": 0,
+            "recentBudgetRejections": 0,
+            "recentConcurrencyRejections": 0,
+            "state": "starved",
+            "inFlightTokens": 2435,
+            "availableTokens": 21565,
+            "lastDemandAt": "2026-08-10T23:12:15.135Z",
+            "stateSince": "2026-08-10T23:11:26.092Z"
+          },
+          "guaranteed": {
+            "maxConcurrent": 28,
+            "tokenBudget": 24000
+          },
+          "borrowed": {
+            "maxConcurrent": 0,
+            "tokenBudget": 0
+          },
+          "releasedGuarantee": {
+            "maxConcurrent": 0,
+            "tokenBudget": 0
+          },
+          "allocated": {
+            "maxConcurrent": 28,
+            "tokenBudget": 24000
+          }
+        },
+        {
+          "pool": "sim-batch",
+          "priority": 10,
+          "activeAgents": 1,
+          "demand": {
+            "pool": "sim-batch",
+            "activeAgents": 1,
+            "freshAgents": 1,
+            "inFlight": 0,
+            "pending": 0,
+            "recentAdmissions": 0,
+            "recentRejections": 0,
+            "recentBudgetRejections": 0,
+            "recentConcurrencyRejections": 0,
+            "state": "protected",
+            "inFlightTokens": 0,
+            "availableTokens": 40000,
+            "lastDemandAt": "2026-08-10T23:12:11.946Z",
+            "stateSince": "2026-08-10T23:12:14.259Z",
+            "nextTransitionAt": "2026-08-10T23:12:17.259Z"
+          },
+          "guaranteed": {
+            "maxConcurrent": 4,
+            "tokenBudget": 40000
+          },
+          "borrowed": {
+            "maxConcurrent": 0,
+            "tokenBudget": 0
+          },
+          "releasedGuarantee": {
+            "maxConcurrent": 0,
+            "tokenBudget": 0
+          },
+          "allocated": {
+            "maxConcurrent": 4,
+            "tokenBudget": 40000
+          }
+        }
+      ],
+      "latestDemandByPool": {
+        "sim-interactive": {
+          "instanceId": "tyr-r2",
+          "receivedAt": "2026-08-10T23:12:16.716Z",
+          "stateSince": "2026-08-10T23:12:16.716Z",
+          "hasDemand": false,
+          "inFlight": 0,
+          "inFlightTokens": 0,
+          "pending": 0,
+          "recentAdmissions": 0,
+          "recentRejections": 0,
+          "recentBudgetRejections": 0,
+          "recentConcurrencyRejections": 0
+        },
+        "sim-batch": {
+          "instanceId": "tyr-r4",
+          "receivedAt": "2026-08-10T23:12:15.878Z",
+          "stateSince": "2026-08-10T23:12:14.259Z",
+          "hasDemand": false,
+          "inFlight": 0,
+          "inFlightTokens": 0,
+          "pending": 0,
+          "recentAdmissions": 0,
+          "recentRejections": 0,
+          "recentBudgetRejections": 0,
+          "recentConcurrencyRejections": 0
+        }
+      }
+    }
+  },
   "runtime": {
     "tyr": {
-      "version": "0.17.0",
-      "image": "tyr-admission-controller:0.17.0"
+      "version": "0.24.0",
+      "image": "tyr-admission-controller:0.24.0"
     },
     "latchflo": {
-      "version": "0.5.1",
-      "image": "latchflo-control-plane:0.5.1"
+      "version": "0.10.0",
+      "image": "latchflo-control-plane:0.10.0"
+    },
+    "asyncBulkheadLlm": {
+      "version": "3.15.1"
+    },
+    "asyncBulkheadTs": {
+      "version": "1.0.1"
     }
   },
   "capacity": {
-    "policy": "interactive-first-static",
+    "profile": "adaptive-28-4",
+    "policy": "interactive-first-demand-aware",
     "batchFloorPercent": null,
-    "batchConcurrencySlots": 1,
-    "interactiveConcurrencySlots": 31,
-    "batchConcurrencyPercent": 3.125,
-    "batchTokenPercent": 25,
+    "batchConcurrencySlots": 4,
+    "interactiveConcurrencySlots": 28,
+    "batchConcurrencyPercent": 12.5,
+    "batchTokenPercent": 62.5,
     "envelope": 32,
-    "tokenBudget": 40000,
+    "tokenBudget": 64000,
+    "capacityGroup": {
+      "name": "sim-workloads",
+      "globalMaxConcurrent": 32,
+      "globalTokenBudget": 64000,
+      "safetyReservePercent": 0,
+      "demandPolicy": {
+        "enabled": true,
+        "reportStaleAfterMs": 6000,
+        "idleAfterMs": 3000,
+        "maxStarvationMs": 5000
+      },
+      "members": [
+        {
+          "pool": "sim-interactive",
+          "priority": 100,
+          "guaranteedMaxConcurrent": 28,
+          "guaranteedTokenBudget": 24000
+        },
+        {
+          "pool": "sim-batch",
+          "priority": 10,
+          "guaranteedMaxConcurrent": 4,
+          "guaranteedTokenBudget": 40000
+        }
+      ]
+    },
+    "demandPolicy": {
+      "enabled": true,
+      "reportStaleAfterMs": 6000,
+      "idleAfterMs": 3000,
+      "maxStarvationMs": 5000
+    },
+    "demandPolicyActivation": {
+      "observedDemandAt": "2026-08-10T23:11:26.092Z",
+      "activatedAt": "2026-08-10T23:11:26.284Z",
+      "activationDelayMs": 769
+    },
     "pools": [
       {
         "name": "sim-interactive",
-        "maxConcurrent": 31,
-        "tokenBudget": 30000,
+        "maxConcurrent": 28,
+        "tokenBudget": 24000,
         "agentCount": 4,
         "minimumLocalConcurrencyGrant": 7,
-        "minimumLocalTokenGrant": 7500,
-        "tokenFundedConcurrency": 31,
+        "minimumLocalTokenGrant": 6000,
+        "tokenFundedConcurrency": 28,
         "strandedConcurrency": 0,
         "localGrants": [
           {
             "index": 0,
-            "maxConcurrent": 8,
-            "tokenBudget": 7500,
-            "tokenFunded": 9,
-            "effective": 8
+            "maxConcurrent": 7,
+            "tokenBudget": 6000,
+            "tokenFunded": 7,
+            "effective": 7
           },
           {
             "index": 1,
-            "maxConcurrent": 8,
-            "tokenBudget": 7500,
-            "tokenFunded": 9,
-            "effective": 8
+            "maxConcurrent": 7,
+            "tokenBudget": 6000,
+            "tokenFunded": 7,
+            "effective": 7
           },
           {
             "index": 2,
-            "maxConcurrent": 8,
-            "tokenBudget": 7500,
-            "tokenFunded": 9,
-            "effective": 8
+            "maxConcurrent": 7,
+            "tokenBudget": 6000,
+            "tokenFunded": 7,
+            "effective": 7
           },
           {
             "index": 3,
             "maxConcurrent": 7,
-            "tokenBudget": 7500,
-            "tokenFunded": 9,
+            "tokenBudget": 6000,
+            "tokenFunded": 7,
             "effective": 7
           }
         ],
@@ -442,83 +5272,103 @@
           "initial": 708,
           "adaptiveCeiling": 755,
           "requiredLocalGrant": 755
-        }
+        },
+        "guaranteedMaxConcurrent": 28,
+        "guaranteedTokenBudget": 24000,
+        "ceilingMaxConcurrent": 32,
+        "ceilingTokenBudget": 64000,
+        "priority": 100
       },
       {
         "name": "sim-batch",
-        "maxConcurrent": 1,
-        "tokenBudget": 10000,
+        "maxConcurrent": 4,
+        "tokenBudget": 40000,
         "agentCount": 1,
-        "minimumLocalConcurrencyGrant": 1,
-        "minimumLocalTokenGrant": 10000,
-        "tokenFundedConcurrency": 1,
+        "minimumLocalConcurrencyGrant": 4,
+        "minimumLocalTokenGrant": 40000,
+        "tokenFundedConcurrency": 4,
         "strandedConcurrency": 0,
         "localGrants": [
           {
             "index": 0,
-            "maxConcurrent": 1,
-            "tokenBudget": 10000,
-            "tokenFunded": 1,
-            "effective": 1
+            "maxConcurrent": 4,
+            "tokenBudget": 40000,
+            "tokenFunded": 4,
+            "effective": 4
           }
         ],
         "reservation": {
           "initial": 9008,
           "adaptiveCeiling": 9942,
           "requiredLocalGrant": 9942
-        }
+        },
+        "guaranteedMaxConcurrent": 4,
+        "guaranteedTokenBudget": 40000,
+        "ceilingMaxConcurrent": 32,
+        "ceilingTokenBudget": 64000,
+        "priority": 10
       }
     ],
     "liveGrants": [
       {
         "port": 8101,
         "pool": "sim-interactive",
-        "tokenBudget": 7500,
-        "maxConcurrent": 8,
-        "expiresAt": "2026-08-01T19:10:31.746Z",
-        "remainingMs": 119004
+        "tokenBudget": 6000,
+        "maxConcurrent": 7,
+        "expiresAt": "2026-08-10T23:11:35.323Z",
+        "remainingMs": 9846
       },
       {
         "port": 8102,
         "pool": "sim-interactive",
-        "tokenBudget": 7500,
-        "maxConcurrent": 8,
-        "expiresAt": "2026-08-01T19:10:31.746Z",
-        "remainingMs": 119004
+        "tokenBudget": 6000,
+        "maxConcurrent": 7,
+        "expiresAt": "2026-08-10T23:11:35.323Z",
+        "remainingMs": 9846
       },
       {
         "port": 8103,
         "pool": "sim-interactive",
-        "tokenBudget": 7500,
-        "maxConcurrent": 8,
-        "expiresAt": "2026-08-01T19:10:31.746Z",
-        "remainingMs": 119004
+        "tokenBudget": 6000,
+        "maxConcurrent": 7,
+        "expiresAt": "2026-08-10T23:11:35.323Z",
+        "remainingMs": 9846
       },
       {
         "port": 8104,
         "pool": "sim-interactive",
-        "tokenBudget": 7500,
+        "tokenBudget": 6000,
         "maxConcurrent": 7,
-        "expiresAt": "2026-08-01T19:10:31.746Z",
-        "remainingMs": 119004
+        "expiresAt": "2026-08-10T23:11:35.323Z",
+        "remainingMs": 9846
       },
       {
         "port": 8104,
         "pool": "sim-batch",
-        "tokenBudget": 10000,
-        "maxConcurrent": 1,
-        "expiresAt": "2026-08-01T19:10:31.746Z",
-        "remainingMs": 119004
+        "tokenBudget": 40000,
+        "maxConcurrent": 4,
+        "expiresAt": "2026-08-10T23:11:35.323Z",
+        "remainingMs": 9846
       }
     ]
   },
   "tokenAccounting": {
-    "totalReserved": 247498,
-    "totalConsumed": 182169,
-    "totalRefunded": 70092,
-    "totalOverrun": 4763,
-    "grossRecoveryRate": 0.2832,
-    "netRecovered": 65329,
-    "netRecoveryRate": 0.264
+    "totalReserved": 289314,
+    "totalConsumed": 200957,
+    "totalRefunded": 176067,
+    "totalOverrun": 266,
+    "progressiveReports": 44809,
+    "progressiveUpdates": 316,
+    "progressiveCoalesced": 44493,
+    "progressiveEarlyReleasedTokens": 145261,
+    "grossRecoveryRate": 0.6086,
+    "netRecovered": 175801,
+    "netRecoveryRate": 0.6076,
+    "progressiveEarlyReleaseRate": 0.825,
+    "progressiveConfiguration": {
+      "enabled": true,
+      "updateStepTokens": 256,
+      "outputSafetyMarginTokens": 256
+    }
   }
 }

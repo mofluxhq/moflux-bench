@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.17.1 - 2026-08-10
+
+### Changed
+
+- Republish the video seed-sweep evidence (`results/video-seed-sweep.json` and
+  `results/video-seed-sweep/*.json`) from a fresh `demo:handoff` run against
+  the demand-aware `adaptive-28-4` policy, upgrading the committed dataset
+  from schema version 1 to version 2. This replaces the prior
+  `interactive-first-static` snapshot with the restoration-handoff and
+  admission-timing evidence introduced in 0.17.0.
+
 ## 0.17.0 - 2026-08-08
 
 ### Added
