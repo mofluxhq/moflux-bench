@@ -1,5 +1,81 @@
 # Changelog
 
+## 0.18.0 - 2026-08-11
+
+### Added
+
+- Upgrade the authenticated admission-class benchmark to collect Latchflo 0.11.4
+  class-handoff evidence from `/v1/events` and `/v1/grants`, joining each
+  restoration handoff to the source grants whose leases would otherwise bound
+  reclamation.
+- Add a structural proof that every required class drain grant was acknowledged,
+  the restoration handoff committed, no matching abort occurred, and commit
+  preceded the latest source-grant expiration. Record per-seed lease time avoided
+  and aggregate its median in schema-version-4 tenant-fairness summaries.
+- Require the Tyr fleet used by `demo:classes` to advertise
+  `admissionClassOccupancyAck`, preventing the benchmark from silently falling
+  back to the lease-bound Tyr 0.23/Latchflo 0.10 behavior.
+
+### Changed
+
+- Move demand-aware heterogeneous demos from the old 11-second steady grant cadence to a 120-second steady lease and require enough initial runway to cover the measured phase plus a safety margin. Acknowledged handoff is now expected to restore capacity by drain/ACK/fresh-occupancy proof rather than racing rolling lease expiry under long heterogeneous requests.
+- Pin active licensed benchmark paths to Tyr 0.25.1 and Latchflo 0.11.4 while
+  retaining async-bulkhead-llm 3.15.1 and async-bulkhead-ts 1.0.1.
+- Give all four admission-class arms the same 240-second steady grant TTL. The
+  adaptive arm no longer uses the old 3-second benchmark-only lease; it must
+  demonstrate acknowledged pre-expiry floor restoration under the same lease
+  duration as the controls.
+- Keep success rate, goodput, TTFT, local rejects, and restoration latency as
+  measured outcomes. The new acceptance gate remains structural: matching trace,
+  bounded admission, data-plane-applied floors/ceilings, and ordered safe handoff.
+- Update current runtime metadata, local image defaults, topology assertions,
+  documentation, and publication checks to 0.18.0 / Tyr 0.25.1 / Latchflo 0.11.4.
+
+### Fixed
+
+- Roll the demand-aware heterogeneous benchmark companion controller to Latchflo
+  0.11.4. Physical floor-restoration retry is now capacity-group-wide: while any
+  demanding member remains below its guarantee, a fresh heartbeat from any group
+  member can retrigger reconciliation. This closes the remaining seed-dependent
+  liveness gap where the borrower heartbeat made drain evidence fresh but the
+  controller waited for another batch heartbeat before preparing the handoff.
+  Workload, 120-second lease, and acceptance thresholds are unchanged.
+- Roll the class benchmark companion controller to Latchflo 0.11.4. The patch
+  retries a pending adaptive class restoration on subsequent same-state Tyr
+  heartbeats, closing a lost-reconcile window that could leave a seed with
+  `lent=true`, observed noisy demand, and no prepared class handoff. Benchmark
+  workload, trace, policy, and proof thresholds are unchanged.
+- Fix a seed-dependent class-proof race where Latchflo could commit an acknowledged restoration after the fixed post-run sampler stopped. The adaptive runner now uses a bounded 15-second synchronization phase, actively reconciles, and waits until Tyr itself reports the restored noisy protected floor; controller commit and data-plane application are proven separately.
+- Isolate `demo:classes` control-plane state per seed. A restored adaptive grant
+  carries the same 240-second steady lease as every other arm, so reusing one
+  Latchflo/Tyr stack could leave the noisy floor protected into the next seed and
+  make that seed unable to exercise lending. Each seed now recreates the stack
+  and explicitly proves the noisy floor is lent before starting the adaptive
+  trace.
+- Make adaptive lending summaries causal: demand-after-lending, restoration, and
+  restoration latency now remain false/null when no lent sample was observed.
+  This prevents an impossible `lent=false, restored=true` report.
+- Build the final scenario ID from the retained cross-seed class-grant snapshot
+  instead of the loop-local `fleet` binding, avoiding a `ReferenceError` after a
+  successful multi-seed run.
+- Roll the Tyr runtime pin forward to 0.25.1. Tyr 0.25.1 preserves the 0.25
+  class-handoff protocol and fixes the source/Docker release bundle by including
+  the vendored runtime tarballs required by its lockfile, so local benchmark image
+  builds can complete with `npm ci --omit=dev`.
+- Replace the class benchmark's dependence on artificially short lease expiry
+  with direct source-lease and handoff evidence, so a restored floor can no
+  longer pass merely because the benchmark waited long enough for the old grant
+  to expire.
+
+## 0.17.2 - 2026-08-11
+
+### Fixed
+
+- Advance the package metadata, publication verifier, and current benchmark
+  documentation to 0.17.2 so the release version is consistent everywhere.
+- Carry forward the 0.17.1 publication-hygiene fixes without changing benchmark
+  policy semantics or relabeling historical evidence.
+
 ## 0.17.1 - 2026-08-10
 
 ### Changed
@@ -10,6 +86,13 @@
   from schema version 1 to version 2. This replaces the prior
   `interactive-first-static` snapshot with the restoration-handoff and
   admission-timing evidence introduced in 0.17.0.
+
+### Fixed
+
+- Update the publication verifier and current benchmark documentation for
+  version 0.17.1 so a clean 0.17.1 source tree passes the release gate.
+- Ignore local Claude settings alongside editor/OS state so developer-machine
+  configuration does not become release-source noise.
 
 ## 0.17.0 - 2026-08-08
 

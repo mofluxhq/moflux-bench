@@ -10,6 +10,7 @@ import { startIdentityFixture } from "./identity-fixture-lib.mjs";
 import {
   TENANT_FAIRNESS_POLICY,
   compareTenantFairness,
+  summarizeAdaptiveClassHandoff,
   summarizeAdaptiveLendingSamples,
   tenantFairnessProof,
   tenantPoolDefinition,
@@ -19,6 +20,14 @@ import {
 } from "./tenant-fairness-lib.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const tenantRunnerSource = readFileSync(path.join(ROOT, "demo", "tenant-fairness.mjs"), "utf8");
+assert.match(tenantRunnerSource, /for \(const seed of OPT\.seeds\) \{[\s\S]*?bootstrapTenantStack\(adminToken\)/);
+assert.match(tenantRunnerSource, /async function bootstrapTenantStack\(adminToken\) \{[\s\S]*?compose\("down", "--volumes", "--remove-orphans"\)/);
+assert.match(tenantRunnerSource, /waitForAdaptiveNoisyFloorLent\(adminToken\)/);
+assert.match(tenantRunnerSource, /waitForAdaptiveNoisyFloorRestored\([\s\S]*?sampledAdaptiveObservation/);
+assert.equal(TENANT_FAIRNESS_POLICY.adaptive.restorationObserveTimeoutMs, 15_000);
+assert.match(tenantRunnerSource, /policy: classGrants, seeds: OPT\.seeds/);
+assert.doesNotMatch(tenantRunnerSource, /policy: fleet\.aggregate, seeds: OPT\.seeds/);
 const temp = mkdtempSync(path.join(tmpdir(), "moflux-tenant-fairness-"));
 let identity;
 let target;
@@ -178,10 +187,15 @@ try {
   assert.equal(decodePayload(identity.tokens.premium).tenant_id, "tenant-premium");
   assert.equal(decodePayload(identity.tokens.noisy).tenant_id, "tenant-noisy");
 
-  const shared = tenantPoolDefinition("sim-shared", 120000);
-  const ceilings = tenantPoolDefinition("sim-ceilings", 120000, { classPolicy: "ceilings" });
-  const protectedPool = tenantPoolDefinition("sim-protected", 120000, { classPolicy: "protected" });
-  const adaptivePool = tenantPoolDefinition("sim-adaptive", 3000, { classPolicy: "adaptive" });
+  const steadyTtlMs = TENANT_FAIRNESS_POLICY.adaptive.grantTtlMs;
+  const shared = tenantPoolDefinition("sim-shared", steadyTtlMs);
+  const ceilings = tenantPoolDefinition("sim-ceilings", steadyTtlMs, { classPolicy: "ceilings" });
+  const protectedPool = tenantPoolDefinition("sim-protected", steadyTtlMs, { classPolicy: "protected" });
+  const adaptivePool = tenantPoolDefinition(
+    "sim-adaptive",
+    TENANT_FAIRNESS_POLICY.adaptive.grantTtlMs,
+    { classPolicy: "adaptive" },
+  );
   assert.equal(shared.admissionClassLimits, undefined);
   assert.deepEqual(ceilings.admissionClassLimits, TENANT_FAIRNESS_POLICY.classPolicies.ceilings);
   assert.deepEqual(protectedPool.admissionClassLimits, TENANT_FAIRNESS_POLICY.classPolicies.protected);
@@ -331,10 +345,104 @@ try {
   assert.equal(adaptiveLending.noisyFloorRestored, true);
   assert.equal(adaptiveLending.hardCeilingsPreservedWhileLent, true);
   assert.equal(adaptiveLending.restorationLatencyMs, 2500);
+
+  const neverLent = summarizeAdaptiveLendingSamples([
+    adaptiveSample(0),
+    adaptiveSample(5500, { demanding: true }),
+    adaptiveSample(8000, { demanding: true, restored: true }),
+  ]);
+  assert.equal(neverLent.noisyFloorLent, false);
+  assert.equal(neverLent.noisyDemandObservedAfterLending, false);
+  assert.equal(neverLent.noisyFloorRestored, false);
+  assert.equal(neverLent.restorationLatencyMs, null);
+
+  const handoffStartedAt = 1_000_000;
+  const sourceGrants = [1, 2, 3, 4].map((index) => ({
+    grantId: `source-${index}`,
+    expiresAt: new Date(handoffStartedAt + 120_000 + index).toISOString(),
+  }));
+  const targetGrant = (index) => ({
+    grantId: `drain-${index}`,
+    instanceId: `tyr-r${index}`,
+    role: "drain",
+    fromGrantId: `source-${index}`,
+    limits: { admissionClasses: { noisy: {
+      protectedConcurrent: 1,
+      maxConcurrent: 6,
+      protectedInFlightTokens: 9_000,
+      maxInFlightTokens: 16_000,
+    } } },
+  });
+  const handoffEvents = [
+    {
+      type: "admission_class.handoff_prepared",
+      entityId: "sim-adaptive",
+      createdAt: new Date(handoffStartedAt + 5_600).toISOString(),
+      payload: { handoffId: "handoff-1", grants: [1, 2, 3, 4].map(targetGrant) },
+    },
+    ...[1, 2, 3, 4].map((index) => ({
+      type: "admission_class.handoff_grant_applied",
+      entityId: `drain-${index}`,
+      createdAt: new Date(handoffStartedAt + 5_700 + index).toISOString(),
+      payload: { handoffId: "handoff-1", pool: "sim-adaptive" },
+    })),
+    {
+      type: "admission_class.handoff_committed",
+      entityId: "sim-adaptive",
+      createdAt: new Date(handoffStartedAt + 6_000).toISOString(),
+      payload: { handoffId: "handoff-1" },
+    },
+  ];
+  const adaptiveHandoff = summarizeAdaptiveClassHandoff(
+    handoffEvents,
+    sourceGrants,
+    handoffStartedAt,
+  );
+  assert.equal(adaptiveHandoff.handoffPrepared, true);
+  assert.equal(adaptiveHandoff.allDrainAcksApplied, true);
+  assert.equal(adaptiveHandoff.handoffCommitted, true);
+  assert.equal(adaptiveHandoff.handoffAborted, false);
+  assert.equal(adaptiveHandoff.committedBeforeLeaseExpiry, true);
+  assert.ok(adaptiveHandoff.leaseAvoidedMs > 100_000);
+  const missingAckHandoff = summarizeAdaptiveClassHandoff(
+    handoffEvents.filter((event) => event.entityId !== "drain-4"),
+    sourceGrants,
+    handoffStartedAt,
+  );
+  assert.equal(missingAckHandoff.allDrainAcksApplied, false);
   assert.equal(
     tenantFairnessProof(
       compareTenantFairness(fakeShared, fakeCeilings, fakeProtected, fakeAdaptive),
       adaptiveLending,
+      missingAckHandoff,
+    ).passed,
+    false,
+    "a class handoff missing one drain acknowledgement must not pass",
+  );
+  const expiredSourceGrants = sourceGrants.map((grant, index) => ({
+    ...grant,
+    expiresAt: new Date(handoffStartedAt + 5_900 + index).toISOString(),
+  }));
+  const lateHandoff = summarizeAdaptiveClassHandoff(
+    handoffEvents,
+    expiredSourceGrants,
+    handoffStartedAt,
+  );
+  assert.equal(lateHandoff.committedBeforeLeaseExpiry, false);
+  assert.equal(
+    tenantFairnessProof(
+      compareTenantFairness(fakeShared, fakeCeilings, fakeProtected, fakeAdaptive),
+      adaptiveLending,
+      lateHandoff,
+    ).passed,
+    false,
+    "a class handoff that commits after source lease expiry must not pass",
+  );
+  assert.equal(
+    tenantFairnessProof(
+      compareTenantFairness(fakeShared, fakeCeilings, fakeProtected, fakeAdaptive),
+      adaptiveLending,
+      adaptiveHandoff,
     ).passed,
     true,
   );
@@ -347,6 +455,7 @@ try {
   const starvedProof = tenantFairnessProof(
     compareTenantFairness(fakeShared, fakeCeilings, fakeProtected, starved),
     adaptiveLending,
+    adaptiveHandoff,
   );
   assert.equal(starvedProof.passed, false, "zero noisy completions must never pass fairness");
   assert.equal(starvedProof.checks.noisyServedUnderContention, false);
@@ -369,7 +478,7 @@ try {
 
   for (let replica = 1; replica <= 4; replica += 1) {
     const yaml = readFileSync(path.join(ROOT, "demo", "classes", `tyr-r${replica}.yaml`), "utf8");
-    assert.match(yaml, /version: 0\.24\.0/);
+    assert.match(yaml, /version: 0\.25\.1/);
     assert.match(yaml, /name: sim-ceilings/);
     assert.match(yaml, /name: sim-protected/);
     assert.match(yaml, /name: sim-adaptive/);
@@ -379,7 +488,7 @@ try {
     assert.match(yaml, /protectedInFlightTokens: 0/);
     assert.match(yaml, /jwksUrl: https:\/\/host\.docker\.internal:9010\/jwks/);
   }
-  console.log("PASS  four-arm tenant fairness, adaptive floor lending/restoration proof, feasible grants, starvation rejection, and identity attribution");
+  console.log("PASS  four-arm tenant fairness, pre-expiry class handoff proof, feasible grants, starvation rejection, and identity attribution");
 } finally {
   if (target) await new Promise((resolve) => target.server.close(resolve));
   if (identity) await identity.close().catch(() => {});

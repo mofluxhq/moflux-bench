@@ -188,7 +188,7 @@ const OPT = Object.freeze({
   batchConcurrencySlots: configuredBatchConcurrencySlots,
   batchConcurrencyPercent: configuredBatchConcurrencyPercent,
   batchTokenPercent: configuredBatchTokenPercent,
-  grantTtlMs: num("grant-ttl-ms", lendingRequested ? 11000 : 120000),
+  grantTtlMs: num("grant-ttl-ms", 120000),
   enrollmentGrantTtlMs: num("enrollment-grant-ttl-ms", lendingRequested ? 2000 : 5000),
   seed: num("seed", 7),
   // Comma-separated control arms replayed on the same trace between the
@@ -424,18 +424,11 @@ for (const [flagName, value, minimum] of [
   }
 }
 const REQUIRED_GRANT_RUNWAY_MS = OPT.phaseMs + 10000;
-const REQUIRED_INITIAL_GRANT_RUNWAY_MS = OPT.lending
-  ? Math.max(1000, OPT.grantTtlMs - 1500)
-  : REQUIRED_GRANT_RUNWAY_MS;
-if (!OPT.lending && OPT.mode !== "baseline" && OPT.grantTtlMs < REQUIRED_GRANT_RUNWAY_MS + 5000) {
+const REQUIRED_INITIAL_GRANT_RUNWAY_MS = REQUIRED_GRANT_RUNWAY_MS;
+if (OPT.mode !== "baseline" && OPT.grantTtlMs < REQUIRED_GRANT_RUNWAY_MS + 5000) {
   throw new Error(
     `--grant-ttl-ms must be at least ${REQUIRED_GRANT_RUNWAY_MS + 5000} for a ` +
       `${OPT.phaseMs}ms MoFlux phase`,
-  );
-}
-if (OPT.lending && OPT.grantTtlMs > Math.floor(OPT.phaseMs * 0.25)) {
-  throw new Error(
-    "--grant-ttl-ms is too long for the lending scenario; floor restoration must fit inside the contended window",
   );
 }
 

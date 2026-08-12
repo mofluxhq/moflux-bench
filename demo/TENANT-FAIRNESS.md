@@ -1,8 +1,8 @@
 # Admission-class fairness and lending benchmark
 
-MoFlux Bench 0.17.0 retains the four-arm authenticated noisy-neighbor scenario
+MoFlux Bench 0.18.0 upgrades the four-arm authenticated noisy-neighbor scenario
 introduced in 0.16.0, including demand-aware protected-floor lending with Tyr
-0.24.0 and Latchflo 0.10.0.
+0.25.1 and Latchflo 0.11.4.
 
 ## What it compares
 
@@ -40,16 +40,27 @@ Only `sim-adaptive` enables:
 }
 ```
 
-The three control arms keep 120-second steady leases. The adaptive arm uses a
-3-second grant TTL so a safe floor restoration can occur within a 30-second
-benchmark seed. This is deliberate benchmark instrumentation, not a general
-production TTL recommendation.
+All four arms use the same 240-second steady lease. The adaptive arm no longer
+uses a shortened benchmark-only TTL. A 1-second idle threshold still creates a
+clear lending window, but restoration must now be demonstrated through the
+acknowledged class handoff before the old lent lease expires.
+
+
+After the workload window, the runner allows a bounded 15-second synchronization window for a committed class handoff to propagate to Tyr. It actively requests reconciliation and continues sampling Tyr grants until the nominal noisy floor is observed or the bound expires. Controller commit and data-plane application are therefore proven separately.
+
+Each seed gets a fresh Latchflo/Tyr control-plane state. This prevents a
+240-second restored grant from seed N from suppressing idle-floor lending in
+seed N+1. Before the adaptive trace starts, the runner waits for direct
+controller + Tyr evidence that the noisy protected floor is actually lent. A
+seed therefore cannot satisfy the restoration proof unless lending was observed
+first in that same fresh seed.
 
 Latchflo may release the active protected floor only after every active Tyr
 replica reports the class idle. The hard class ceilings remain unchanged. When
-noisy demand returns, Latchflo stops treating the floor as lendable and restores
-the nominal floor through its lease-safe handoff; Tyr never revokes running
-requests.
+noisy demand returns, Latchflo stops new borrowing, stages the restored floor,
+and uses Tyr 0.25.1's ordered class acknowledgement plus fresh occupancy
+evidence to prove the shared authority has drained by attrition. Running
+requests are never revoked; lease expiry remains the fallback if proof fails.
 
 ## Run it
 
@@ -105,11 +116,17 @@ Each seed must show all of the following:
   exactly 24 concurrent / 64,000 in-flight tokens.
 - After noisy demand appeared, the runner observed the nominal noisy floor
   restored in Tyr: 4 protected concurrent / 36,000 protected tokens.
+- Latchflo recorded the restoration `admission_class.handoff_prepared` event,
+  every required drain grant received an `applied` acknowledgement, and the
+  matching handoff committed before the latest source-grant lease expired.
 - The same hard ceilings were still intact after restoration.
 
 The runner samples both `GET /v1/admission-class-demand?pool=sim-adaptive` and
-Tyr `/stats` during the adaptive arm. This prevents a controller-only state
-transition from being mistaken for a data-plane-applied grant.
+Tyr `/stats` during the adaptive arm. After the run it also collects bounded
+Latchflo `/v1/events` and `/v1/grants` evidence to join the prepared class
+handoff to its source lease expirations and commit time. This prevents either a
+controller-only transition or a coincidental lease expiry from being mistaken
+for accelerated restoration.
 
 The gate intentionally does **not** require a particular success-rate, goodput,
 TTFT, or restoration-latency improvement. Those are measured outcomes and can
@@ -120,14 +137,16 @@ performance metric improves.
 
 ## Floor semantics
 
-Tyr 0.24.0 reports bounded per-class demand and enforces the class limits in its
-currently applied Latchflo grant. Latchflo 0.10.0 owns the lending decision.
+Tyr 0.25.1 reports bounded per-class demand and ordered class occupancy evidence while enforcing the class limits in its
+currently applied Latchflo grant. Latchflo 0.11.4 owns the lending and handoff decisions.
 
 A configured protected floor is therefore the **nominal floor**. In the
 adaptive arm the **active floor** may temporarily be lower while the class is
 fully observed idle. The class hard ceiling does not change. A returning class
-does not preempt running borrowers; restoration is bounded by the outstanding
-lease that represents the lent allocation plus normal reconcile/poll delay.
+does not preempt running borrowers. Latchflo first removes new shared borrowing
+authority, waits for Tyr acknowledgement plus fresh occupancy evidence, and can
+then restore the nominal floor before the previous lease boundary. The old
+lease remains the fallback safety boundary.
 
 Missing, stale, or incomplete class telemetry fails protected: Latchflo keeps or
 restores the nominal floor rather than lending on uncertain demand state.
@@ -143,12 +162,13 @@ results/runs/tenant-fairness/<run-id>/
 Each directory contains the immutable trace, four raw arm summaries, one
 comparison per seed, and an `adaptive-lending-seed-<n>.json` observation stream
 containing bounded controller state plus the aggregate class limits actually
-applied by Tyr. `summary.json` uses schema version 3 and records:
+applied by Tyr. `summary.json` uses schema version 4 and records:
 
 - median success and contended goodput for all four arms;
 - TTFT and goodput ratios for static/adaptive comparisons;
 - noisy completions and local rejections;
 - upstream 429 totals;
-- per-seed lending/restoration proof state and restoration latency;
+- per-seed lending/restoration proof state, restoration latency, class-handoff
+  drain acknowledgements, and lease time avoided;
 - the exact fleet-wide class ceilings/floors and adaptive policy used by the
   run.

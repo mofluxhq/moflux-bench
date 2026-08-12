@@ -34,6 +34,7 @@ import {
   compareTenantFairness,
   TENANT_FAIRNESS_POLICY,
   aggregateAdmissionClassGrants,
+  summarizeAdaptiveClassHandoff,
   summarizeAdaptiveLendingSamples,
   tenantFairnessProof,
   tenantPoolDefinition,
@@ -56,8 +57,7 @@ const TYR_PORTS = [8101, 8102, 8103, 8104];
 const TYR_SERVICES = ["tyr-r1", "tyr-r2", "tyr-r3", "tyr-r4"];
 const PROVIDER_PORT = 9000;
 const ENROLLMENT_TTL_MS = 3000;
-const STEADY_TTL_MS = 120000;
-const ADAPTIVE_TTL_MS = TENANT_FAIRNESS_POLICY.adaptive.grantTtlMs;
+const STEADY_TTL_MS = TENANT_FAIRNESS_POLICY.adaptive.grantTtlMs;
 
 const args = new Map();
 for (const arg of process.argv.slice(2)) {
@@ -250,7 +250,7 @@ async function configurePools(token, ttlMs, { allowCreate }) {
     tenantPoolDefinition("sim-shared", ttlMs),
     tenantPoolDefinition("sim-ceilings", ttlMs, { classPolicy: "ceilings" }),
     tenantPoolDefinition("sim-protected", ttlMs, { classPolicy: "protected" }),
-    tenantPoolDefinition("sim-adaptive", ADAPTIVE_TTL_MS, { classPolicy: "adaptive" }),
+    tenantPoolDefinition("sim-adaptive", ttlMs, { classPolicy: "adaptive" }),
   ]) {
     const { name, ...body } = spec;
     const update = await jsonRequest(`http://127.0.0.1:18080/v1/pools/${name}`, {
@@ -278,6 +278,9 @@ async function waitForAgents(token) {
         }
         if (agent?.capabilities?.admissionClassDemand !== true) {
           throw new Error(`${agent.instanceId ?? "unknown agent"} did not advertise admissionClassDemand capability`);
+        }
+        if (agent?.capabilities?.admissionClassOccupancyAck !== true) {
+          throw new Error(`${agent.instanceId ?? "unknown agent"} did not advertise admissionClassOccupancyAck capability`);
         }
       }
       return agents;
@@ -352,32 +355,59 @@ function compactAdaptiveStatus(status) {
   };
 }
 
-async function observeAdaptiveLending(adminToken, startedAt) {
-  const samples = [];
-  const intervalMs = TENANT_FAIRNESS_POLICY.adaptive.observeIntervalMs;
-  const deadline = startedAt + WORKLOAD_BASE.durationMs + ADAPTIVE_TTL_MS + 2_000;
+async function readAdaptiveLendingSample(adminToken, startedAt = Date.now()) {
+  const offsetMs = Date.now() - startedAt;
+  const [controller, stats] = await Promise.all([
+    jsonRequest(
+      "http://127.0.0.1:18080/v1/admission-class-demand?pool=sim-adaptive",
+      { token: adminToken },
+    ),
+    readTyrStats(),
+  ]);
+  const applied = aggregateAdmissionClassGrants(
+    classGrantRows(stats, "sim-adaptive"),
+    "sim-adaptive",
+  );
+  return {
+    offsetMs,
+    observedAtMs: Date.now(),
+    controller: compactAdaptiveStatus(controller.body?.status),
+    applied,
+  };
+}
+
+async function waitForAdaptiveNoisyFloorLent(adminToken, timeoutMs = 15_000) {
+  const startedAt = Date.now();
+  const deadline = startedAt + timeoutMs;
+  let last = null;
   while (Date.now() <= deadline) {
-    const offsetMs = Date.now() - startedAt;
+    await jsonRequest("http://127.0.0.1:18080/v1/pools/sim-adaptive/rebalance", {
+      method: "POST", token: adminToken, allowed: [200, 202],
+    }).catch(() => null);
     try {
-      const [controller, stats] = await Promise.all([
-        jsonRequest(
-          "http://127.0.0.1:18080/v1/admission-class-demand?pool=sim-adaptive",
-          { token: adminToken },
-        ),
-        readTyrStats(),
-      ]);
-      const applied = aggregateAdmissionClassGrants(
-        classGrantRows(stats, "sim-adaptive"),
-        "sim-adaptive",
-      );
-      samples.push({
-        offsetMs,
-        controller: compactAdaptiveStatus(controller.body?.status),
-        applied,
-      });
+      last = await readAdaptiveLendingSample(adminToken, startedAt);
+      if (summarizeAdaptiveLendingSamples([last]).noisyFloorLent) return last;
+    } catch (error) {
+      last = { error: error instanceof Error ? error.message : String(error) };
+    }
+    await sleep(250);
+  }
+  throw new Error(
+    `timed out waiting for sim-adaptive noisy floor to be lent before workload start: ${JSON.stringify(last)}`,
+  );
+}
+
+async function observeAdaptiveLending(adminToken, startedAt, initialSample = null) {
+  const samples = initialSample === null ? [] : [{ ...initialSample, offsetMs: 0 }];
+  const intervalMs = TENANT_FAIRNESS_POLICY.adaptive.observeIntervalMs;
+  const deadline = startedAt + WORKLOAD_BASE.durationMs +
+    TENANT_FAIRNESS_POLICY.adaptive.postRunObserveMs;
+  while (Date.now() <= deadline) {
+    try {
+      samples.push(await readAdaptiveLendingSample(adminToken, startedAt));
     } catch (error) {
       samples.push({
-        offsetMs,
+        offsetMs: Date.now() - startedAt,
         error: error instanceof Error ? error.message : String(error),
       });
     }
@@ -386,6 +416,70 @@ async function observeAdaptiveLending(adminToken, startedAt) {
   return {
     summary: summarizeAdaptiveLendingSamples(samples),
     samples,
+  };
+}
+
+async function waitForAdaptiveNoisyFloorRestored(adminToken, startedAt, observation) {
+  const samples = [...observation.samples];
+  let summary = summarizeAdaptiveLendingSamples(samples);
+  if (summary.noisyFloorRestored) {
+    return { ...observation, summary, restorationWaitTimedOut: false, postRunRestorationWaitMs: 0 };
+  }
+
+  const waitStartedAt = Date.now();
+  const deadline = waitStartedAt + TENANT_FAIRNESS_POLICY.adaptive.restorationObserveTimeoutMs;
+  const intervalMs = TENANT_FAIRNESS_POLICY.adaptive.observeIntervalMs;
+  while (Date.now() <= deadline && !summary.noisyFloorRestored) {
+    await jsonRequest("http://127.0.0.1:18080/v1/pools/sim-adaptive/rebalance", {
+      method: "POST", token: adminToken, allowed: [200, 202],
+    }).catch(() => null);
+    try {
+      samples.push(await readAdaptiveLendingSample(adminToken, startedAt));
+    } catch (error) {
+      samples.push({
+        offsetMs: Date.now() - startedAt,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    summary = summarizeAdaptiveLendingSamples(samples);
+    if (summary.noisyFloorRestored) break;
+    await sleep(intervalMs);
+  }
+  return {
+    summary,
+    samples,
+    restorationWaitTimedOut: !summary.noisyFloorRestored,
+    postRunRestorationWaitMs: Date.now() - waitStartedAt,
+  };
+}
+
+async function collectAdaptiveClassHandoff(adminToken, startedAt) {
+  await jsonRequest("http://127.0.0.1:18080/v1/pools/sim-adaptive/rebalance", {
+    method: "POST", token: adminToken, allowed: [200, 202],
+  }).catch(() => null);
+  await sleep(100);
+  const [eventsResponse, grantsResponse] = await Promise.all([
+    jsonRequest("http://127.0.0.1:18080/v1/events?limit=1000", { token: adminToken }),
+    jsonRequest("http://127.0.0.1:18080/v1/grants?pool=sim-adaptive&limit=1000", { token: adminToken }),
+  ]);
+  const events = Array.isArray(eventsResponse.body?.events) ? eventsResponse.body.events : [];
+  const grants = Array.isArray(grantsResponse.body?.grants) ? grantsResponse.body.grants : [];
+  const summary = summarizeAdaptiveClassHandoff(events, grants, startedAt);
+  const handoffEvents = events.filter((event) =>
+    event?.payload?.handoffId === summary.handoffId ||
+    (event?.entityId === "sim-adaptive" && String(event?.type ?? "").startsWith("admission_class.handoff_")),
+  );
+  const relevantGrantIds = new Set(
+    handoffEvents.flatMap((event) =>
+      Array.isArray(event?.payload?.grants)
+        ? event.payload.grants.flatMap((entry) => [entry?.grantId, entry?.fromGrantId].filter(Boolean))
+        : [event?.entityId].filter(Boolean),
+    ),
+  );
+  return {
+    summary,
+    events: handoffEvents,
+    grants: grants.filter((grant) => relevantGrantIds.has(grant?.grantId)),
   };
 }
 
@@ -452,6 +546,25 @@ async function waitForUsableFleet(adminToken) {
   throw new Error(`timed out waiting for usable tenant-fairness fleet: ${last}`);
 }
 
+async function bootstrapTenantStack(adminToken) {
+  compose("down", "--volumes", "--remove-orphans");
+  compose("up", "-d", "--force-recreate", "latchflo");
+  await waitFor("http://127.0.0.1:18080/readyz", { timeoutMs: 45000, label: "Latchflo readiness" });
+  await configurePools(adminToken, ENROLLMENT_TTL_MS, { allowCreate: true });
+  compose("up", "-d", "--force-recreate", ...TYR_SERVICES);
+  for (const port of TYR_PORTS) {
+    await waitFor(`http://127.0.0.1:${port}/healthz`, { timeoutMs: 45000, label: `Tyr ${port} health` });
+  }
+  await waitForAgents(adminToken);
+  await configurePools(adminToken, STEADY_TTL_MS, { allowCreate: false });
+  for (const pool of ["sim-shared", "sim-ceilings", "sim-protected", "sim-adaptive"]) {
+    await jsonRequest(`http://127.0.0.1:18080/v1/pools/${pool}/rebalance`, {
+      method: "POST", token: adminToken, allowed: [200, 202],
+    });
+  }
+  return waitForUsableFleet(adminToken);
+}
+
 async function runLoadgen({ seed, model, arm, traceFile, outFile, tokens }) {
   rmSync(outFile, { force: true });
   const targets = TYR_PORTS.map((port) => `http://127.0.0.1:${port}`);
@@ -512,9 +625,10 @@ function percentile(values, p) {
 function aggregateResults(rows, outputDir, classGrants) {
   const comparisons = rows.map((row) => row.comparison);
   const lending = rows.map((row) => row.adaptiveLending);
+  const handoffs = rows.map((row) => row.adaptiveHandoff);
   const numeric = (values) => values.filter(Number.isFinite);
   const summary = {
-    schemaVersion: 3,
+    schemaVersion: 4,
     benchmark: "tenant-fairness",
     generatedAt: new Date().toISOString(),
     runtime: {
@@ -592,7 +706,16 @@ function aggregateResults(rows, outputDir, classGrants) {
         numeric(lending.map((row) => row.restorationLatencyMs)),
         0.5,
       ),
-      perSeed: rows.map((row) => ({ seed: row.seed, ...row.adaptiveLending })),
+      seedsWithPreExpiryClassHandoff: handoffs.filter((row) => row.committedBeforeLeaseExpiry).length,
+      leaseAvoidedMsMedian: percentile(
+        numeric(handoffs.map((row) => row.leaseAvoidedMs)),
+        0.5,
+      ),
+      perSeed: rows.map((row) => ({
+        seed: row.seed,
+        ...row.adaptiveLending,
+        handoff: row.adaptiveHandoff,
+      })),
     },
     upstream429s: {
       sharedTotal: comparisons.reduce((sum, row) => sum + row.upstream429s.shared, 0),
@@ -604,6 +727,7 @@ function aggregateResults(rows, outputDir, classGrants) {
       seed: row.seed,
       comparison: row.comparison,
       adaptiveLending: row.adaptiveLending,
+      adaptiveHandoff: row.adaptiveHandoff,
     })),
   };
   writeFileSync(path.join(outputDir, "summary.json"), JSON.stringify(summary, null, 2));
@@ -623,31 +747,21 @@ try {
     console.log(`PASS  tenant-fairness prerequisites (Tyr ${TYR_VERSION}, Latchflo ${LATCHFLO_VERSION})`);
     process.exitCode = 0;
   } else {
-    compose("down", "--volumes", "--remove-orphans");
-    compose("up", "-d", "--force-recreate", "latchflo");
-    stackStarted = true;
-    await waitFor("http://127.0.0.1:18080/readyz", { timeoutMs: 45000, label: "Latchflo readiness" });
     const adminToken = env.LATCHFLO_ADMIN_TOKEN;
-    await configurePools(adminToken, ENROLLMENT_TTL_MS, { allowCreate: true });
-    compose("up", "-d", "--force-recreate", ...TYR_SERVICES);
-    for (const port of TYR_PORTS) {
-      await waitFor(`http://127.0.0.1:${port}/healthz`, { timeoutMs: 45000, label: `Tyr ${port} health` });
-    }
-    await waitForAgents(adminToken);
-    await configurePools(adminToken, STEADY_TTL_MS, { allowCreate: false });
-    for (const pool of ["sim-shared", "sim-ceilings", "sim-protected", "sim-adaptive"]) {
-      await jsonRequest(`http://127.0.0.1:18080/v1/pools/${pool}/rebalance`, {
-        method: "POST", token: adminToken, allowed: [200, 202],
-      });
-    }
-    const fleet = await waitForUsableFleet(adminToken);
-
     const runId = new Date().toISOString().replaceAll(":", "").replaceAll(".", "");
     const outputDir = path.join(RESULTS_ROOT, runId);
     mkdirSync(outputDir, { recursive: true });
     const rows = [];
+    let classGrants = null;
 
     for (const seed of OPT.seeds) {
+      stackStarted = true;
+      const fleet = await bootstrapTenantStack(adminToken);
+      if (classGrants === null) {
+        classGrants = fleet.aggregate;
+      } else if (JSON.stringify(fleet.aggregate) !== JSON.stringify(classGrants)) {
+        throw new Error(`tenant-fairness policy drifted across seed reset ${seed}`);
+      }
       const workload = { ...WORKLOAD_BASE, seed };
       const trace = buildTrace(workload);
       const traceFile = path.join(outputDir, `trace-seed-${seed}.json`);
@@ -687,8 +801,13 @@ try {
         tokens: identity.tokens,
       });
       await sleep(1000);
+      const adaptivePrecondition = await waitForAdaptiveNoisyFloorLent(adminToken);
+      writeFileSync(
+        path.join(outputDir, `adaptive-precondition-seed-${seed}.json`),
+        JSON.stringify(adaptivePrecondition, null, 2),
+      );
       const adaptiveStartedAt = Date.now();
-      const [adaptiveArm, adaptiveObservation] = await Promise.all([
+      const [adaptiveArm, sampledAdaptiveObservation] = await Promise.all([
         runLoadgen({
           seed,
           model: "sim-model-adaptive",
@@ -697,17 +816,28 @@ try {
           outFile: path.join(outputDir, `adaptive-seed-${seed}.json`),
           tokens: identity.tokens,
         }),
-        observeAdaptiveLending(adminToken, adaptiveStartedAt),
+        observeAdaptiveLending(adminToken, adaptiveStartedAt, adaptivePrecondition),
       ]);
+      const adaptiveObservation = await waitForAdaptiveNoisyFloorRestored(
+        adminToken,
+        adaptiveStartedAt,
+        sampledAdaptiveObservation,
+      );
       writeFileSync(
         path.join(outputDir, `adaptive-lending-seed-${seed}.json`),
         JSON.stringify(adaptiveObservation, null, 2),
       );
       await terminateHostChild(provider);
+      const adaptiveHandoffEvidence = await collectAdaptiveClassHandoff(adminToken, adaptiveStartedAt);
+      writeFileSync(
+        path.join(outputDir, `adaptive-handoff-seed-${seed}.json`),
+        JSON.stringify(adaptiveHandoffEvidence, null, 2),
+      );
       const comparison = compareTenantFairness(shared, ceilings, protectedArm, adaptiveArm);
       const adaptiveLending = adaptiveObservation.summary;
-      const proof = tenantFairnessProof(comparison, adaptiveLending);
-      const row = { seed, comparison, adaptiveLending, proof };
+      const adaptiveHandoff = adaptiveHandoffEvidence.summary;
+      const proof = tenantFairnessProof(comparison, adaptiveLending, adaptiveHandoff);
+      const row = { seed, comparison, adaptiveLending, adaptiveHandoff, proof };
       rows.push(row);
       writeFileSync(path.join(outputDir, `comparison-seed-${seed}.json`), JSON.stringify(row, null, 2));
       console.log(
@@ -717,6 +847,8 @@ try {
           `${comparison.premium.protected.contendedGoodputRps} / ` +
           `${comparison.premium.adaptive.contendedGoodputRps} rps; adaptive noisy floor ` +
           `lent=${adaptiveLending.noisyFloorLent} restored=${adaptiveLending.noisyFloorRestored}; ` +
+          `class handoff=${adaptiveHandoff.handoffCommitted ? "committed" : "missing"} ` +
+          `lease avoided=${adaptiveHandoff.leaseAvoidedMs ?? "n/a"}ms; ` +
           `proof=${proof.passed ? "pass" : "fail"}`,
       );
       if (OPT.requireProof && !proof.passed) {
@@ -725,9 +857,10 @@ try {
       if (OPT.pauseMs > 0) await sleep(OPT.pauseMs);
     }
 
-    const summary = aggregateResults(rows, outputDir, fleet.aggregate);
+    if (classGrants === null) throw new Error("tenant-fairness produced no seed policy");
+    const summary = aggregateResults(rows, outputDir, classGrants);
     const scenarioId = createHash("sha256")
-      .update(JSON.stringify({ workload: WORKLOAD_BASE, policy: fleet.aggregate, seeds: OPT.seeds }))
+      .update(JSON.stringify({ workload: WORKLOAD_BASE, policy: classGrants, seeds: OPT.seeds }))
       .digest("hex").slice(0, 12);
     summary.scenarioId = scenarioId;
     writeFileSync(path.join(outputDir, "summary.json"), JSON.stringify(summary, null, 2));

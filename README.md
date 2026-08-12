@@ -56,12 +56,12 @@ cannot release the protected floor. Once the measured load generator is running,
 the presenter waits for a fresh interactive demand report and then arms the
 configured demand policy. Each accepted grant must also have enough remaining
 lifetime for a stable benchmark start. Startup fails if any live local grant is
-too small or too close to expiration. Pool creation also sends Latchflo 0.10.0's durable
+too small or too close to expiration. Pool creation also sends Latchflo 0.11.4's durable
 minimum-grant invariants: one concurrency slot, 755 tokens for interactive, and
 9,942 tokens for batch. Latchflo therefore rejects an unusable split before it
 can issue a zero-capacity or sub-request grant.
 
-The licensed path is pinned to **Tyr 0.24.0**, **Latchflo 0.10.0**,
+The licensed path is pinned to **Tyr 0.25.1**, **Latchflo 0.11.4**,
 **async-bulkhead-llm 3.15.1**, and **async-bulkhead-ts 1.0.1**. The canonical
 comparison uses Anthropic-shaped streaming because that protocol exposes input
 usage at `message_start` and cumulative output usage while the response is still
@@ -78,11 +78,11 @@ registry images, or build missing images from local source directories. Place
 or set `MOFLUX_TYR_SOURCE_DIR` and `MOFLUX_LATCHFLO_SOURCE_DIR` in the local
 environment file.
 
-Tyr 0.24.0 capacity-aware routing is enabled for the licensed four-replica
+Tyr 0.25.1 capacity-aware routing is enabled for the licensed four-replica
 MoFlux arm. Each Tyr polls the private capacity snapshots of the other three
 replicas and may forward a request once to the peer with better headroom for
 that request's concurrency and token reservation. Tyr also reports bounded
-per-pool demand snapshots to Latchflo 0.10.0 on the existing authenticated
+per-pool demand snapshots to Latchflo 0.11.4 on the existing authenticated
 heartbeat. The benchmark generates one local-only shared routing secret in
 `demo/moflux/.env`; the secret is never committed. Latchflo owns grants, demand-
 aware lending, starvation prevention, and lease safety. It does not distribute
@@ -90,7 +90,7 @@ peer topology or the routing secret.
 
 The committed `results/` corpus is deliberately unchanged. Those files are
 historical evidence and retain their recorded Tyr 0.17.0/Latchflo 0.5.1 runtime
-metadata. New licensed runs use Tyr 0.24.0/Latchflo 0.10.0 and should be compared
+metadata. New licensed runs use Tyr 0.25.1/Latchflo 0.11.4 and should be compared
 as a new evidence set rather than silently relabeling the old one.
 
 Run the canonical progressive comparison:
@@ -202,7 +202,7 @@ containers afterward with `npm run demo:down`.
 ### Authenticated admission-class benchmark
 
 The four-arm admission-class benchmark introduced in MoFlux Bench 0.16.0 is
-retained in 0.17.0 for **Tyr 0.24.0** and **Latchflo 0.10.0**. Every seed replays the same immutable
+upgraded in 0.18.0 for **Tyr 0.25.1** and **Latchflo 0.11.4**. Every seed replays the same immutable
 trace through equal 32-request / 64,000-token physical pools:
 
 - `sim-shared` applies only the fleet-wide pool envelope.
@@ -211,13 +211,20 @@ trace through equal 32-request / 64,000-token physical pools:
 - `sim-protected` keeps those ceilings and adds static fleet-wide floors: premium
   gets 4 concurrent / 8,000 tokens; noisy gets 4 concurrent / 36,000 tokens.
 - `sim-adaptive` uses the same nominal floors and ceilings but enables Latchflo
-  0.10.0 demand-aware class-floor lending from Tyr 0.24.0 per-class heartbeats.
+  0.11.0 demand-aware class-floor lending from Tyr 0.25.1 per-class heartbeats.
 
-Noisy traffic starts five seconds after premium traffic. The adaptive pool uses
-a short 3-second benchmark lease and a 1-second idle threshold so the runner can
-observe an idle noisy floor being released and then safely restored after noisy
-demand begins. The other three control pools retain long steady leases. This
-short adaptive TTL is benchmark instrumentation, not a production recommendation.
+Noisy traffic starts five seconds after premium traffic. All four arms now use
+the same 240-second steady lease. Each seed starts from a fresh Latchflo/Tyr
+control-plane state so a restored 240-second grant from an earlier seed cannot
+prevent the next seed from exercising idle-floor lending. Before the adaptive
+trace begins, the runner explicitly waits until the quiet noisy floor is proven
+lent. The adaptive arm keeps a 1-second idle threshold and relies on Tyr 0.25.1
+plus Latchflo 0.11.4's acknowledged class handoff to restore that floor before
+the lent lease expires. After workload sampling ends, the runner keeps a bounded
+15-second synchronization window and actively reconciles until Tyr has actually
+applied the restored floor; a Latchflo handoff commit alone is not treated as
+data-plane restoration. The benchmark no longer shortens the adaptive TTL to
+make restoration observable.
 
 Two ephemeral RS256 identities drive the workloads. Tyr maps the premium tenant
 to `premium`; the noisy worker uses the fixed default class. Latchflo receives
@@ -235,14 +242,15 @@ attribution, bounded shedding, premium and noisy service under contention, and
 at least four noisy completions in the adaptive arm. It also samples both
 Latchflo and Tyr during the adaptive arm and requires: the noisy nominal floor
 was actually lent, its 24-concurrent / 64,000-token hard ceilings stayed intact,
-noisy demand appeared after lending, and Tyr later applied the restored
-4-concurrent / 36,000-token floor.
+noisy demand appeared after lending, Tyr later applied the restored
+4-concurrent / 36,000-token floor, and Latchflo recorded a class handoff whose
+drain grants were acknowledged and committed before the source lease expired.
 
 Success rate, goodput, TTFT, and restoration latency are reported outcomes, not
 acceptance thresholds. The benchmark therefore tests whether adaptive floors are
 work-conserving without assuming in advance that they must beat static floors on
 every performance metric. See `demo/TENANT-FAIRNESS.md` for the exact policy,
-lease semantics, security model, proof contract, and schema-version-3 output.
+lease semantics, security model, proof contract, and schema-version-4 output.
 
 ### Public research walkthrough
 
@@ -435,20 +443,21 @@ npm run demo:handoff           # five-seed baseline vs MoFlux handoff proof
 npm run demo:hetero:adaptive   # recommended mixed-size, all-arm comparison
 ```
 
-`demo:handoff` is the shortest release-level proof for the Latchflo 0.10.0 /
-Tyr 0.24.0 handoff: five lognormal seeds, the exact `adaptive-28-4` profile,
+`demo:handoff` is the shortest release-level proof for the Latchflo 0.11.4 /
+Tyr 0.25.1 handoff: five lognormal seeds, the exact `adaptive-28-4` profile,
 and the full adaptive safety gate without spending time on the extra control
-arms. Demand-aware runs use an 11-second steady-state grant TTL and do not start
-load until the fleet has a fresh grant set with at least 9.5 seconds remaining.
-At the default 27-second batch arrival this guarantees at least 4.5 seconds of
-lease runway for the acknowledged drain + fresh occupancy + commit path, rather
-than making success depend on where the run happens to land in a lease cycle.
+arms. Demand-aware runs use a 120-second steady-state grant TTL and do not start
+load until the fleet has at least 55 seconds of grant runway remaining for the
+default 45-second phase. The acknowledged drain + fresh occupancy + commit path
+therefore has ample time to complete by attrition while the source lease is still
+authoritative. This removes the old 11-second lease-cycle timing dependency and
+makes pre-expiry handoff, rather than lease turnover, the normal restoration path.
 `demo:hetero:adaptive` uses the same profile and proof gate while adding
 all control arms. Conflicting envelope, concurrency, or token settings are
 rejected. `demo:lending` remains the focused static-partition scene.
 
-`--lending` widens the idle window from 35% to 60% of the phase so Tyr 0.24.0
-can report an idle batch pool and Latchflo 0.10.0 can safely lend its protected
+`--lending` widens the idle window from 35% to 60% of the phase so Tyr 0.25.1
+can report an idle batch pool and Latchflo 0.11.4 can safely lend its protected
 floor. The presenter creates a demand-aware capacity group with 28/4 protected
 concurrency and 24,000/40,000-token guarantees, while both pools may borrow up
 to the shared 32-slot/64,000-token envelope. The larger token envelope is
@@ -465,7 +474,7 @@ timestamps, and independently sampled Tyr applied capacity:
 | Question | Required evidence |
 |---|---|
 | Did interactive borrow? | Idle-window occupancy above 28 **and** a Latchflo `capacity_group.lending_observed` event |
-| Did the floor come back? | A Latchflo 0.10.0 restoration handoff commits **and** batch work completes |
+| Did the floor come back? | A Latchflo 0.11.4 restoration handoff commits **and** batch work completes |
 | Was transfer ordered safely? | `handoff_prepared` → every drain grant `applied` ACK → `handoff_committed` |
 | Did the commit actually precede batch admission? | Wall-clock controller commit occurs no later than the load generator's first batch 2xx |
 | Did handoff beat the fallback? | Commit occurs before `floorRestorationDeadline` / old-lease expiry |
@@ -474,7 +483,7 @@ timestamps, and independently sampled Tyr applied capacity:
 
 Configuration is not proof. A run-long 32/32 peak can occur under a static
 28/4 split after batch starts, and occupancy without a matching controller
-event can be a measurement artifact. MoFlux Bench 0.17.0 therefore fails the
+event can be a measurement artifact. MoFlux Bench 0.18.0 therefore fails the
 adaptive proof if the restoration handoff is missing, drain acknowledgements
 are unordered, batch is admitted before an observed commit, the handoff reaches
 its lease fallback, or applied-capacity sampling cannot prove that the envelope was
@@ -701,12 +710,13 @@ Three things worth reading carefully, including the ones that are inconvenient:
   envelope never saturates, so every arm looks identical. Both failure modes
   were hit while building this. Check that peak occupancy reaches the envelope
   and that success rates are neither 0% nor 100% before trusting a comparison.
-- **Adaptive class-floor restoration is lease-safe, not instantaneous.**
-  Tyr 0.24.0 reports bounded per-class demand and Latchflo 0.10.0 can lend a fully
-  observed idle class floor. Returning demand stops new lending immediately, but
-  running borrowers are not revoked; the nominal floor is restored after the
-  outstanding lent-allocation lease expires plus normal reconcile/poll delay.
-  The class benchmark therefore reports restoration latency explicitly.
+- **Adaptive class-floor restoration is acknowledged and non-preemptive.**
+  Tyr 0.25.1 reports bounded per-class demand plus ordered class occupancy
+  evidence, and Latchflo 0.11.4 can restore a returning protected floor before
+  the lent lease expires. Running borrowers are never revoked; the lower shared
+  authority drains by attrition, Tyr acknowledges the class shrink, and Latchflo
+  commits only after fresh occupancy proves the transfer safe. Lease expiry
+  remains the conservative fallback if that proof cannot be obtained.
 - **Streaming chunk granularity** is one SSE frame per simulator tick, not per
   token.
 

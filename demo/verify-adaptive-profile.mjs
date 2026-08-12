@@ -30,6 +30,13 @@ try {
   assert.match(conflict.stderr, /fixes the protected 28\/4, 24k\/40k policy/);
   assert.match(conflict.stderr, /--batch-concurrency-slots \(must be 4\)/);
 
+  const shortLease = run(
+    "--capacity-profile=adaptive-28-4",
+    "--grant-ttl-ms=11000",
+  );
+  assert.notEqual(shortLease.status, 0);
+  assert.match(shortLease.stderr, /--grant-ttl-ms must be at least 60000 for a 45000ms MoFlux phase/);
+
   const accepted = run(
     "--capacity-profile=adaptive-28-4",
     "--mode=baseline",

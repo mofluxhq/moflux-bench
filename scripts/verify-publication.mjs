@@ -105,8 +105,8 @@ if (lock.packages?.[""]?.version !== pkg.version || lock.version !== pkg.version
 }
 const example = readFileSync(path.join(ROOT, "demo/moflux/.env.example"), "utf8");
 for (const expected of [
-  "MOFLUX_TYR_IMAGE=tyr-admission-controller:0.24.0",
-  "MOFLUX_LATCHFLO_IMAGE=latchflo-control-plane:0.10.0",
+  "MOFLUX_TYR_IMAGE=tyr-admission-controller:0.25.1",
+  "MOFLUX_LATCHFLO_IMAGE=latchflo-control-plane:0.11.4",
 ]) {
   if (!example.includes(expected)) {
     findings.push(`demo/moflux/.env.example: missing pinned runtime ${expected}`);
@@ -126,8 +126,8 @@ if (!compose.includes("TYR_ROUTING_SECRET: ${TYR_ROUTING_SECRET:?Set TYR_ROUTING
 for (let replica = 1; replica <= 4; replica += 1) {
   const rel = `demo/moflux/tyr-r${replica}.yaml`;
   const yaml = readFileSync(path.join(ROOT, rel), "utf8");
-  if (!/^    version: 0\.24\.0$/m.test(yaml)) {
-    findings.push(`${rel}: control-plane metadata must identify Tyr 0.24.0`);
+  if (!/^    version: 0\.25\.1$/m.test(yaml)) {
+    findings.push(`${rel}: control-plane metadata must identify Tyr 0.25.1`);
   }
   if (!/^  anthropic:\n    baseUrl: http:\/\/host\.docker\.internal:9000$/m.test(yaml)) {
     findings.push(`${rel}: Anthropic simulator upstream is missing`);
@@ -166,7 +166,7 @@ for (let replica = 1; replica <= 4; replica += 1) {
     "defaultClass: noisy",
     "tenantIds: [tenant-premium]",
     "pools: [sim-shared, sim-ceilings, sim-protected, sim-adaptive]",
-    "version: 0.24.0",
+    "version: 0.25.1",
   ]) {
     if (!yaml.includes(required)) findings.push(`${rel}: missing ${required}`);
   }
@@ -198,6 +198,14 @@ for (const required of [
   "sim-protected",
   "sim-adaptive",
   "observeAdaptiveLending",
+  "waitForAdaptiveNoisyFloorLent",
+  "waitForAdaptiveNoisyFloorRestored",
+  "bootstrapTenantStack",
+  'compose("down", "--volumes", "--remove-orphans")',
+  "collectAdaptiveClassHandoff",
+  "admissionClassOccupancyAck",
+  "/v1/events?limit=1000",
+  "/v1/grants?pool=sim-adaptive&limit=1000",
   "adaptive noisy floor",
 ]) {
   if (!tenantRunner.includes(required)) findings.push(`demo/tenant-fairness.mjs: missing ${required}`);
@@ -210,8 +218,13 @@ for (const required of [
   "noisyMinimumCompletions",
   "minimumNoisyReservationTokensPerAgent",
   "summarizeAdaptiveLendingSamples",
+  "summarizeAdaptiveClassHandoff",
   "adaptiveNoisyFloorLent",
   "adaptiveNoisyFloorRestored",
+  "adaptiveClassHandoffBeatLeaseExpiry",
+  "committedBeforeLeaseExpiry",
+  "grantTtlMs: 240_000",
+  "restorationObserveTimeoutMs: 15_000",
 ]) {
   if (!tenantProof.includes(required)) findings.push(`demo/tenant-fairness-lib.mjs: missing ${required}`);
 }
@@ -234,8 +247,8 @@ if (!pkg.scripts?.["demo:progressive"]?.includes("--provider-api=anthropic") ||
     !pkg.scripts?.["demo:openai"]?.includes("--provider-api=openai")) {
   findings.push("package.json: progressive and OpenAI compatibility demo commands are required");
 }
-if (pkg.version !== "0.17.0") {
-  findings.push("package.json: the acknowledged-handoff benchmark release must be version 0.17.0");
+if (pkg.version !== "0.18.0") {
+  findings.push("package.json: the current benchmark release must be version 0.18.0");
 }
 const classesScript = pkg.scripts?.["demo:classes"] ?? "";
 for (const required of ["demo/tenant-fairness.mjs", "--seeds=1-5", "--require-proof"]) {
@@ -314,6 +327,10 @@ if (!presenter.includes("const defaultBatchConcurrencySlots = lendingRequested ?
 if (!presenter.includes('requestedCapacityProfile === "adaptive-28-4"') ||
     !presenter.includes('profile: OPT.capacityProfile')) {
   findings.push("demo/present.mjs: the named adaptive-28-4 capacity profile is missing");
+}
+if (!presenter.includes('grantTtlMs: num("grant-ttl-ms", 120000)') ||
+    !presenter.includes('const REQUIRED_INITIAL_GRANT_RUNWAY_MS = REQUIRED_GRANT_RUNWAY_MS')) {
+  findings.push("demo/present.mjs: adaptive handoff must use the 120-second steady lease with phase-length runway");
 }
 const seedSweep = readFileSync(path.join(ROOT, "demo/seed-sweep.mjs"), "utf8");
 if (!seedSweep.includes("--capacity-profile=adaptive-28-4") &&

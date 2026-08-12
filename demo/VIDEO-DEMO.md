@@ -19,7 +19,7 @@ request characteristics.
 
 ## Runtime compatibility and setup
 
-The presenter is pinned to Tyr 0.24.0, Latchflo 0.10.0,
+The presenter is pinned to Tyr 0.25.1, Latchflo 0.11.4,
 async-bulkhead-llm 3.15.1, and async-bulkhead-ts 1.0.1. `npm run demo` uses
 Anthropic-shaped streams and enables progressive reconciliation with a
 256-token update step and a 256-token future-output safety margin. Input usage
@@ -50,7 +50,7 @@ Latchflo/Tyr state, then the verified single-pair presenter:
 
 1. validates Docker, Compose, licensed images, and configuration;
 2. starts Latchflo, the telemetry relay, Prometheus, and Grafana;
-3. creates or updates `sim-interactive` and `sim-batch` with a short enrollment lease, an exact 31/1 concurrency split, 30,000/10,000 token budgets, and Latchflo 0.10.0 minimum-grant floors (1 slot; 755 interactive tokens; 9,942 batch tokens);
+3. creates or updates `sim-interactive` and `sim-batch` with a short enrollment lease, an exact 31/1 concurrency split, 30,000/10,000 token budgets, and Latchflo 0.11.4 minimum-grant floors (1 slot; 755 interactive tokens; 9,942 batch tokens);
 4. runs the no-control arm;
 5. replaces passthrough replicas with Tyr, waits for all four registrations,
    promotes the pools to the steady-state lease, and waits for one simultaneous
@@ -138,7 +138,7 @@ npm run demo:hetero:adaptive:blind
 ```
 
 `demo:lending` is the focused static-partition comparison. `demo:handoff` is
-the five-seed release proof for the acknowledged Latchflo 0.10.0 / Tyr 0.24.0
+the five-seed release proof for the acknowledged Latchflo 0.11.4 / Tyr 0.25.1
 handoff without the extra control arms. The adaptive heterogeneous commands are
 the recommended mixed-workload scenes: they add all control arms while keeping
 the same lognormal request sizes and acceptance gate. The blind variant
@@ -147,15 +147,18 @@ policy.
 
 This is a separate five-seed comparison because it changes the control-plane
 policy and lease cadence. The reference arm is an exact static 28/4 partition
-with interactive caps of 7/7/7/7. The MoFlux arm creates a Latchflo 0.10.0 demand-aware capacity group and
-receives live demand snapshots from Tyr 0.24.0. When batch demand returns,
+with interactive caps of 7/7/7/7. The MoFlux arm creates a Latchflo 0.11.4 demand-aware capacity group and
+receives live demand snapshots from Tyr 0.25.1. When batch demand returns,
 Latchflo prepares drain grants for borrowed capacity; Tyr applies the lower
 limit by attrition, acknowledges it, and publishes fresh occupancy evidence.
 Latchflo can then commit the restored batch floor before the old lease expires.
 Lease expiry remains the safety fallback rather than the normal reclaim path.
-The harness uses an 11-second steady-state grant TTL and waits for at least 9.5
-seconds of grant runway before load begins, so the fixed 27-second batch arrival
-has at least 4.5 seconds left on its contemporaneous lease for the handoff proof.
+The harness uses a 120-second steady-state grant TTL and waits for at least 55
+seconds of grant runway before the default 45-second load begins. The fixed
+27-second batch arrival therefore occurs with ample source-lease runway for
+non-preemptive drain-by-attrition, acknowledgement, fresh occupancy proof, and
+commit. The handoff is expected to beat lease expiry by a wide margin rather
+than race an 11-second lease boundary.
 The lending command uses a 64,000-token envelope with 24,000 interactive and
 40,000 batch guaranteed tokens so all 28 interactive and four batch slots are
 funded for the current request shapes.

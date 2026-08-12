@@ -24,10 +24,12 @@ export const TENANT_FAIRNESS_POLICY = Object.freeze({
     minimumNoisyCompletionsPerSeed: 4,
   }),
   adaptive: Object.freeze({
-    grantTtlMs: 3_000,
+    grantTtlMs: 240_000,
     reportStaleAfterMs: 5_000,
     idleAfterMs: 1_000,
     observeIntervalMs: 500,
+    postRunObserveMs: 5_000,
+    restorationObserveTimeoutMs: 15_000,
   }),
   classPolicies: Object.freeze({
     ceilings: Object.freeze({
@@ -205,8 +207,12 @@ export function summarizeAdaptiveLendingSamples(samples) {
       floorEquals(applied, { protectedConcurrent: 0, protectedInFlightTokens: 0 }) &&
       hardCeilingsEqual(applied, nominal);
   });
-  const demandingIndex = ordered.findIndex((sample, index) => index > lentIndex && sampleHasDemand(sample));
-  const restoredIndex = ordered.findIndex((sample, index) => {
+  const demandingIndex = lentIndex < 0
+    ? -1
+    : ordered.findIndex((sample, index) => index > lentIndex && sampleHasDemand(sample));
+  const restoredIndex = demandingIndex < 0
+    ? -1
+    : ordered.findIndex((sample, index) => {
     if (index <= demandingIndex) return false;
     const noisy = controllerNoisy(sample);
     const applied = sample?.applied?.noisy;
@@ -215,9 +221,11 @@ export function summarizeAdaptiveLendingSamples(samples) {
       floorEquals(applied, nominal) &&
       hardCeilingsEqual(applied, nominal);
   });
-  const restorationPendingIndex = ordered.findIndex((sample, index) =>
-    index > lentIndex && controllerNoisy(sample)?.restorationPending === true,
-  );
+  const restorationPendingIndex = lentIndex < 0
+    ? -1
+    : ordered.findIndex((sample, index) =>
+      index > lentIndex && controllerNoisy(sample)?.restorationPending === true,
+    );
   const first = (index) => index < 0 ? null : Number(ordered[index]?.offsetMs ?? 0);
   return Object.freeze({
     sampleCount: ordered.length,
@@ -240,7 +248,91 @@ export function summarizeAdaptiveLendingSamples(samples) {
   });
 }
 
-export function tenantFairnessProof(comparison, adaptiveLending = {}) {
+
+function eventTime(event) {
+  const value = Date.parse(String(event?.createdAt ?? ""));
+  return Number.isFinite(value) ? value : null;
+}
+
+function grantExpiry(grant) {
+  const value = Date.parse(String(grant?.expiresAt ?? ""));
+  return Number.isFinite(value) ? value : null;
+}
+
+function restorationTarget(grants) {
+  return (Array.isArray(grants) ? grants : []).reduce(
+    (total, entry) => {
+      const noisy = entry?.limits?.admissionClasses?.noisy ?? {};
+      total.protectedConcurrent += Number(noisy.protectedConcurrent ?? 0);
+      total.protectedInFlightTokens += Number(noisy.protectedInFlightTokens ?? 0);
+      return total;
+    },
+    { protectedConcurrent: 0, protectedInFlightTokens: 0 },
+  );
+}
+
+export function summarizeAdaptiveClassHandoff(events, grants, startedAtMs) {
+  const nominal = expectedGrantLimits(TENANT_FAIRNESS_POLICY.classPolicies.adaptive).noisy;
+  const orderedEvents = (Array.isArray(events) ? events : [])
+    .filter((event) =>
+      event?.entityId === "sim-adaptive" || event?.payload?.pool === "sim-adaptive",
+    )
+    .filter((event) => {
+      const time = eventTime(event);
+      return time !== null && time >= Number(startedAtMs);
+    })
+    .sort((a, b) => eventTime(a) - eventTime(b));
+
+  const prepared = orderedEvents.find((event) => {
+    if (event?.type !== "admission_class.handoff_prepared") return false;
+    const target = restorationTarget(event?.payload?.grants);
+    return target.protectedConcurrent === nominal.protectedConcurrent &&
+      target.protectedInFlightTokens === nominal.protectedInFlightTokens;
+  });
+  const handoffId = prepared?.payload?.handoffId ?? null;
+  const preparedAtMs = eventTime(prepared);
+  const preparedGrants = Array.isArray(prepared?.payload?.grants) ? prepared.payload.grants : [];
+  const drains = preparedGrants.filter((entry) => entry?.role === "drain");
+  const commit = handoffId === null ? null : orderedEvents.find((event) =>
+    event?.type === "admission_class.handoff_committed" && event?.payload?.handoffId === handoffId,
+  );
+  const abort = handoffId === null ? null : orderedEvents.find((event) =>
+    event?.type === "admission_class.handoff_aborted" && event?.payload?.handoffId === handoffId,
+  );
+  const commitAtMs = eventTime(commit);
+  const appliedAcks = handoffId === null ? [] : orderedEvents.filter((event) =>
+    event?.type === "admission_class.handoff_grant_applied" &&
+    event?.payload?.handoffId === handoffId,
+  );
+  const appliedGrantIds = new Set(appliedAcks.map((event) => event?.entityId));
+  const sourceIds = [...new Set(preparedGrants.map((entry) => entry?.fromGrantId).filter(Boolean))];
+  const grantById = new Map((Array.isArray(grants) ? grants : []).map((grant) => [grant?.grantId, grant]));
+  const sourceExpiries = sourceIds.map((id) => grantExpiry(grantById.get(id))).filter(Number.isFinite);
+  const fallbackDeadlineMs = sourceExpiries.length > 0 ? Math.max(...sourceExpiries) : null;
+  const leaseAvoidedMs = commitAtMs !== null && fallbackDeadlineMs !== null
+    ? fallbackDeadlineMs - commitAtMs
+    : null;
+  return Object.freeze({
+    handoffPrepared: prepared !== undefined,
+    handoffId,
+    restorationTargetMatchesNominal: prepared !== undefined,
+    drainGrantCount: drains.length,
+    appliedDrainAckCount: drains.filter((entry) => appliedGrantIds.has(entry?.grantId)).length,
+    allDrainAcksApplied: drains.length > 0 && drains.every((entry) => appliedGrantIds.has(entry?.grantId)),
+    handoffCommitted: commit !== null && commit !== undefined,
+    handoffAborted: abort !== null && abort !== undefined,
+    preparedAtMs,
+    commitAtMs,
+    preparedOffsetMs: preparedAtMs === null ? null : preparedAtMs - Number(startedAtMs),
+    commitOffsetMs: commitAtMs === null ? null : commitAtMs - Number(startedAtMs),
+    sourceGrantCount: sourceIds.length,
+    fallbackDeadlineMs,
+    leaseAvoidedMs,
+    committedBeforeLeaseExpiry: Number.isFinite(leaseAvoidedMs) && leaseAvoidedMs > 0,
+  });
+}
+
+export function tenantFairnessProof(comparison, adaptiveLending = {}, adaptiveHandoff = {}) {
   const minimumNoisyCompletions =
     TENANT_FAIRNESS_POLICY.workload.minimumNoisyCompletionsPerSeed;
   const checks = Object.freeze({
@@ -269,6 +361,12 @@ export function tenantFairnessProof(comparison, adaptiveLending = {}) {
       adaptiveLending.hardCeilingsPreservedWhileLent === true,
     adaptiveHardCeilingsPreservedAfterRestoration:
       adaptiveLending.hardCeilingsPreservedAfterRestoration === true,
+    adaptiveClassHandoffPrepared: adaptiveHandoff.handoffPrepared === true,
+    adaptiveClassDrainAcksApplied: adaptiveHandoff.allDrainAcksApplied === true,
+    adaptiveClassHandoffCommitted: adaptiveHandoff.handoffCommitted === true,
+    adaptiveClassHandoffNotAborted: adaptiveHandoff.handoffAborted === false,
+    adaptiveClassHandoffBeatLeaseExpiry:
+      adaptiveHandoff.committedBeforeLeaseExpiry === true,
   });
   const observations = Object.freeze({
     premiumTtftImprovedVsShared:
