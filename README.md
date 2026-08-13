@@ -623,6 +623,35 @@ Only arm 4 receives it, because only arm 4 consults a coordinator while
 admitting; sending it to the others would make them look sensitive to a service
 they never call. `demo/verify-loadgen-args.mjs` enforces that routing.
 
+Since 0.19.0, provider-sim readiness is taken from its own `server.listen()`
+callback banner rather than from an HTTP client probe. The ladder repeatedly
+stops and rebinds port 9000 between arms and rungs, so startup must not depend on
+Node's fetch connection pool, HTTP parser, or proxy configuration. Tyr and
+replica readiness still use their application-level `/healthz` checks.
+
+A bound socket is not the same as owning the address the replicas will dial, so
+the banner is followed by an identity probe: provider-sim publishes an instance
+id in that banner and serves `service` and `instance` from `/admin/stats`, and
+each arm confirms the two match over the same global fetch the load generator
+uses. This catches a foreign process holding `127.0.0.1:9000` while the
+simulator binds `0.0.0.0` (macOS allows both, and the specific bind wins
+loopback), an HTTP proxy intercepting loopback, and a simulator left over from an
+earlier arm — each before a measured phase is spent rather than after.
+
+Each rung writes its own run directory under
+`results/runs/video-seed-sweep/<ladder-id>-coord-<rung>ms/` and is read back from
+it, so a rung is attributable to the sweep that produced it. Every arm records
+the rung it ran at; only the Redis arm records having *paid* it. The ladder's own
+default capacity policy is the historical 31/1 profile — pass
+`--capacity-profile=adaptive-28-4` to produce a ladder comparable with the
+published sweeps.
+
+On Node 24, the arm proxy also treats caller disconnects from the response side.
+After the request body has been consumed, `IncomingMessage.close` may represent a
+normal completed request; only a `ServerResponse.close` before `writableEnded`
+cancels the in-flight provider fetch. This keeps the four comparison arms on the
+same forwarding path without turning successful admissions into transport errors.
+
 ### The prediction, and how it can fail
 
 Per-request coordination should degrade roughly linearly with distance,
@@ -641,6 +670,32 @@ rather than extrapolating a crossing beyond the last rung.
 Sizing note: each rung is a complete paired sweep, so the cost is
 rungs × seeds × arms runs. Start with two or three rungs before committing to
 the full ladder.
+
+### An arm that measured nothing is not a result
+
+Every other assertion on an arm checks that the right workload was *offered*:
+the trace hash matches, the logical request counts match, the generator never
+saturated. None of them checks that the workload produced an *outcome*. An arm
+whose replicas are healthy but whose upstream is not the provider simulator
+satisfies all three while reporting:
+
+```
+success 0.0%   goodput 0.00 req/s   p50 0.00s   local rejects 0
+upstream 429 0   peak active ?/32   interactive retries 4.00x
+```
+
+Percentiles read `0.00s` because there are no successful samples, and retry
+amplification pins to `--max-attempts` because every attempt failed. Aggregated
+across seeds it becomes a published median.
+
+The load generator already separates outcomes a policy decided (`success`,
+`localReject`, `upstreamReject`) from outcomes nobody decided (`transportError`,
+`serverError`). `demo/arm-health-lib.mjs` gates on that split: an arm with no
+successes **and** no admission decisions is refused, as is one whose
+unattributable failures exceed 1% of attempts. All 42 committed arm summaries
+under `results/` carry zero of either, so that tolerance is headroom rather than
+an allowance the published numbers depend on. A policy that legitimately refuses
+every request, or a provider that 429s throughout, is a result and still passes.
 
 ## Metrics that matter
 

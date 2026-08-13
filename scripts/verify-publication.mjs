@@ -247,8 +247,8 @@ if (!pkg.scripts?.["demo:progressive"]?.includes("--provider-api=anthropic") ||
     !pkg.scripts?.["demo:openai"]?.includes("--provider-api=openai")) {
   findings.push("package.json: progressive and OpenAI compatibility demo commands are required");
 }
-if (pkg.version !== "0.18.0") {
-  findings.push("package.json: the current benchmark release must be version 0.18.0");
+if (pkg.version !== "0.19.0") {
+  findings.push("package.json: the current benchmark release must be version 0.19.0");
 }
 const classesScript = pkg.scripts?.["demo:classes"] ?? "";
 for (const required of ["demo/tenant-fairness.mjs", "--seeds=1-5", "--require-proof"]) {

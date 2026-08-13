@@ -31,6 +31,7 @@ import {
   sleep,
   terminateHostChild,
   waitFor,
+  waitForChildOutput,
 } from "./host-process-lib.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -206,6 +207,58 @@ try {
     await terminateHostChild(child);
     assert.equal(await isHostPortFree(PROBE_PORT), true);
     console.log("  ok  provider simulator starts, answers, and releases its port");
+  }
+
+  // ── 9. provider readiness can use its listen-callback output marker ──
+  {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => {
+      throw new Error("poisoned global fetch");
+    };
+    const child = launchNode("provider", "sim/provider-sim.mjs", SIM_ARGS);
+    try {
+      const ready = await waitForChildOutput(child, `provider-sim :${PROBE_PORT}`, {
+        timeoutMs: 15_000,
+        label: "provider simulator",
+      });
+      assert.equal(ready.marker, `provider-sim :${PROBE_PORT}`);
+    } finally {
+      globalThis.fetch = originalFetch;
+      await terminateHostChild(child);
+    }
+    assert.equal(await isHostPortFree(PROBE_PORT), true);
+    console.log("  ok  provider readiness uses the listen-callback marker, not global fetch");
+  }
+
+  // ── 10. output readiness does not require a valid HTTP response at all ──
+  {
+    const script = writeScript(
+      "marker-only.mjs",
+      [
+        'import { createServer } from "node:net";',
+        `const server = createServer((socket) => { socket.end("not-http\\n"); });`,
+        `server.listen(${PROBE_PORT}, "127.0.0.1", () => console.log("READY ${PROBE_PORT}"));`,
+        'process.on("SIGTERM", () => server.close(() => process.exit(0)));',
+      ].join("\n") + "\n",
+    );
+    const child = launchNode("marker-only", script, []);
+    try {
+      await waitForChildOutput(child, `READY ${PROBE_PORT}`, {
+        timeoutMs: 5_000,
+        label: "marker-only",
+      });
+      const message = await expectRejection(
+        waitFor(`http://127.0.0.1:${PROBE_PORT}/healthz`, {
+          timeoutMs: 750,
+          label: "marker-only HTTP probe",
+          child,
+        }),
+      );
+      assert.match(message, /Parse Error|socket hang up|timed out|ECONNRESET|Expected HTTP/i, message);
+    } finally {
+      await terminateHostChild(child);
+    }
+    console.log("  ok  listen-marker readiness is independent of HTTP response parsing");
   }
 
   console.log("\nPASS  host process supervision reports why a startup failed");

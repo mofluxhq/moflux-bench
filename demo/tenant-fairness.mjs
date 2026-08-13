@@ -28,6 +28,7 @@ import {
   stopHostChildren,
   terminateHostChild,
   waitFor,
+  waitForChildOutput,
 } from "./host-process-lib.mjs";
 import { startIdentityFixture } from "./identity-fixture-lib.mjs";
 import {
@@ -56,6 +57,39 @@ const RESULTS_ROOT = process.env.MOFLUX_BENCH_RESULTS_DIR
 const TYR_PORTS = [8101, 8102, 8103, 8104];
 const TYR_SERVICES = ["tyr-r1", "tyr-r2", "tyr-r3", "tyr-r4"];
 const PROVIDER_PORT = 9000;
+const PROVIDER_IDENTITY_URL = `http://127.0.0.1:${PROVIDER_PORT}/admin/stats`;
+
+/**
+ * Confirms the provider simulator this run launched is the one its replicas
+ * will reach. A bound socket is not the same as owning the address: on macOS a
+ * listener bound to `127.0.0.1` coexists with the simulator's `0.0.0.0` bind and
+ * wins loopback, so the run would otherwise proceed to a full measured phase in
+ * which nothing succeeds and no admission decision is ever made.
+ */
+async function assertProviderIdentity(readyLine) {
+  const expected = /instance=([0-9a-f-]{36})/.exec(readyLine ?? "")?.[1] ?? null;
+  let payload;
+  try {
+    const response = await fetch(PROVIDER_IDENTITY_URL, { signal: AbortSignal.timeout(3000) });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    payload = await response.json();
+  } catch (error) {
+    throw new Error(
+      `provider simulator announced itself on port ${PROVIDER_PORT} but ${PROVIDER_IDENTITY_URL} did not ` +
+        `answer as the simulator (${error instanceof Error ? error.message : String(error)}). ` +
+        `Check \`lsof -nP -iTCP:${PROVIDER_PORT} -sTCP:LISTEN\` and HTTP_PROXY/HTTPS_PROXY/NO_PROXY.`,
+    );
+  }
+  if (payload?.service !== "moflux-provider-sim") {
+    throw new Error(`${PROVIDER_IDENTITY_URL} is answering, but it is not provider-sim`);
+  }
+  if (expected && payload.instance !== expected) {
+    throw new Error(
+      `${PROVIDER_IDENTITY_URL} is a provider simulator, but not the one this seed started ` +
+        `(expected ${expected}, reached ${payload.instance})`,
+    );
+  }
+}
 const ENROLLMENT_TTL_MS = 3000;
 const STEADY_TTL_MS = TENANT_FAIRNESS_POLICY.adaptive.grantTtlMs;
 
@@ -771,9 +805,12 @@ try {
         "--envelope=32", "--queue=8", "--sigma=0.25", "--kappa=0", "--r1=400",
         "--input-char-ratio=3.6", "--input-jitter=0.04", `--seed=${seed}`,
       ]);
-      await waitFor(`http://127.0.0.1:${PROVIDER_PORT}/healthz`, {
-        timeoutMs: 15000, label: "provider simulator", child: provider,
+      const providerReady = await waitForChildOutput(provider, `provider-sim :${PROVIDER_PORT}`, {
+        timeoutMs: 15000, label: "provider simulator",
       });
+      // The banner proves a socket bound, not that this address reaches this
+      // process. See demo/present.mjs for the failure that motivated it.
+      await assertProviderIdentity(providerReady.line);
       const shared = await runLoadgen({
         seed,
         model: "sim-model-shared",

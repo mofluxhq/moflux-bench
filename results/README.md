@@ -56,9 +56,10 @@ A refund means unused safety reservation was returned for reuse; it is not newly
 `results/runs/tenant-fairness/<run-id>/`: pool-only, class ceilings, static
 protected floors, and adaptive protected floors. Each seed also writes
 `adaptive-lending-seed-N.json`, which samples Latchflo class-demand/lending state
-and the aggregate class limits actually applied by Tyr. The schema-version-3
-`summary.json` records the lend -> demand -> restore proof and restoration
-latency separately from performance observations. These runs are generated
+and the aggregate class limits actually applied by Tyr. The schema-version-4
+`summary.json` records the lend -> demand -> acknowledged pre-expiry handoff ->
+restore proof, lease time avoided, and restoration latency separately from
+performance observations. These runs are generated
 evidence and are not automatically promoted into the reviewed corpus.
 
 ## Published evidence status
@@ -70,7 +71,7 @@ Latchflo 0.5.1**. Read that field rather than any prose description — prose dr
 and an earlier revision of this file and of `.gitignore` both described this
 corpus as Tyr 0.16.0 / Latchflo 0.5.0, which the files themselves contradict.
 
-New licensed runs use Tyr 0.24.0, Latchflo 0.10.0,
+New licensed runs use Tyr 0.25.1, Latchflo 0.11.4,
 async-bulkhead-llm 3.15.1, and async-bulkhead-ts 1.0.1. The main sweep retains
 one-hop capacity-aware routing, per-pool demand heartbeats, pool-level lending,
 and progressive reconciliation for Anthropic-shaped streams. Demand-aware pool

@@ -125,7 +125,14 @@ export function armMetrics(summary) {
     upstream429s: interactive.upstreamReject + batch.upstreamReject,
     peakActive: Number(summary.simCounters?.peakActive ?? 0),
     batchAdmissionGapMs: summary.classes.batch?.admissionGapMs ?? null,
+    // Truthful per arm since 0.19.0: an arm that does not consult a coordinator
+    // while admitting records 0 however far away the rung set the coordinator.
+    // The rung itself is carried separately so a ladder can still prove which
+    // sweep produced this file.
     coordinatorLatencyMs: summary.coordinatorLatencyMs ?? 0,
+    coordinatorOnAdmissionPath: summary.coordinatorOnAdmissionPath ?? null,
+    coordinatorLadderRungMs: summary.coordinatorLadderRungMs ?? null,
+    unattributedFailures: summary.health?.unattributed ?? null,
     // Which limit actually refused work. Without these in the aggregate, a
     // reader has to open five per-seed files to learn whether the token budget
     // decided anything — and a comparison between a token-aware arm and a

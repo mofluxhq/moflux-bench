@@ -9,6 +9,42 @@
  */
 
 /**
+ * What `--control-arms=all` expands to.
+ *
+ * "All" means the buy-vs-build alternatives a reader would otherwise build:
+ * arm 2 (local semaphore) and arm 4 (Redis-coordinated). It deliberately does
+ * not include `static-partition`, which is the lending control and is selected
+ * explicitly by `demo:lending`.
+ *
+ * This lives here because the presenter and the sweep wrapper both resolve the
+ * word and had drifted: the wrapper expanded it to two arms while the presenter
+ * expanded it to every registered spec. The presenter therefore ran the
+ * partition arm on every seed of every sweep and the wrapper then discarded the
+ * file, spending a full arm of run time per seed on a measurement nothing read.
+ */
+export const DEFAULT_CONTROL_ARM_NAMES = Object.freeze(["static-cap", "redis"]);
+
+/**
+ * Resolve a `--control-arms` value into an ordered list of arm names.
+ *
+ * `available` is the caller's registry of known names, so each caller still
+ * rejects what it cannot run, but the meaning of "" and "all" is shared.
+ */
+export function resolveControlArmNames(raw, available) {
+  const value = String(raw ?? "").trim();
+  if (value === "") return [];
+  const names = value === "all" ? [...DEFAULT_CONTROL_ARM_NAMES] : value.split(",").map((name) => name.trim());
+  return names.filter(Boolean).map((name) => {
+    if (!available.includes(name)) {
+      throw new Error(
+        `unsupported --control-arms entry "${name}"; expected ${available.join(", ")} or all`,
+      );
+    }
+    return name;
+  });
+}
+
+/**
  * Return the local concurrency ceiling for Arm 2.
  *
  * Arm 2 is intentionally a static per-replica split: each replica owns an

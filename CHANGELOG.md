@@ -1,5 +1,73 @@
 # Changelog
 
+## 0.19.0 - 2026-08-12
+
+### Fixed
+
+- Fix Node 24/macOS replica forwarding so a completed incoming request body does
+  not abort its own provider call. `IncomingMessage.close` is no longer used as
+  a post-body client-disconnect signal; a premature `ServerResponse.close` now
+  cancels the upstream fetch instead. This preserves cancellation for real
+  caller disconnects without turning every admitted request into a transport
+  failure.
+- Fix provider startup on Node 24/macOS when an HTTP readiness probe can fail
+  with `Parse Error: Expected HTTP/, RTSP/ or ICE/` even though provider-sim has
+  already bound port 9000. Provider readiness now waits for the startup banner
+  emitted from provider-sim's `server.listen()` callback, which is the
+  authoritative signal that its listening socket is ready.
+- Keep application-level HTTP health checks for Tyr and replica processes; only
+  provider-sim uses the listen-callback marker because its health route is
+  installed synchronously before `listen()` and has no later initialization
+  phase.
+- Add regressions for host-process readiness and replica forwarding lifecycle.
+- Correct current licensed-run documentation to Tyr 0.25.1 and Latchflo 0.11.4,
+  and identify admission-class summaries as schema version 4.
+- Refuse a benchmark arm that measured nothing. An arm whose replicas were
+  healthy but whose upstream was not the provider simulator previously completed
+  and passed every assertion while reporting 0.0% success, zero local rejects,
+  zero upstream 429s, `peak active ?/32` and retry amplification pinned at
+  `maxAttempts` — then aggregated into a five-seed median. New
+  `demo/arm-health-lib.mjs` classifies each attempt as decided (success, local
+  reject, upstream 429) or unattributable (transport error, non-2xx), and
+  `assertValidRun` now rejects an arm with no successes and no admission
+  decisions, or with unattributable failures above 1% of attempts. All 42
+  committed arm summaries have zero of either, so the tolerance is headroom
+  rather than an allowance the published runs rely on. The counts are recorded
+  on every summary as `health` and aggregated as `unattributedFailures`.
+- Prove the provider simulator's identity before running an arm. Readiness by
+  startup banner (introduced earlier in this release) shows that a socket bound,
+  not that the base URL the replicas are given reaches that process — on macOS a
+  listener bound to `127.0.0.1:9000` coexists with the simulator's `0.0.0.0`
+  bind and wins loopback. provider-sim now emits an instance id in its banner
+  and serves `service`/`instance` from `/admin/stats`; each arm probes that
+  endpoint over the same global fetch the load generator uses, before spending a
+  measured phase. A foreign process, an intercepting proxy, and a stale
+  simulator from an earlier arm each fail with a distinct message.
+- Stop discarding unknown provider occupancy. `readProviderCounters` swallowed
+  every error and returned null, which the presenter rendered as `?/32` and the
+  sweep aggregate converted to `peakActive: 0`. It now fails the arm.
+- Record coordinator latency only on an arm that consults a coordinator while
+  admitting. `attachScenario` stamped `--coordinator-latency-ms` on every arm, so
+  at a 30ms ladder rung the uncontrolled baseline, both static arms and MoFlux
+  all claimed to have paid 30ms per admission to a service they never call. The
+  rung is now carried separately as `coordinatorLadderRungMs`.
+- Make `--control-arms=all` mean the same thing to the presenter and the sweep
+  wrapper. The wrapper expanded it to arms 2 and 4; the presenter expanded it to
+  every registered spec, so it ran the `static-partition` lending control on
+  every seed of every sweep and the wrapper then discarded the file. Resolution
+  moved to `demo/control-arm-lib.mjs`. `demo:lending` still selects that arm by
+  name, and every published `--control-arms=all` sweep was already reporting
+  only arms 2 and 4.
+- Attribute each coordinator-ladder rung to the run it produced. Each rung now
+  writes a named run directory and is read back from it rather than through the
+  latest-run pointer, and a rung whose evidence records a different latency
+  fails instead of being fitted into the trend. The ladder also stopped passing
+  `--keep-stack`, which neither script reads (both keep the stack unless
+  `--cleanup` is given), gained `--capacity-profile` passthrough, and states
+  which capacity policy it is running under — its default remains the historical
+  31/1 profile, which is not the `adaptive-28-4` profile every published sweep
+  uses.
+
 ## 0.18.0 - 2026-08-11
 
 ### Added

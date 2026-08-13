@@ -23,6 +23,8 @@
  */
 
 import { spawn, spawnSync } from "node:child_process";
+import { get as httpGet } from "node:http";
+import { get as httpsGet } from "node:https";
 import { createServer } from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -40,6 +42,36 @@ export const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export async function fetchWithTimeout(url, options = {}, timeoutMs = 1500) {
   return fetch(url, { ...options, signal: AbortSignal.timeout(timeoutMs) });
+}
+
+/**
+ * One-shot HTTP probe for readiness checks.
+ *
+ * Host demo processes are intentionally short-lived and repeatedly reuse the
+ * same ports between arms. Using the process-global fetch/Undici dispatcher
+ * here lets a keep-alive socket from the process that just exited be reused
+ * against its successor. A readiness probe should establish fresh
+ * connectivity, not test the state of an unrelated connection pool, so it
+ * disables connection pooling explicitly.
+ */
+export function probeHttp(url, timeoutMs = 1200) {
+  return new Promise((resolve, reject) => {
+    const parsed = new URL(url);
+    const get = parsed.protocol === "https:" ? httpsGet : httpGet;
+    const request = get(
+      parsed,
+      { agent: false, headers: { connection: "close" } },
+      (response) => {
+        const status = response.statusCode ?? 0;
+        response.resume();
+        response.once("end", () => resolve({ status }));
+      },
+    );
+    request.setTimeout(timeoutMs, () => {
+      request.destroy(new Error(`HTTP probe timed out after ${timeoutMs}ms`));
+    });
+    request.once("error", reject);
+  });
 }
 
 export const hostChildren = new Set();
@@ -119,6 +151,56 @@ export function launchNode(label, script, argv, { echo = false } = {}) {
   return child;
 }
 
+
+/**
+ * Waits for a child-process output marker.
+ *
+ * Some host processes can signal readiness more authoritatively than a client
+ * probe. provider-sim prints its startup banner from the `server.listen()`
+ * callback, after the listening socket is bound. Waiting for that marker avoids
+ * putting Node's HTTP client/parser/proxy configuration into the startup path.
+ */
+export async function waitForChildOutput(child, marker, {
+  timeoutMs = 15000,
+  label = child?.label ?? "child process",
+  pollMs = 50,
+} = {}) {
+  if (!child) throw new Error(`${label} child process is required`);
+  if (typeof marker !== "string" || marker.length === 0) {
+    throw new Error(`${label} readiness marker must be a non-empty string`);
+  }
+
+  const startedAt = Date.now();
+  const deadline = startedAt + timeoutMs;
+  for (;;) {
+    const output = child.recentOutput?.join("\n") ?? "";
+    if (output.includes(marker)) {
+      // The matched line is returned as well as the marker, because a banner
+      // often carries the only identity the process will ever volunteer.
+      // Readiness and identity are separate questions and a caller that needs
+      // both should not have to re-scan the buffer to get the second.
+      const line = output.split("\n").find((candidate) => candidate.includes(marker)) ?? "";
+      return { marker, line };
+    }
+
+    const ended = describeChildExit(child);
+    if (ended) {
+      throw new Error(
+        `${label} process exited before readiness (${ended})${childOutputTail(child)}`,
+      );
+    }
+    if (Date.now() >= deadline) break;
+    await sleep(pollMs);
+  }
+
+  const elapsedMs = Date.now() - startedAt;
+  throw new Error(
+    `timed out waiting for ${label} readiness marker after ${elapsedMs}ms` +
+      `; expected output containing ${JSON.stringify(marker)}` +
+      `${childOutputTail(child)}`,
+  );
+}
+
 export async function terminateHostChild(child, graceMs = 1500) {
   if (!child) return;
   if (child.exitCode === null && child.signalCode === null) killChildTree(child, "SIGTERM");
@@ -167,7 +249,7 @@ export async function waitFor(url, {
       );
     }
     try {
-      const response = await fetchWithTimeout(url, {}, 1200);
+      const response = await probeHttp(url, 1200);
       last = `HTTP ${response.status}`;
       if (statuses.includes(response.status)) return response;
     } catch (error) {

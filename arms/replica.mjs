@@ -449,14 +449,19 @@ const server = createServer(async (req, res) => {
     inFlight -= 1;
     decision.release();
   };
-  res.on("close", () => {
-    if (!res.writableEnded) counters.clientDisconnects += 1;
-    finish();
-  });
 
+  // The request body has already been fully consumed by readJson(req). Do not
+  // use IncomingMessage's `close` event as a client-disconnect signal here:
+  // modern Node also emits it when the request itself completes normally. A
+  // premature ServerResponse `close` is the signal that the caller can no
+  // longer receive this response, so only that should cancel the provider call.
   const controller = new AbortController();
-  req.on("close", () => {
-    if (!res.writableEnded) controller.abort();
+  res.on("close", () => {
+    if (!res.writableEnded) {
+      counters.clientDisconnects += 1;
+      controller.abort();
+    }
+    finish();
   });
 
   try {

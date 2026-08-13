@@ -28,7 +28,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { armSensitivity, crossover, isCoordinatorIndependent } from "./coordination-lib.mjs";
-import { latestPointerFile } from "./evidence-paths-lib.mjs";
+import { runDir as runDirFor, runId as newRunId } from "./evidence-paths-lib.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const RESULTS = path.join(ROOT, "results");
@@ -51,8 +51,23 @@ if (RUNGS.length < 2) {
 }
 
 const SEEDS = str("seeds", "1-5");
+/**
+ * The capacity policy each rung runs under.
+ *
+ * The ladder's own default is the historical 31/1 profile it shipped with, so
+ * an existing ladder stays comparable with itself. Every published sweep uses
+ * `adaptive-28-4`, so a ladder meant to be read alongside those results should
+ * pass `--capacity-profile=adaptive-28-4` — the ladder will not silently change
+ * what it measures, but it says which policy it used.
+ */
+const CAPACITY_PROFILE = str("capacity-profile", "");
 const BOLD = "\u001b[1m";
 const OFF = "\u001b[0m";
+
+const LADDER_ID = newRunId();
+const SWEEP_NAME = "video-seed-sweep";
+/** Each rung gets its own run directory, named for the rung that produced it. */
+const rungRunId = (latencyMs) => `${LADDER_ID}-coord-${latencyMs}ms`;
 
 function runSweep(latencyMs) {
   return new Promise((resolve, reject) => {
@@ -65,9 +80,13 @@ function runSweep(latencyMs) {
         "--size-distribution=lognormal",
         "--control-arms=all",
         `--coordinator-latency-ms=${latencyMs}`,
-        "--keep-stack",
+        // Named explicitly so this rung is read back from the directory it
+        // wrote, rather than from whichever run the latest-run pointer happens
+        // to name by the time the rung finishes.
+        `--run-id=${rungRunId(latencyMs)}`,
+        ...(CAPACITY_PROFILE ? [`--capacity-profile=${CAPACITY_PROFILE}`] : []),
       ],
-      { stdio: "inherit" },
+      { cwd: ROOT, stdio: "inherit" },
     );
     child.once("error", reject);
     child.once("exit", (code) =>
@@ -76,31 +95,58 @@ function runSweep(latencyMs) {
   });
 }
 
-/** One rung's medians, per arm, from the sweep summary it just wrote. */
+/**
+ * One rung's medians, per arm, read from the run directory that rung wrote.
+ *
+ * Reading the run by name rather than by latest-run pointer is what makes a
+ * rung attributable: a pointer names whatever finished most recently, so a
+ * failed or concurrent sweep could silently be attributed to this rung's
+ * latency and fitted into the trend.
+ */
 function readRung(latencyMs) {
-  // The sweep writes to a generated run directory and leaves reviewed evidence
-  // alone, so follow its latest-run pointer rather than reading
-  // results/video-seed-sweep.json — which would silently report whatever was
-  // last published instead of the rung that just ran.
-  const pointer = latestPointerFile(RESULTS, "video-seed-sweep");
-  if (!existsSync(pointer)) {
-    throw new Error(`sweep at ${latencyMs}ms did not write ${path.relative(ROOT, pointer)}`);
+  const dir = runDirFor(RESULTS, SWEEP_NAME, rungRunId(latencyMs));
+  const summaryPath = path.join(dir, "summary.json");
+  if (!existsSync(summaryPath)) {
+    throw new Error(`sweep at ${latencyMs}ms did not write ${path.relative(ROOT, summaryPath)}`);
   }
-  const { summary: summaryPath } = JSON.parse(readFileSync(pointer, "utf8"));
-  const summary = JSON.parse(readFileSync(path.resolve(ROOT, summaryPath), "utf8"));
+  const summary = JSON.parse(readFileSync(summaryPath, "utf8"));
   const arms = summary.aggregate?.arms ?? {};
   const rung = {};
   for (const [name, metrics] of Object.entries(arms)) {
     if (!metrics) continue;
+    // Every arm records the rung it ran at. If it disagrees with the rung the
+    // ladder believes it requested, the x-axis is wrong and the fitted slope is
+    // meaningless, so it fails rather than being plotted.
+    const recorded = metrics.coordinatorLadderRungMs?.median ?? null;
+    if (recorded !== null && recorded !== latencyMs) {
+      throw new Error(
+        `arm ${name} in ${path.relative(ROOT, summaryPath)} records rung ${recorded}ms, not ${latencyMs}ms`,
+      );
+    }
     rung[name] = {
       coordinatorLatencyMs: latencyMs,
       ttftP50Ms: metrics.interactiveTtftP50Ms?.median ?? null,
       ttftP95Ms: metrics.interactiveTtftP95Ms?.median ?? null,
       successRate: metrics.interactiveSuccessRate?.median ?? null,
+      /** False for every arm but redis; recorded so the report can say so. */
+      coordinatorOnAdmissionPath: metrics.coordinatorOnAdmissionPath?.median ?? null,
     };
+  }
+  for (const required of ["redis", "moflux"]) {
+    if (!rung[required]) {
+      throw new Error(
+        `sweep at ${latencyMs}ms produced no ${required} arm; the ladder compares those two and cannot fit a trend without both`,
+      );
+    }
   }
   return rung;
 }
+
+console.log(
+  `${BOLD}Coordinator ladder${OFF} — ${RUNGS.length} rungs (${RUNGS.join(", ")}ms) x seeds ${SEEDS}` +
+    `, capacity profile ${CAPACITY_PROFILE || "historical-31-1 (ladder default)"}.`,
+);
+console.log(`   each rung is a complete paired sweep; run evidence lands in results/runs/${SWEEP_NAME}/${LADDER_ID}-coord-*ms/\n`);
 
 const ladder = new Map();
 for (const latencyMs of RUNGS) {
@@ -132,9 +178,12 @@ function buildReport() {
   const redis = ladder.get("redis");
   const moflux = ladder.get("moflux");
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     generatedAt: new Date().toISOString(),
+    ladderId: LADDER_ID,
+    capacityProfile: CAPACITY_PROFILE || "historical-31-1",
     rungs: RUNGS,
+    rungsCompleted: [...new Set([...ladder.values()].flatMap((r) => r.map((x) => x.coordinatorLatencyMs)))].sort((a, b) => a - b),
     seeds: SEEDS,
     sensitivity,
     crossover:

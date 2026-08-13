@@ -34,6 +34,8 @@ const tests = [
   ["demo/verify-control-arms.mjs", 30_000],
   ["demo/verify-static-cap.mjs", 30_000],
   ["demo/verify-arm-services.mjs", 30_000],
+  ["demo/verify-replica-forwarding.mjs", 30_000],
+  ["demo/verify-arm-health.mjs", 30_000],
   ["demo/verify-loadgen-args.mjs", 30_000],
   ["demo/verify-coordination.mjs", 30_000],
   ["demo/verify-lending.mjs", 30_000],

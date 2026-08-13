@@ -44,6 +44,7 @@ import {
   runId as newRunId,
 } from "./evidence-paths-lib.mjs";
 import { publishRun } from "./publish-evidence-lib.mjs";
+import { resolveControlArmNames } from "./control-arm-lib.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const RESULTS = process.env.MOFLUX_BENCH_RESULTS_DIR
@@ -90,23 +91,13 @@ const CONTROL_ARM_FILES = {
   staticPartition: "static-partition.json",
   redis: "redis-coordinated.json",
 };
-const controlArmsRaw = str("control-arms", "").trim();
-const CONTROL_ARM_KEYS =
-  controlArmsRaw === ""
-    ? []
-    : (controlArmsRaw === "all" ? ["static-cap", "redis"] : controlArmsRaw.split(",").map((n) => n.trim()))
-        .filter(Boolean)
-        .map((name) => {
-          const key = name === "static-cap"
-            ? "staticCap"
-            : name === "static-partition"
-              ? "staticPartition"
-              : name;
-          if (!CONTROL_ARM_FILES[key]) {
-            throw new Error(`unsupported --control-arms entry "${name}"; expected static-cap, static-partition, redis, or all`);
-          }
-          return key;
-        });
+const CONTROL_ARM_NAMES = { "static-cap": "staticCap", "static-partition": "staticPartition", redis: "redis" };
+// Resolved through the same helper the presenter uses, so "all" cannot mean one
+// set of arms to the presenter and another to this wrapper.
+const CONTROL_ARM_KEYS = resolveControlArmNames(
+  str("control-arms", ""),
+  Object.keys(CONTROL_ARM_NAMES),
+).map((name) => CONTROL_ARM_NAMES[name]);
 if (!new Set(["compare", "baseline", "moflux"]).has(mode)) {
   throw new Error(`unsupported --mode=${mode}; expected compare, baseline, or moflux`);
 }

@@ -28,7 +28,20 @@
  */
 
 import { createServer } from "node:http";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+
+/**
+ * Identifies this specific simulator process.
+ *
+ * Binding a socket is not the same as owning the address a caller will dial.
+ * On macOS a listener bound to `127.0.0.1:9000` and one bound to `0.0.0.0:9000`
+ * can coexist, and the specific bind wins loopback — so this process can start
+ * cleanly while every replica request lands somewhere else entirely. The id is
+ * printed in the startup banner and served from `/admin/stats`, which lets the
+ * presenter prove that the provider it dialled is the child it launched.
+ */
+const INSTANCE_ID = randomUUID();
+const SERVICE_NAME = "moflux-provider-sim";
 
 // ── args ─────────────────────────────────────────────────────────────
 
@@ -511,6 +524,8 @@ const server = createServer(async (req, res) => {
   if (req.method === "GET" && req.url === "/admin/stats") {
     const n = active.size;
     sendJson(res, 200, {
+      service: SERVICE_NAME,
+      instance: INSTANCE_ID,
       config: CONFIG,
       active: n,
       queued: waiting.length,
@@ -633,6 +648,7 @@ server.on("error", (error) => {
 server.listen(CONFIG.port, "0.0.0.0", () => {
   console.log(
     `provider-sim :${CONFIG.port} envelope=${CONFIG.envelope} queue=${CONFIG.queue} ` +
-      `sigma=${CONFIG.sigma} kappa=${CONFIG.kappa} r1=${CONFIG.r1} seed=${CONFIG.seed} APIs=openai,anthropic`,
+      `sigma=${CONFIG.sigma} kappa=${CONFIG.kappa} r1=${CONFIG.r1} seed=${CONFIG.seed} ` +
+      `instance=${INSTANCE_ID} APIs=openai,anthropic`,
   );
 });

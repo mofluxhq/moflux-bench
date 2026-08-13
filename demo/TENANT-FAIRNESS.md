@@ -1,6 +1,6 @@
 # Admission-class fairness and lending benchmark
 
-MoFlux Bench 0.18.0 upgrades the four-arm authenticated noisy-neighbor scenario
+MoFlux Bench 0.19.0 includes the four-arm authenticated noisy-neighbor scenario
 introduced in 0.16.0, including demand-aware protected-floor lending with Tyr
 0.25.1 and Latchflo 0.11.4.
 

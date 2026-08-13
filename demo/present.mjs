@@ -37,7 +37,12 @@ import {
   buildDemandAwareCapacityGroup,
   summarizeControllerLending,
 } from "./lending-evidence-lib.mjs";
-import { dividedStaticCap, partitionStaticCap } from "./control-arm-lib.mjs";
+import {
+  dividedStaticCap,
+  partitionStaticCap,
+  resolveControlArmNames,
+} from "./control-arm-lib.mjs";
+import { armHealth, assertArmProducedWork } from "./arm-health-lib.mjs";
 import { buildTrace } from "../load/trace-lib.mjs";
 import { reservationBounds, validateCapacityPlan } from "./capacity-lib.mjs";
 import {
@@ -60,6 +65,7 @@ import {
   stopHostChildrenSync,
   terminateHostChild,
   waitFor,
+  waitForChildOutput,
 } from "./host-process-lib.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -336,16 +342,11 @@ const CONTROL_ARM_SPECS = {
 };
 
 const CONTROL_ARMS = (() => {
-  const raw = OPT.controlArms.trim();
-  if (raw === "") return [];
-  const names = raw === "all" ? Object.keys(CONTROL_ARM_SPECS) : raw.split(",").map((n) => n.trim());
-  return names.filter(Boolean).map((name) => {
+  // "all" is resolved by control-arm-lib so the presenter and the sweep wrapper
+  // cannot disagree about which arms a sweep contains.
+  const names = resolveControlArmNames(OPT.controlArms, Object.keys(CONTROL_ARM_SPECS));
+  return names.map((name) => {
     const spec = CONTROL_ARM_SPECS[name];
-    if (!spec) {
-      throw new Error(
-        `unsupported --control-arms entry "${name}"; expected ${Object.keys(CONTROL_ARM_SPECS).join(", ")} or all`,
-      );
-    }
     const resolve = (value) => typeof value === "function" ? value(OPT) : value;
     return {
       ...spec,
@@ -1290,8 +1291,21 @@ function loadgenArgs({ interactiveTargets, batchTargets, armLabel, outFile }) {
   ];
 }
 
-function attachScenario(summary) {
-  summary.coordinatorLatencyMs = OPT.coordinatorLatencyMs;
+/**
+ * @param consultsCoordinator Whether this arm consults a coordination service
+ *   while admitting. Only such an arm pays `--coordinator-latency-ms`, so only
+ *   such an arm may record having paid it. Stamping the configured value on
+ *   every arm made a 30ms ladder rung claim that the uncontrolled baseline,
+ *   the static caps and MoFlux had all paid 30ms per admission to a service
+ *   they never call.
+ */
+function attachScenario(summary, { consultsCoordinator = false } = {}) {
+  summary.coordinatorLatencyMs = consultsCoordinator ? OPT.coordinatorLatencyMs : 0;
+  summary.coordinatorOnAdmissionPath = consultsCoordinator;
+  // The rung this file was produced at, recorded on every arm so a ladder can
+  // prove which sweep a summary belongs to without inferring it from a metric
+  // the arm never pays.
+  summary.coordinatorLadderRungMs = OPT.coordinatorLatencyMs;
   summary.scenario = {
     id: SCENARIO_ID,
     workload: WORKLOAD,
@@ -1319,6 +1333,12 @@ function assertSameScenario(baseline, moflux) {
 }
 
 function assertValidRun(summary, label) {
+  // Checked first: when the request path is broken every other assertion here
+  // still passes, because the right trace was offered — it just never produced
+  // a measurement. Recorded on the summary either way so a run that stays under
+  // the tolerance is still visible in the published evidence.
+  summary.health = armHealth(summary);
+  assertArmProducedWork(summary, label, { providerBaseUrl: PROVIDER_BASE_URL });
   if (summary.generatorSaturated > 0) {
     throw new Error(
       `${label} is invalid: the load generator saturated ${summary.generatorSaturated} times`,
@@ -1377,13 +1397,82 @@ async function runLoadgen({ interactiveTargets, batchTargets, armLabel, outFile,
   return { summary, sideResult };
 }
 
+/**
+ * Provider occupancy for the arm that just ran.
+ *
+ * This used to swallow every error and return null, which the presenter
+ * rendered as `peak active ?/32` and the sweep aggregate silently converted to
+ * `peakActive: 0`. An unreadable provider means the arm's occupancy is unknown,
+ * and unknown is not zero, so it fails instead.
+ */
 async function readProviderCounters() {
+  let payload;
   try {
     const response = await fetchWithTimeout(`${PROVIDER_BASE_URL}/admin/stats`, {}, 2000);
-    return (await response.json())?.counters ?? null;
-  } catch {
-    return null;
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    payload = await response.json();
+  } catch (error) {
+    throw new Error(
+      `could not read provider occupancy from ${PROVIDER_BASE_URL}/admin/stats ` +
+        `(${error instanceof Error ? error.message : String(error)}). ` +
+        "Peak occupancy is part of every published arm, so the run is refused rather than " +
+        "recorded with an unknown envelope.",
+    );
   }
+  const counters = payload?.counters;
+  if (!counters) {
+    throw new Error(
+      `${PROVIDER_BASE_URL}/admin/stats answered without counters; it is not this run's provider simulator`,
+    );
+  }
+  return counters;
+}
+
+/**
+ * Proves that the provider the replicas will dial is the child just launched.
+ *
+ * A bound socket is not the same as owning the address a caller reaches.
+ * provider-sim binds `0.0.0.0`, and on macOS a process bound specifically to
+ * `127.0.0.1:9000` coexists with it and wins loopback — so the simulator starts
+ * cleanly, prints its banner, and every replica request goes somewhere else.
+ * Readiness by startup banner alone (0.19.0) cannot see this; the arm then runs
+ * to completion reporting zero successes, zero rejects and unknown occupancy.
+ *
+ * The probe deliberately uses the same global fetch the load generator uses, on
+ * the same base URL the replicas are given, so a proxy or connection-pool
+ * problem that affects real traffic fails here rather than 45 seconds later.
+ */
+async function assertProviderIdentity(readyLine, { label = "provider simulator" } = {}) {
+  const expected = /instance=([0-9a-f-]{36})/.exec(readyLine ?? "")?.[1] ?? null;
+  let payload;
+  try {
+    const response = await fetchWithTimeout(`${PROVIDER_BASE_URL}/admin/stats`, {}, 3000);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    payload = await response.json();
+  } catch (error) {
+    throw new Error(
+      `${label} announced itself on port ${PROVIDER_PORT} but ${PROVIDER_BASE_URL} did not answer ` +
+        `as the simulator (${error instanceof Error ? error.message : String(error)}). ` +
+        `Something else owns that address for loopback callers, or an HTTP proxy is intercepting it. ` +
+        `Check \`lsof -nP -iTCP:${PROVIDER_PORT} -sTCP:LISTEN\` and HTTP_PROXY/HTTPS_PROXY/NO_PROXY.`,
+    );
+  }
+  if (payload?.service !== "moflux-provider-sim") {
+    throw new Error(
+      `${PROVIDER_BASE_URL} is answering, but it is not provider-sim (service=${JSON.stringify(payload?.service ?? null)}). ` +
+        `Another process owns ${PROVIDER_BASE_URL} for loopback callers.`,
+    );
+  }
+  if (expected && payload.instance !== expected) {
+    throw new Error(
+      `${PROVIDER_BASE_URL} is a provider simulator, but not the one this arm started ` +
+        `(expected instance ${expected}, reached ${payload.instance}). ` +
+        "A simulator from an earlier arm or rung is still holding the port; its counters and seed are not this arm's.",
+    );
+  }
+  return payload.instance ?? null;
 }
 
 async function readTyrStats() {
@@ -1704,11 +1793,11 @@ async function runLocalArm({ name, replicaArm, replicaFlags, armLabel, file, nee
   if (needsRedis) await flushRedis();
 
   const provider = launchNode("provider", "sim/provider-sim.mjs", providerArgs());
-  await waitFor(`${PROVIDER_BASE_URL}/healthz`, {
+  const ready = await waitForChildOutput(provider, `provider-sim :${PROVIDER_PORT}`, {
     timeoutMs: 15000,
     label: "provider simulator",
-    child: provider,
   });
+  await assertProviderIdentity(ready.line);
 
   const replicas = [];
   try {
@@ -1738,7 +1827,7 @@ async function runLocalArm({ name, replicaArm, replicaFlags, armLabel, file, nee
       outFile,
     });
     summary.simCounters = await readProviderCounters();
-    attachScenario(summary);
+    attachScenario(summary, { consultsCoordinator: Boolean(needsRedis) });
     attachLending(summary);
     writeFileSync(outFile, JSON.stringify(summary, null, 2));
     return summary;
@@ -1839,11 +1928,11 @@ async function runBaseline() {
 
 async function runMoflux(env) {
   const sim = launchNode("provider", "sim/provider-sim.mjs", providerArgs());
-  await waitFor(`${PROVIDER_BASE_URL}/healthz`, {
+  const ready = await waitForChildOutput(sim, `provider-sim :${PROVIDER_PORT}`, {
     timeoutMs: 15000,
     label: "provider simulator",
-    child: sim,
   });
+  await assertProviderIdentity(ready.line);
 
   const liveGrants = await startTyr(env);
   const before = aggregateTokenAccounting(await readTyrStats());
@@ -1909,7 +1998,9 @@ async function runMoflux(env) {
     tokenAccounting.totalReserved > 0 ? netRecovered / tokenAccounting.totalReserved : 0;
 
   summary.simCounters = simCounters;
-  attachScenario(summary);
+  // MoFlux holds a grant and decides locally, so it never consults a
+  // coordinator while admitting however far away Latchflo is.
+  attachScenario(summary, { consultsCoordinator: false });
   // MoFlux is the only arm with a real pool structure, so it is the only arm
   // whose interactive ceiling is narrower than the envelope — and therefore
   // the only one where borrowing is even expressible.
