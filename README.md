@@ -657,19 +657,174 @@ same forwarding path without turning successful admissions into transport errors
 Per-request coordination should degrade roughly linearly with distance,
 multiplied by attempts per request. Lease-based coordination should be flat.
 
-`results/coordinator-ladder.json` reports a least-squares slope per arm in
-milliseconds of added latency per millisecond of coordinator distance, with an
-r² so a slope fitted to noise is not read as a trend. A flat Redis line, or a
-rising MoFlux line, refutes the prediction — and `isCoordinatorIndependent`
-will say so, because it judges the fit rather than the architecture.
+`results/coordinator-ladder.json` reports, per arm, a linear fit of added
+latency against coordinator distance **within each seed**, then aggregates
+those slopes across seeds. Every seed replays a byte-identical trace at every
+rung, so the seed is the natural unit of pairing and the slope is the effect
+the pairing isolates.
 
-The crossover is reported only when it is **observed inside the tested ladder**.
-If the two arms never cross, the report says so and gives the narrowest deficit
-rather than extrapolating a crossing beyond the last rung.
+Through 0.19.0 the report did something else: it fitted six cross-seed medians,
+one per rung. On the 20260813T054929Z ladder the between-seed spread was
+194-505ms against a 132ms effect, and the median landed on a different seed at
+different rungs, so a single rank swap read as an outlier, r² collapsed to
+0.0487, and every arm — Redis included — was reported as
+coordinator-independent. That failure is asymmetric and worth stating plainly:
+under an r² gate, noise confirms flatness for an arm predicted to be flat and
+refutes degradation for an arm predicted to degrade, so an unpaired fit over
+noisy medians can only ever report "no coordination cost", whichever way the
+data points. The unpaired figures are still published as
+`unpairedCoordinatorIndependent` for continuity, and are not the verdict.
+
+Four verdicts are possible per arm, and **"insensitive" is not the default**:
+
+| verdict | meaning |
+| --- | --- |
+| `degrades` | 95% interval excludes zero from above, or the exact two-sided sign test establishes a positive direction at p < 0.05 |
+| `improves` | 95% interval excludes zero from below, or the exact two-sided sign test establishes a negative direction at p < 0.05 |
+| `insensitive` | interval lies wholly inside ±0.1 ms/ms — an effect worth caring about is positively ruled out. Tested **before** the interval's sign, so a negligible-but-measurable slope reads as negligible rather than directional |
+| `inconclusive` | interval contains both zero and a real effect |
+
+`inconclusive` is a normal outcome at five seeds. It is not evidence of
+flatness and must not be published as any. `resolutionMsPerMs` reports the
+smallest slope the ladder could have ruled out, so a reader can tell
+"measured as flat" from "could not tell" without reading this file.
+
+Direction is counted both ways. A slope of exactly zero is neither degrading
+nor improving, so `seedsDegrading`, `seedsImproving` and `seedsTied` are all
+published and the sign test runs over the seeds that actually moved — five
+rising and three tied is a test on five, not on eight. Testing direction as
+"not the other side" would read eight motionless seeds as eight seeds agreeing
+on improvement, and at six seeds or more that clears the sign test.
+
+`verdictBasis` names the rule that fired, because the two rules are not equally
+strong. An interval excluding zero is the better evidence. Unanimous direction
+across five seeds is a sign test at two-sided p = 0.0625 — the most extreme
+result five seeds can produce, and still short of 0.05 — so **five unanimous
+seeds remain `inconclusive` when the interval also spans zero**. Six unanimous
+seeds reach 0.031 and eight reach 0.008. The report also publishes a
+`directionalP` for the pre-specified positive-slope t test, but that diagnostic
+does not override the two-sided verdict threshold.
+
+The ladder also records the Redis replica's admission-decision cost directly.
+`replica_admission_overhead_ms_sum` and
+`replica_admission_overhead_decisions_total` are aggregated across replicas
+before the average is calculated, so a busy replica is weighted by the number
+of decisions it actually made. `admissionOverhead` in the paired sensitivity
+report is therefore the causal measurement of the injected coordinator delay;
+TTFT remains the user-visible consequence, with provider latency, retries and
+queueing left visible rather than mistaken for coordinator time.
+
+The crossover is reported only when it is **observed and stable inside the
+tested ladder**. A paired crossing requires a majority of *seeds* to change
+hands, be confirmed at at least one subsequent larger rung, and keep that
+majority through every larger tested rung. A one-rung majority flip — including
+a lead that appears only at the final rung — is retained as
+`transientMajorityLeadRungsMs`, not promoted to a crossover. This prevents the
+old "first sign flip wins" behavior from calling a noisy 1ms lead a crossing
+when the arm falls behind again at 5, 15 or 30ms, or calling an unconfirmed
+50ms endpoint a stable crossing. If the two arms never establish a persistent
+lead, the report says so and gives the narrowest median deficit rather than
+extrapolating beyond the tested range.
 
 Sizing note: each rung is a complete paired sweep, so the cost is
-rungs × seeds × arms runs. Start with two or three rungs before committing to
-the full ladder.
+rungs × seeds × arms runs — the six-rung, five-seed ladder above took just over
+two hours. Start with two or three rungs before committing to the full ladder.
+
+```bash
+npm run demo:coordinator:reanalyze -- --reanalyze=20260813T054929Z
+```
+
+Re-reads an existing ladder's per-rung run directories and rebuilds the report
+from them, running nothing. A change to the analysis must not require re-paying
+for the measurement; every per-seed arm summary the analysis reads is already
+on disk, named by the sweep that wrote it. A ladder that died partway is re-read
+on the rungs that completed, with the missing ones named and the partial fit
+declared; fewer than two rungs is refused outright.
+
+To continue an interrupted ladder instead of only analysing it, pass
+`--resume=<ladder-id>` with the same rung, seed, profile and order arguments.
+Completed rung summaries are validated before reuse; missing rungs run normally.
+For example, the adaptive ladder can resume with:
+
+```bash
+npm run demo:coordinator:adaptive -- --resume=20260813T201610Z
+```
+
+### What the admission-decision measurement covers
+
+`--coordinator-latency-ms` is injected into the Redis client, and the replica
+proxy times the reserve round trip around it, so `admissionOverheadMs` measures
+the coordinator cost directly rather than inferring it through TTFT — where a
+one-millisecond-per-millisecond effect sits under provider latency, queueing
+and retries.
+
+It covers the Redis arm only. The other local arms are instrumented and make no
+coordinator calls, so they record a measured zero. **The MoFlux arm admits
+inside Tyr rather than the local replica proxy, so nothing times it at all**:
+Tyr exports `tyr_request_duration_seconds` and `tyr_upstream_duration_seconds`
+and no admission-decision timing, and their difference is decision *plus queue
+wait*, which is not the same quantity — an arm that queues deliberately would
+report seconds of "admission overhead" against Redis's sub-millisecond
+decision. A MoFlux-side figure needs a decision-duration counter in Tyr with
+matching semantics, which does not exist yet.
+
+The report therefore distinguishes three states rather than collapsing them to
+a dash: `measured`, `none made` (instrumented, no coordinator calls) and
+`not measured` (no counter exists). An absent counter is not a measurement of
+zero overhead, and the ladder refuses a run that instruments decisions but
+times none for the Redis arm, because that is lost instrumentation rather than
+a free coordinator.
+
+### Rung order is a variable
+
+```bash
+npm run demo:coordinator:adaptive          # 0/5/20/50ms x 8 seeds, adaptive-28-4
+npm run demo:coordinator:adaptive:strict   # same ladder + full adaptive outcome gate
+```
+
+`--rung-order` is `ascending` by default, which is fully confounded: the largest rung is always measured last,
+so drift over the ladder's several hours — thermal, background load, a warming
+cache — is collinear with coordinator distance and cannot be separated from it
+afterwards. `rungOrderConfounding` in the report is the Spearman correlation
+between rung magnitude and run position; ascending scores 1.
+
+`--rung-order=alternating` runs smallest, largest, next smallest, next largest,
+which drops that to 0.26 for a six-rung ladder while staying deterministic, so
+the ladder is still reproducible from its arguments. `given` uses the order
+passed to `--rungs`.
+
+This is not hypothetical. On the 20260813T054929Z ladder the 1ms rung, run
+second, sits above both its 0ms and 5ms neighbours in **every arm** — including
+baseline and static-cap, which never receive the coordinator flag at all. A
+rung effect appearing in arms not under the manipulation is host state rather
+than coordination cost, and ascending order gives no way to tell them apart
+after the fact.
+
+The adaptive ladder is useful as a **secondary realism run**, not as a
+replacement for the historical 31/1 ladder. It puts MoFlux under the current
+28/4 demand-aware policy used by the adaptive benchmark, which makes the result
+easier to compare with current product evidence. It also introduces real
+lending and handoff dynamics that are unrelated to coordinator distance and can
+add variance, so the simpler historical ladder remains the cleaner isolation of
+the coordinator-path effect.
+
+The adaptive ladder spends its budget differently on purpose: **seeds are the
+replicate, rungs are not.** The interval is taken over per-seed slopes, so its
+width is governed by seed count; rungs buy within-seed precision the interval
+cannot report. At the measured cost of roughly four minutes per seed per rung,
+six rungs by five seeds and four rungs by eight seeds cost about the same two
+hours.
+
+The normal adaptive ladder does **not** require the full
+`--require-adaptive-proof` gate. That gate asserts batch-floor restoration,
+handoff commit, batch completions and other policy outcomes that are important
+for `demo:hetero:adaptive` but orthogonal to the ladder's coordinator-latency
+question. Conditioning each rung on those outcomes can censor an otherwise
+valid measurement and bias the fitted sample. Every rung still records its
+`adaptiveProof` status and failures in `coordinator-ladder.json`. Use
+`demo:coordinator:adaptive:strict` only when the intended experiment really is
+"coordinator sensitivity among runs that also pass the complete adaptive
+acceptance gate."
 
 ### An arm that measured nothing is not a result
 

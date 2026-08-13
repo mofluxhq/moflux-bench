@@ -367,6 +367,16 @@ function renderMetrics() {
       ? 0
       : (counters.admissionOverheadMsSum / counters.admissionOverheadCount).toFixed(4),
   );
+  c(
+    "replica_admission_overhead_ms_sum",
+    "Cumulative milliseconds spent making admission decisions.",
+    counters.admissionOverheadMsSum.toFixed(4),
+  );
+  c(
+    "replica_admission_overhead_decisions_total",
+    "Admission decisions included in the overhead measurement.",
+    counters.admissionOverheadCount,
+  );
 
   c("replica_received_total", "Requests received from clients.", counters.received);
   c("replica_admitted_total", "Requests admitted locally.", counters.admitted);

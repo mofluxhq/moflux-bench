@@ -247,8 +247,8 @@ if (!pkg.scripts?.["demo:progressive"]?.includes("--provider-api=anthropic") ||
     !pkg.scripts?.["demo:openai"]?.includes("--provider-api=openai")) {
   findings.push("package.json: progressive and OpenAI compatibility demo commands are required");
 }
-if (pkg.version !== "0.19.0") {
-  findings.push("package.json: the current benchmark release must be version 0.19.0");
+if (pkg.version !== "0.20.0") {
+  findings.push("package.json: the current benchmark release must be version 0.20.0");
 }
 const classesScript = pkg.scripts?.["demo:classes"] ?? "";
 for (const required of ["demo/tenant-fairness.mjs", "--seeds=1-5", "--require-proof"]) {
@@ -274,6 +274,28 @@ for (const [name, honorsRetryHints] of adaptiveScripts) {
   if (blind === honorsRetryHints) {
     findings.push(`package.json: ${name} has the wrong retry-hint mode`);
   }
+}
+
+
+const coordinatorAdaptive = pkg.scripts?.["demo:coordinator:adaptive"] ?? "";
+for (const required of [
+  "--capacity-profile=adaptive-28-4",
+  "--rungs=0,5,20,50",
+  "--seeds=1-8",
+  "--rung-order=alternating",
+]) {
+  if (!coordinatorAdaptive.includes(required)) {
+    findings.push(`package.json: demo:coordinator:adaptive is missing ${required}`);
+  }
+}
+if (coordinatorAdaptive.includes("--require-adaptive-proof")) {
+  findings.push(
+    "package.json: demo:coordinator:adaptive must not condition coordinator-latency measurement on the adaptive outcome gate",
+  );
+}
+const coordinatorAdaptiveStrict = pkg.scripts?.["demo:coordinator:adaptive:strict"] ?? "";
+if (!coordinatorAdaptiveStrict.includes("--require-adaptive-proof")) {
+  findings.push("package.json: demo:coordinator:adaptive:strict must require the full adaptive proof");
 }
 
 const handoffScript = pkg.scripts?.["demo:handoff"] ?? "";

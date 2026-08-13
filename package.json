@@ -1,6 +1,6 @@
 {
   "name": "moflux-bench",
-  "version": "0.19.0",
+  "version": "0.20.0",
   "description": "Synthetic benchmark harness for LLM admission control: a provider simulator with a parameterized concurrency-degradation curve, an open-loop multi-class load generator, and comparison arms.",
   "license": "Apache-2.0",
   "type": "module",
@@ -16,6 +16,9 @@
     "demo:baseline": "node demo/present.mjs --mode=baseline --step",
     "demo:compare": "node demo/ensure-env.mjs --quiet && node demo/seed-sweep.mjs --mode=compare --seeds=1-5 --step",
     "demo:coordinator": "node demo/coordinator-ladder.mjs --rungs=0,1,5,15,30,50 --seeds=1-5",
+    "demo:coordinator:adaptive": "node demo/ensure-env.mjs --quiet && node demo/coordinator-ladder.mjs --capacity-profile=adaptive-28-4 --rungs=0,5,20,50 --seeds=1-8 --rung-order=alternating",
+    "demo:coordinator:adaptive:strict": "node demo/ensure-env.mjs --quiet && node demo/coordinator-ladder.mjs --capacity-profile=adaptive-28-4 --rungs=0,5,20,50 --seeds=1-8 --rung-order=alternating --require-adaptive-proof",
+    "demo:coordinator:reanalyze": "node demo/coordinator-ladder.mjs --rungs=0,1,5,15,30,50 --seeds=1-5 --reanalyze=",
     "demo:doctor": "node demo/ensure-env.mjs --quiet && node demo/present.mjs --mode=doctor",
     "demo:down": "node demo/ensure-env.mjs --quiet && docker compose --env-file demo/moflux/.env -f demo/compose.yaml -f demo/moflux/compose.yaml down",
     "demo:fault": "node demo/ensure-env.mjs --quiet && node demo/present.mjs --mode=moflux --fault --phase-ms=150000 --fault-at-ms=16000 --grant-ttl-ms=240000 --step",

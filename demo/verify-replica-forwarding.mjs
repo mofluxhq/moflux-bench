@@ -157,6 +157,14 @@ try {
   check("normal forwarding records one upstream 2xx", metric(metrics, "replica_upstream_2xx_total") === 1);
   check("normal forwarding records no transport error", metric(metrics, "replica_transport_errors_total") === 0);
   check("normal request is not counted as a client disconnect", metric(metrics, "replica_client_disconnects_total") === 0);
+  check(
+    "admission overhead cumulative sum metric is exported",
+    metric(metrics, "replica_admission_overhead_ms_sum") === 0,
+  );
+  check(
+    "admission overhead decision-count metric is exported",
+    metric(metrics, "replica_admission_overhead_decisions_total") === 0,
+  );
 
   // A real caller disconnect must still cancel/release the in-flight request.
   void httpRequest({

@@ -1781,6 +1781,49 @@ function subtractAccounting(after, before) {
   return delta;
 }
 
+function prometheusMetric(text, name) {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = new RegExp(`^${escaped}\\{[^}]*\\}\\s+([-+0-9.eE]+)$`, "m").exec(text);
+  if (!match) return null;
+  const value = Number(match[1]);
+  return Number.isFinite(value) ? value : null;
+}
+
+/**
+ * Direct measurement of the local control arm's admission decision cost.
+ *
+ * End-to-end TTFT contains provider latency, queueing and retries. Redis is the
+ * only control arm whose admission decision includes the injected coordinator
+ * delay, so the cumulative decision-time counters provide the causal
+ * measurement the ladder is manipulating. Sum/count are aggregated across
+ * replicas before taking the average; averaging replica averages would weight
+ * an idle replica the same as a busy one.
+ */
+async function readLocalAdmissionDecision(ports) {
+  let totalMs = 0;
+  let decisions = 0;
+  const perReplica = [];
+  for (const port of ports) {
+    const response = await fetchWithTimeout(`http://127.0.0.1:${port}/metrics`, {}, 2000);
+    if (!response.ok) throw new Error(`replica ${port} metrics returned HTTP ${response.status}`);
+    const text = await response.text();
+    const sumMs = prometheusMetric(text, "replica_admission_overhead_ms_sum");
+    const count = prometheusMetric(text, "replica_admission_overhead_decisions_total");
+    if (sumMs === null || count === null) {
+      throw new Error(`replica ${port} did not expose admission overhead sum/count metrics`);
+    }
+    totalMs += sumMs;
+    decisions += count;
+    perReplica.push({ port, sumMs, decisions: count });
+  }
+  return {
+    overheadMsAvg: decisions > 0 ? +(totalMs / decisions).toFixed(4) : null,
+    totalMs: +totalMs.toFixed(4),
+    decisions,
+    perReplica,
+  };
+}
+
 /**
  * Runs one locally-admitted arm: same four-replica hop, same provider, same
  * immutable trace. Only the replica's admission policy changes.
@@ -1827,6 +1870,7 @@ async function runLocalArm({ name, replicaArm, replicaFlags, armLabel, file, nee
       outFile,
     });
     summary.simCounters = await readProviderCounters();
+    summary.admissionDecision = await readLocalAdmissionDecision(TYR_PORTS);
     attachScenario(summary, { consultsCoordinator: Boolean(needsRedis) });
     attachLending(summary);
     writeFileSync(outFile, JSON.stringify(summary, null, 2));

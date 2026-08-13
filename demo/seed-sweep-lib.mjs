@@ -132,6 +132,8 @@ export function armMetrics(summary) {
     coordinatorLatencyMs: summary.coordinatorLatencyMs ?? 0,
     coordinatorOnAdmissionPath: summary.coordinatorOnAdmissionPath ?? null,
     coordinatorLadderRungMs: summary.coordinatorLadderRungMs ?? null,
+    admissionOverheadMs: summary.admissionDecision?.overheadMsAvg ?? null,
+    admissionDecisionSamples: summary.admissionDecision?.decisions ?? null,
     unattributedFailures: summary.health?.unattributed ?? null,
     // Which limit actually refused work. Without these in the aggregate, a
     // reader has to open five per-seed files to learn whether the token budget
