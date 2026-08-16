@@ -71,7 +71,7 @@ Latchflo 0.5.1**. Read that field rather than any prose description — prose dr
 and an earlier revision of this file and of `.gitignore` both described this
 corpus as Tyr 0.16.0 / Latchflo 0.5.0, which the files themselves contradict.
 
-New licensed runs use Tyr 0.25.1, Latchflo 0.11.4,
+New licensed runs use Tyr 0.25.1, Latchflo 0.11.6,
 async-bulkhead-llm 3.15.1, and async-bulkhead-ts 1.0.1. The main sweep retains
 one-hop capacity-aware routing, per-pool demand heartbeats, pool-level lending,
 and progressive reconciliation for Anthropic-shaped streams. Demand-aware pool

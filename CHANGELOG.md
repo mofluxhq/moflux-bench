@@ -1,5 +1,64 @@
 # Changelog
 
+## 0.21.0 - 2026-08-14
+
+### Fixed
+
+- Pin the licensed runtime to Latchflo 0.11.6, whose prepared capacity/class handoff ACKs are idempotent so duplicate reconciliation ACKs no longer move the freshness barrier and starve a ready handoff commit.
+- Correct handoff evidence so `capacityAcknowledgedAt` is the first complete unique drain-ACK barrier rather than the last duplicate ACK observed while a handoff remains prepared. Preserve duplicate-ACK diagnostics separately.
+- Require post-lending, data-plane-observed restoration of both concurrency and token floors before reporting the protected floor restored; record the first restored Tyr sample and per-replica drain readiness evidence.
+- Stop treating the final `/v1/demand` snapshot as historical demand timing when it post-dates the handoff, and stop clamping impossible negative timing intervals to zero.
+- Record exact last-attempt and last-local-reject offsets, and avoid sleeping after the final allowed retry.
+
+- Stop calling the load generator's first client-visible 2xx response an
+  admission timestamp. Tyr does not send those headers until the upstream
+  provider has produced response headers, so the old `admissionGapMs` and
+  `commitToFirstBatchAdmissionMs` measurements included provider prefill/TTFT.
+  New load-generator results record `firstResponseHeadersAtMs` and
+  `responseHeadersGapMs` with the semantics their names actually describe.
+- Fix null timestamp coercion in lending evidence. `Number(null) === 0` could
+  turn missing load-generator timing into a Unix-epoch timestamp; missing
+  timing now remains `null` and has a regression test.
+- Replace the false-precision first-admission point with a bounded data-plane
+  observation. Lending runs establish a pre-run baseline of Tyr's monotonic
+  `llm.admitted` counter, sample it alongside applied capacity, and combine the
+  first observed counter increment with the provider simulator's model-scoped
+  first request receipt. The resulting `firstBatchAdmissionWindow` reports
+  conservative `notBeforeAt` / `notAfterAt` bounds and their width instead of
+  folding provider execution into admission latency.
+- Separate admission bounds from response-header latency throughout per-seed
+  and aggregate evidence. New fields include
+  `batchFloorAdmissionGapMinMs`/`MaxMs`,
+  `commitToFirstBatchAdmissionMinMs`/`MaxMs`, and
+  `batchFloorResponseHeadersGapMs` / `commitToFirstBatchResponseHeadersMs`.
+- Make admission ordering three-state evidence: `proven_after_commit`,
+  `proven_before_commit`, or `inconclusive`/`unobserved`. The strict adaptive
+  proof gate still requires `proven_after_commit`: a proven pre-commit admission
+  fails as a violation, while a straddling interval fails explicitly as
+  inconclusive evidence rather than being mislabeled as either safety or a
+  violation. The protocol-order and no-double-allocation gates remain mandatory.
+- Extend applied-capacity samples with fleet `inFlight`, `inFlightTokens`, and
+  admitted counters, and take the first sample synchronously before starting
+  the load generator so the admission baseline cannot race the workload.
+- Record provider request timing by model and make `/admin/reset` preserve
+  array/object counter shapes. The simulator verifier now tests the timestamp
+  bound and reset behavior.
+
+### Changed
+
+- Bump heterogeneous seed-sweep output to `schemaVersion` 4 and coordinator
+  ladder output to `schemaVersion` 6 for the corrected admission, ACK-barrier,
+  and data-plane floor-restoration timing semantics.
+- Keep MoFlux Bench at 0.21.0 while updating the licensed runtime pin to
+  Tyr 0.25.1 / Latchflo 0.11.6, with async-bulkhead-llm 3.15.1 and
+  async-bulkhead-ts 1.0.1 unchanged.
+- Interpret Latchflo 0.11.6 capacity-group restoration against the controller's
+  current handoff safety deadline. Once every restrictive drain grant is ACKed,
+  that deadline is the prepared successor expiry rather than the predecessor
+  lease expiry. The bench now reads `/v1/grants` to prove predecessor and
+  successor deadlines separately; predecessor lease timing remains diagnostic
+  while the strict adaptive gate uses the successor safety boundary.
+
 ## 0.20.0
 
 - Analyse the coordinator ladder as the paired experiment it runs. Every seed

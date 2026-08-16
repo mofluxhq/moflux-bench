@@ -124,7 +124,9 @@ export function armMetrics(summary) {
     localRejects: interactive.localReject + batch.localReject,
     upstream429s: interactive.upstreamReject + batch.upstreamReject,
     peakActive: Number(summary.simCounters?.peakActive ?? 0),
-    batchAdmissionGapMs: summary.classes.batch?.admissionGapMs ?? null,
+    batchResponseHeadersGapMs:
+      summary.classes.batch?.responseHeadersGapMs ??
+      summary.classes.batch?.admissionGapMs ?? null,
     // Truthful per arm since 0.19.0: an arm that does not consult a coordinator
     // while admitting records 0 however far away the rung set the coordinator.
     // The rung itself is carried separately so a ladder can still prove which
@@ -152,12 +154,25 @@ export function armMetrics(summary) {
     controllerLendingObserved: summary.lending?.controlPlane?.lendingObserved ?? null,
     floorRestored: summary.lending?.controlPlane?.floorRestored ?? null,
     floorRestorationDurationMs: summary.lending?.controlPlane?.restorationDurationMs ?? null,
-    batchFloorAdmissionGapMs: summary.lending?.floorReassertion?.admissionGapMs ?? null,
+    batchFloorAdmissionGapMinMs:
+      summary.lending?.floorReassertion?.admissionGapMinMs ??
+      summary.lending?.controlPlane?.handoff?.attemptToFirstBatchAdmissionMinMs ?? null,
+    batchFloorAdmissionGapMaxMs:
+      summary.lending?.floorReassertion?.admissionGapMaxMs ??
+      summary.lending?.controlPlane?.handoff?.attemptToFirstBatchAdmissionMaxMs ?? null,
+    batchFloorResponseHeadersGapMs:
+      summary.lending?.floorReassertion?.responseHeadersGapMs ??
+      summary.lending?.floorReassertion?.admissionGapMs ?? null,
     batchFloorFirstSuccessGapMs: summary.lending?.floorReassertion?.firstSuccessGapMs ?? null,
     handoffObserved: summary.lending?.controlPlane?.handoff?.observed ?? null,
     handoffSafeEventOrder: summary.lending?.controlPlane?.handoff?.safeEventOrder ?? null,
     handoffCommitBeforeBatchAdmission:
       summary.lending?.controlPlane?.handoff?.commitBeforeBatchAdmission ?? null,
+    handoffAdmissionOrderingStatus:
+      summary.lending?.controlPlane?.handoff?.admissionOrderingStatus ?? null,
+    handoffCommittedBeforeSafetyDeadline:
+      summary.lending?.controlPlane?.handoff?.committedBeforeSafetyDeadline ??
+      summary.lending?.controlPlane?.handoff?.committedBeforeLeaseExpiry ?? null,
     handoffCommittedBeforeLeaseExpiry:
       summary.lending?.controlPlane?.handoff?.committedBeforeLeaseExpiry ?? null,
     noAppliedOverallocation:
@@ -168,10 +183,26 @@ export function armMetrics(summary) {
       summary.lending?.controlPlane?.handoff?.drainStartToAcknowledgedMs ?? null,
     acknowledgedToCommitMs:
       summary.lending?.controlPlane?.handoff?.acknowledgedToCommitMs ?? null,
-    commitToFirstBatchAdmissionMs:
+    commitToFirstBatchAdmissionMinMs:
+      summary.lending?.controlPlane?.handoff?.commitToFirstBatchAdmissionMinMs ?? null,
+    commitToFirstBatchAdmissionMaxMs:
+      summary.lending?.controlPlane?.handoff?.commitToFirstBatchAdmissionMaxMs ?? null,
+    demandToFirstBatchAdmissionMinMs:
+      summary.lending?.controlPlane?.handoff?.demandToFirstBatchAdmissionMinMs ?? null,
+    demandToFirstBatchAdmissionMaxMs:
+      summary.lending?.controlPlane?.handoff?.demandToFirstBatchAdmissionMaxMs ?? null,
+    commitToFirstBatchResponseHeadersMs:
+      summary.lending?.controlPlane?.handoff?.commitToFirstBatchResponseHeadersMs ??
       summary.lending?.controlPlane?.handoff?.commitToFirstBatchAdmissionMs ?? null,
-    demandToFirstBatchAdmissionMs:
+    demandToFirstBatchResponseHeadersMs:
+      summary.lending?.controlPlane?.handoff?.demandToFirstBatchResponseHeadersMs ??
       summary.lending?.controlPlane?.handoff?.demandToFirstBatchAdmissionMs ?? null,
+    safetyTimeRemainingMs:
+      summary.lending?.controlPlane?.handoff?.safetyTimeRemainingMs ??
+      summary.lending?.controlPlane?.handoff?.leaseTimeAvoidedMs ?? null,
+    predecessorLeaseLeadMs:
+      summary.lending?.controlPlane?.handoff?.predecessorLeaseLeadMs ??
+      summary.lending?.controlPlane?.handoff?.leaseTimeAvoidedMs ?? null,
     leaseTimeAvoidedMs: summary.lending?.controlPlane?.handoff?.leaseTimeAvoidedMs ?? null,
   };
 }
@@ -247,6 +278,8 @@ function adaptiveProof(records, capacity) {
     const occupancyLendingObserved = lending.idleWindow?.borrowed === true;
     const controllerLendingObserved = lending.controlPlane?.lendingObserved === true;
     const floorRestored = lending.controlPlane?.floorRestored === true;
+    const controllerFloorRestored = lending.controlPlane?.controllerFloorRestored === true;
+    const dataPlaneFloorRestored = lending.controlPlane?.dataPlaneFloorRestored === true;
     const handoff = lending.controlPlane?.handoff ?? {};
     const handoffObserved = handoff.observed === true;
     const handoffCommitted = typeof handoff.committedAt === "string";
@@ -255,6 +288,15 @@ function adaptiveProof(records, capacity) {
     const handoffEveryDrainApplied = handoff.everyDrainApplied === true;
     const handoffSafeEventOrder = handoff.safeEventOrder === true;
     const handoffCommitBeforeBatchAdmission = handoff.commitBeforeBatchAdmission === true;
+    const handoffAdmissionOrderingStatus = handoff.admissionOrderingStatus ??
+      (handoff.commitBeforeBatchAdmission === true
+        ? "proven_after_commit"
+        : handoff.commitBeforeBatchAdmission === false
+          ? "proven_before_commit"
+          : "unobserved");
+    const handoffAdmissionOrderViolated = handoffAdmissionOrderingStatus === "proven_before_commit";
+    const handoffCommittedBeforeSafetyDeadline =
+      (handoff.committedBeforeSafetyDeadline ?? handoff.committedBeforeLeaseExpiry) === true;
     const handoffCommittedBeforeLeaseExpiry = handoff.committedBeforeLeaseExpiry === true;
     const noAppliedOverallocation = handoff.appliedCapacity?.noAppliedOverallocation === true;
     const batchServed = batchSuccess > 0;
@@ -268,7 +310,7 @@ function adaptiveProof(records, capacity) {
       handoffObserved &&
       handoffSafeEventOrder &&
       handoffCommitBeforeBatchAdmission &&
-      handoffCommittedBeforeLeaseExpiry &&
+      handoffCommittedBeforeSafetyDeadline &&
       noAppliedOverallocation &&
       batchServed;
 
@@ -285,6 +327,8 @@ function adaptiveProof(records, capacity) {
       occupancyLendingObserved,
       controllerLendingObserved,
       floorRestored,
+      controllerFloorRestored,
+      dataPlaneFloorRestored,
       handoffObserved,
       handoffCommitted,
       handoffAborted,
@@ -292,21 +336,45 @@ function adaptiveProof(records, capacity) {
       handoffEveryDrainApplied,
       handoffSafeEventOrder,
       handoffCommitBeforeBatchAdmission,
+      handoffAdmissionOrderingStatus,
+      handoffAdmissionOrderViolated,
+      handoffCommittedBeforeSafetyDeadline,
       handoffCommittedBeforeLeaseExpiry,
       handoffCommittedAt: handoff.committedAt ?? null,
-      handoffFirstBatchAdmissionAt: handoff.firstBatchAdmissionAt ?? null,
-      handoffFallbackDeadline: handoff.fallbackDeadline ?? null,
+      handoffFirstBatchAdmissionWindow: handoff.firstBatchAdmissionWindow ?? null,
+      handoffSafetyDeadline: handoff.safetyDeadline ?? handoff.fallbackDeadline ?? null,
+      handoffFallbackDeadline: handoff.fallbackDeadline ?? handoff.safetyDeadline ?? null,
+      handoffSafetyDeadlineSource: handoff.safetyDeadlineSource ?? null,
+      handoffPredecessorLeaseDeadline: handoff.predecessorLeaseDeadline ?? null,
+      handoffSuccessorGrantDeadline: handoff.successorGrantDeadline ?? null,
+      duplicateDrainAckEvents: Number(handoff.duplicateDrainAckEvents ?? 0),
+      lastDrainAckAt: handoff.lastDrainAckAt ?? null,
+      drainReadiness: handoff.drainReadiness ?? [],
+      batchLastAttemptAtMs: moflux.classes?.batch?.lastAttemptAtMs ?? null,
+      batchLastLocalRejectAtMs: moflux.classes?.batch?.lastLocalRejectAtMs ?? null,
       noAppliedOverallocation,
       borrowedSlots: lending.idleWindow?.borrowedSlots ?? null,
       floorRestorationDurationMs: lending.controlPlane?.restorationDurationMs ?? null,
-      batchFirstAdmissionGapMs: lending.floorReassertion?.admissionGapMs ?? null,
+      batchFirstAdmissionGapMinMs: lending.floorReassertion?.admissionGapMinMs ?? null,
+      batchFirstAdmissionGapMaxMs: lending.floorReassertion?.admissionGapMaxMs ?? null,
+      batchFirstResponseHeadersGapMs:
+        lending.floorReassertion?.responseHeadersGapMs ??
+        lending.floorReassertion?.admissionGapMs ?? null,
       batchFirstSuccessGapMs: lending.floorReassertion?.firstSuccessGapMs ?? null,
       handoffDurationMs: handoff.handoffDurationMs ?? null,
       demandToDrainStartMs: handoff.demandToDrainStartMs ?? null,
       drainStartToAcknowledgedMs: handoff.drainStartToAcknowledgedMs ?? null,
       acknowledgedToCommitMs: handoff.acknowledgedToCommitMs ?? null,
-      commitToFirstBatchAdmissionMs: handoff.commitToFirstBatchAdmissionMs ?? null,
-      demandToFirstBatchAdmissionMs: handoff.demandToFirstBatchAdmissionMs ?? null,
+      commitToFirstBatchAdmissionMinMs: handoff.commitToFirstBatchAdmissionMinMs ?? null,
+      commitToFirstBatchAdmissionMaxMs: handoff.commitToFirstBatchAdmissionMaxMs ?? null,
+      demandToFirstBatchAdmissionMinMs: handoff.demandToFirstBatchAdmissionMinMs ?? null,
+      demandToFirstBatchAdmissionMaxMs: handoff.demandToFirstBatchAdmissionMaxMs ?? null,
+      commitToFirstBatchResponseHeadersMs:
+        handoff.commitToFirstBatchResponseHeadersMs ?? handoff.commitToFirstBatchAdmissionMs ?? null,
+      demandToFirstBatchResponseHeadersMs:
+        handoff.demandToFirstBatchResponseHeadersMs ?? handoff.demandToFirstBatchAdmissionMs ?? null,
+      safetyTimeRemainingMs: handoff.safetyTimeRemainingMs ?? handoff.leaseTimeAvoidedMs ?? null,
+      predecessorLeaseLeadMs: handoff.predecessorLeaseLeadMs ?? handoff.leaseTimeAvoidedMs ?? null,
       leaseTimeAvoidedMs: handoff.leaseTimeAvoidedMs ?? null,
     };
   });
@@ -352,22 +420,20 @@ function adaptiveProof(records, capacity) {
       }
 
       if (seed.handoffCommitted && !seed.handoffCommitBeforeBatchAdmission) {
-        const committedAt = Date.parse(seed.handoffCommittedAt ?? "");
-        const admittedAt = Date.parse(seed.handoffFirstBatchAdmissionAt ?? "");
         missing.push(
-          Number.isFinite(committedAt) && Number.isFinite(admittedAt) && admittedAt < committedAt
-            ? "batch admitted before handoff commit"
-            : "commit-before-batch-admission ordering not proven",
+          seed.handoffAdmissionOrderViolated
+            ? "batch admission proven before handoff commit"
+            : "commit-before-batch-admission ordering inconclusive",
         );
       }
 
-      if (seed.handoffCommitted && !seed.handoffCommittedBeforeLeaseExpiry) {
+      if (seed.handoffCommitted && !seed.handoffCommittedBeforeSafetyDeadline) {
         const committedAt = Date.parse(seed.handoffCommittedAt ?? "");
-        const fallbackAt = Date.parse(seed.handoffFallbackDeadline ?? "");
+        const safetyAt = Date.parse(seed.handoffSafetyDeadline ?? "");
         missing.push(
-          Number.isFinite(committedAt) && Number.isFinite(fallbackAt) && committedAt >= fallbackAt
-            ? "handoff did not beat lease expiry"
-            : "lease-expiry ordering not proven",
+          Number.isFinite(committedAt) && Number.isFinite(safetyAt) && committedAt >= safetyAt
+            ? "handoff exceeded its safety-authority deadline"
+            : "handoff successor safety deadline not proven",
         );
       }
     }
@@ -397,10 +463,17 @@ function adaptiveProof(records, capacity) {
     occupancyObservedSeeds,
     controllerObservedSeeds: count("controllerLendingObserved"),
     floorRestoredSeeds: count("floorRestored"),
+    controllerFloorRestoredSeeds: count("controllerFloorRestored"),
+    dataPlaneFloorRestoredSeeds: count("dataPlaneFloorRestored"),
     handoffObservedSeeds: count("handoffObserved"),
     handoffCommittedSeeds: count("handoffCommitted"),
     safeHandoffSeeds: count("handoffSafeEventOrder"),
     commitBeforeAdmissionSeeds: count("handoffCommitBeforeBatchAdmission"),
+    admissionOrderViolationSeeds: count("handoffAdmissionOrderViolated"),
+    admissionOrderInconclusiveSeeds: perSeed.filter(
+      (seed) => seed.handoffAdmissionOrderingStatus === "inconclusive",
+    ).length,
+    handoffWithinSafetyDeadlineSeeds: count("handoffCommittedBeforeSafetyDeadline"),
     handoffBeatLeaseExpirySeeds: count("handoffCommittedBeforeLeaseExpiry"),
     noAppliedOverallocationSeeds: count("noAppliedOverallocation"),
     batchServedSeeds: perSeed.filter((seed) => seed.batchSuccess > 0).length,
@@ -540,7 +613,7 @@ export function buildSweepSummary({ mode, fault, seeds, records }) {
   const numericTokenMetrics = tokenMetrics.map(({ progressiveConfiguration: _configuration, ...metrics }) => metrics);
 
   return {
-    schemaVersion: 2,
+    schemaVersion: 4,
     generatedAt: new Date().toISOString(),
     kind: mode === "compare" ? "paired-seed-sweep" : "seed-sweep",
     mode,
@@ -596,11 +669,20 @@ export function buildSweepSummary({ mode, fault, seeds, records }) {
             occupancyObservedSeeds: mofluxMetrics.filter((metrics) => metrics.occupancyLendingObserved === true).length,
             controllerObservedSeeds: mofluxMetrics.filter((metrics) => metrics.controllerLendingObserved === true).length,
             floorRestoredSeeds: mofluxMetrics.filter((metrics) => metrics.floorRestored === true).length,
+            controllerFloorRestoredSeeds: mofluxMetrics.filter((metrics) => metrics.controllerFloorRestored === true).length,
+            dataPlaneFloorRestoredSeeds: mofluxMetrics.filter((metrics) => metrics.dataPlaneFloorRestored === true).length,
+            duplicateDrainAckEvents: summarize(mofluxMetrics.map((metrics) => metrics.duplicateDrainAckEvents)),
             floorRestorationDurationMs: summarize(
               mofluxMetrics.map((metrics) => metrics.floorRestorationDurationMs),
             ),
-            batchFloorAdmissionGapMs: summarize(
-              mofluxMetrics.map((metrics) => metrics.batchFloorAdmissionGapMs),
+            batchFloorAdmissionGapMinMs: summarize(
+              mofluxMetrics.map((metrics) => metrics.batchFloorAdmissionGapMinMs),
+            ),
+            batchFloorAdmissionGapMaxMs: summarize(
+              mofluxMetrics.map((metrics) => metrics.batchFloorAdmissionGapMaxMs),
+            ),
+            batchFloorResponseHeadersGapMs: summarize(
+              mofluxMetrics.map((metrics) => metrics.batchFloorResponseHeadersGapMs),
             ),
             batchFloorFirstSuccessGapMs: summarize(
               mofluxMetrics.map((metrics) => metrics.batchFloorFirstSuccessGapMs),
@@ -609,6 +691,9 @@ export function buildSweepSummary({ mode, fault, seeds, records }) {
             safeHandoffSeeds: mofluxMetrics.filter((metrics) => metrics.handoffSafeEventOrder === true).length,
             commitBeforeAdmissionSeeds: mofluxMetrics.filter(
               (metrics) => metrics.handoffCommitBeforeBatchAdmission === true,
+            ).length,
+            handoffWithinSafetyDeadlineSeeds: mofluxMetrics.filter(
+              (metrics) => metrics.handoffCommittedBeforeSafetyDeadline === true,
             ).length,
             handoffBeatLeaseExpirySeeds: mofluxMetrics.filter(
               (metrics) => metrics.handoffCommittedBeforeLeaseExpiry === true,
@@ -624,13 +709,27 @@ export function buildSweepSummary({ mode, fault, seeds, records }) {
             acknowledgedToCommitMs: summarize(
               mofluxMetrics.map((metrics) => metrics.acknowledgedToCommitMs),
             ),
-            commitToFirstBatchAdmissionMs: summarize(
-              mofluxMetrics.map((metrics) => metrics.commitToFirstBatchAdmissionMs),
+            commitToFirstBatchAdmissionMinMs: summarize(
+              mofluxMetrics.map((metrics) => metrics.commitToFirstBatchAdmissionMinMs),
             ),
-            demandToFirstBatchAdmissionMs: summarize(
-              mofluxMetrics.map((metrics) => metrics.demandToFirstBatchAdmissionMs),
+            commitToFirstBatchAdmissionMaxMs: summarize(
+              mofluxMetrics.map((metrics) => metrics.commitToFirstBatchAdmissionMaxMs),
+            ),
+            demandToFirstBatchAdmissionMinMs: summarize(
+              mofluxMetrics.map((metrics) => metrics.demandToFirstBatchAdmissionMinMs),
+            ),
+            demandToFirstBatchAdmissionMaxMs: summarize(
+              mofluxMetrics.map((metrics) => metrics.demandToFirstBatchAdmissionMaxMs),
+            ),
+            commitToFirstBatchResponseHeadersMs: summarize(
+              mofluxMetrics.map((metrics) => metrics.commitToFirstBatchResponseHeadersMs),
+            ),
+            demandToFirstBatchResponseHeadersMs: summarize(
+              mofluxMetrics.map((metrics) => metrics.demandToFirstBatchResponseHeadersMs),
             ),
             leaseTimeAvoidedMs: summarize(mofluxMetrics.map((metrics) => metrics.leaseTimeAvoidedMs)),
+            predecessorLeaseLeadMs: summarize(mofluxMetrics.map((metrics) => metrics.predecessorLeaseLeadMs)),
+            safetyTimeRemainingMs: summarize(mofluxMetrics.map((metrics) => metrics.safetyTimeRemainingMs)),
           }
         : null,
     },

@@ -1486,36 +1486,60 @@ async function readTyrStats() {
 }
 
 
-function appliedCapacitySample(statsRows, observedAtMs = Date.now()) {
-  const poolCapacity = (poolName) => {
-    let maxConcurrent = 0;
-    let tokenBudget = 0;
-    const grants = [];
-    for (const row of statsRows) {
-      const pool = row?.[poolName];
-      if (!pool) continue;
-      maxConcurrent += Number(pool?.limits?.maxConcurrent ?? 0);
-      tokenBudget += Number(pool?.tokenBudget?.budget ?? pool?.limits?.tokenBudget?.budget ?? 0);
-      const provenance = pool?.tyr?.provenance?.current;
-      if (provenance?.grantId) {
-        grants.push({
-          grantId: provenance.grantId,
-          revision: provenance.revision,
-          expiresAt: provenance.expiresAt,
-        });
-      }
+function appliedCapacitySample(
+  statsRows,
+  pollStartedAtMs = Date.now(),
+  pollCompletedAtMs = pollStartedAtMs,
+) {
+  const rowPoolCapacity = (row, poolName) => {
+    const pool = row?.[poolName];
+    if (!pool) {
+      return { maxConcurrent: 0, tokenBudget: 0, inFlight: 0, inFlightTokens: 0, admitted: 0, grants: [] };
     }
-    return { maxConcurrent, tokenBudget, grants };
+    const provenance = pool?.tyr?.provenance?.current;
+    return {
+      maxConcurrent: Number(pool?.limits?.maxConcurrent ?? 0),
+      tokenBudget: Number(pool?.tokenBudget?.budget ?? pool?.limits?.tokenBudget?.budget ?? 0),
+      inFlight: Number(pool?.bulkhead?.inFlight ?? 0),
+      inFlightTokens: Number(pool?.tokenBudget?.inFlightTokens ?? 0),
+      admitted: Number(pool?.llm?.admitted ?? 0),
+      grants: provenance?.grantId
+        ? [{ grantId: provenance.grantId, revision: provenance.revision, expiresAt: provenance.expiresAt }]
+        : [],
+    };
   };
-  const interactive = poolCapacity("sim-interactive");
-  const batch = poolCapacity("sim-batch");
+  const replicas = statsRows.map((row, index) => ({
+    port: TYR_PORTS[index] ?? null,
+    interactive: rowPoolCapacity(row, "sim-interactive"),
+    batch: rowPoolCapacity(row, "sim-batch"),
+  }));
+  const poolCapacity = (poolName) => replicas.reduce(
+    (total, replica) => {
+      const pool = replica[poolName];
+      total.maxConcurrent += pool.maxConcurrent;
+      total.tokenBudget += pool.tokenBudget;
+      total.inFlight += pool.inFlight;
+      total.inFlightTokens += pool.inFlightTokens;
+      total.admitted += pool.admitted;
+      total.grants.push(...pool.grants);
+      return total;
+    },
+    { maxConcurrent: 0, tokenBudget: 0, inFlight: 0, inFlightTokens: 0, admitted: 0, grants: [] },
+  );
+  const interactive = poolCapacity("interactive");
+  const batch = poolCapacity("batch");
   return {
-    observedAt: new Date(observedAtMs).toISOString(),
+    pollStartedAt: new Date(pollStartedAtMs).toISOString(),
+    observedAt: new Date(pollCompletedAtMs).toISOString(),
+    pollDurationMs: Math.max(0, pollCompletedAtMs - pollStartedAtMs),
+    replicas,
     interactive,
     batch,
     total: {
       maxConcurrent: interactive.maxConcurrent + batch.maxConcurrent,
       tokenBudget: interactive.tokenBudget + batch.tokenBudget,
+      inFlight: interactive.inFlight + batch.inFlight,
+      inFlightTokens: interactive.inFlightTokens + batch.inFlightTokens,
     },
   };
 }
@@ -1527,6 +1551,36 @@ function summarizeAppliedCapacity(samples, errors = []) {
   const overTokens = samples.filter(
     (sample) => sample.total.tokenBudget > OPT.tokenBudget,
   );
+  const interactiveFloor = CAPACITY.pools.find((pool) => pool.name === "sim-interactive");
+  const batchFloor = CAPACITY.pools.find((pool) => pool.name === "sim-batch");
+  const lentIndex = samples.findIndex(
+    (sample) =>
+      (sample.interactive.maxConcurrent > Number(interactiveFloor?.guaranteedMaxConcurrent ?? 0) ||
+        sample.interactive.tokenBudget > Number(interactiveFloor?.guaranteedTokenBudget ?? 0)) &&
+      (sample.batch.maxConcurrent < Number(batchFloor?.guaranteedMaxConcurrent ?? 0) ||
+        sample.batch.tokenBudget < Number(batchFloor?.guaranteedTokenBudget ?? 0)),
+  );
+  const restoredIndex = lentIndex < 0
+    ? -1
+    : samples.findIndex(
+        (sample, index) =>
+          index > lentIndex &&
+          sample.interactive.maxConcurrent <= Number(interactiveFloor?.guaranteedMaxConcurrent ?? 0) &&
+          sample.interactive.tokenBudget <= Number(interactiveFloor?.guaranteedTokenBudget ?? 0) &&
+          sample.batch.maxConcurrent >= Number(batchFloor?.guaranteedMaxConcurrent ?? 0) &&
+          sample.batch.tokenBudget >= Number(batchFloor?.guaranteedTokenBudget ?? 0),
+      );
+  const firstRestoredSample = restoredIndex >= 0 ? samples[restoredIndex] : null;
+  const batchAdmissionBaseline = samples[0]?.batch?.admitted ?? null;
+  const firstBatchAdmissionSample = batchAdmissionBaseline === null
+    ? null
+    : samples.find((sample) => Number(sample?.batch?.admitted ?? 0) > batchAdmissionBaseline) ?? null;
+  const firstBatchAdmissionIndex = firstBatchAdmissionSample === null
+    ? -1
+    : samples.indexOf(firstBatchAdmissionSample);
+  const previousBatchAdmissionSample = firstBatchAdmissionIndex > 0
+    ? samples[firstBatchAdmissionIndex - 1]
+    : null;
   return {
     sampleIntervalMs: OPT.handoffSampleIntervalMs,
     samples: samples.length,
@@ -1543,16 +1597,28 @@ function summarizeAppliedCapacity(samples, errors = []) {
       (max, sample) => Math.max(max, sample.total.tokenBudget),
       0,
     ),
-    observedLentPartition: samples.some(
-      (sample) =>
-        sample.interactive.maxConcurrent > CAPACITY.interactiveConcurrencySlots &&
-        sample.batch.maxConcurrent < CAPACITY.batchConcurrencySlots,
-    ),
-    observedRestoredPartition: samples.some(
-      (sample) =>
-        sample.interactive.maxConcurrent <= CAPACITY.interactiveConcurrencySlots &&
-        sample.batch.maxConcurrent >= CAPACITY.batchConcurrencySlots,
-    ),
+    observedLentPartition: lentIndex >= 0,
+    observedRestoredPartition: restoredIndex >= 0,
+    restorationObservation: {
+      source: "tyr.stats.applied_limits",
+      sampleIntervalMs: OPT.handoffSampleIntervalMs,
+      firstObservedPollStartedAt: firstRestoredSample?.pollStartedAt ?? null,
+      firstObservedAt: firstRestoredSample?.observedAt ?? null,
+      interactive: firstRestoredSample?.interactive ?? null,
+      batch: firstRestoredSample?.batch ?? null,
+    },
+    admissionObservation: {
+      source: "tyr.stats.llm.admitted",
+      sampleIntervalMs: OPT.handoffSampleIntervalMs,
+      baselineBatchAdmissions: batchAdmissionBaseline,
+      firstBatchAdmissionObserved: firstBatchAdmissionSample !== null,
+      previousPollStartedAt: previousBatchAdmissionSample?.pollStartedAt ?? null,
+      previousObservedAt: previousBatchAdmissionSample?.observedAt ?? null,
+      firstObservedPollStartedAt: firstBatchAdmissionSample?.pollStartedAt ?? null,
+      firstObservedAt: firstBatchAdmissionSample?.observedAt ?? null,
+      admittedCountAtFirstObservation: firstBatchAdmissionSample?.batch?.admitted ?? null,
+      inFlightAtFirstObservation: firstBatchAdmissionSample?.batch?.inFlight ?? null,
+    },
     violations: [
       ...overConcurrent.map((sample) => ({
         kind: "concurrency",
@@ -1571,25 +1637,38 @@ function summarizeAppliedCapacity(samples, errors = []) {
   };
 }
 
-function startAppliedCapacityObserver() {
+async function startAppliedCapacityObserver() {
   if (!OPT.lending) {
     return { stop: async () => null };
   }
   let stopping = false;
   const samples = [];
   const errors = [];
+
+  const capture = async () => {
+    const pollStartedAtMs = Date.now();
+    try {
+      const statsRows = await readTyrStats();
+      const pollCompletedAtMs = Date.now();
+      samples.push(appliedCapacitySample(statsRows, pollStartedAtMs, pollCompletedAtMs));
+    } catch (error) {
+      errors.push({
+        observedAt: new Date(pollStartedAtMs).toISOString(),
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
+
+  // Establish the admitted-counter baseline before the load generator starts.
+  // Without this synchronous first sample, a fast first admission can happen
+  // before the observer's async loop gets scheduled and disappear into the
+  // baseline as though it predated the run.
+  await capture();
+
   const done = (async () => {
     while (!stopping) {
-      const observedAtMs = Date.now();
-      try {
-        samples.push(appliedCapacitySample(await readTyrStats(), observedAtMs));
-      } catch (error) {
-        errors.push({
-          observedAt: new Date(observedAtMs).toISOString(),
-          message: error instanceof Error ? error.message : String(error),
-        });
-      }
-      if (!stopping) await sleep(OPT.handoffSampleIntervalMs);
+      await sleep(OPT.handoffSampleIntervalMs);
+      if (!stopping) await capture();
     }
   })();
   return {
@@ -1601,7 +1680,12 @@ function startAppliedCapacityObserver() {
   };
 }
 
-async function readControllerLendingEvidence(token, loadSummary, appliedCapacity = null) {
+async function readControllerLendingEvidence(
+  token,
+  loadSummary,
+  appliedCapacity = null,
+  providerCounters = null,
+) {
   if (!CAPACITY_GROUP) return null;
   const base = "http://127.0.0.1:18080";
   // Reconcile first, then fetch evidence. In 0.16.0 these three requests were
@@ -1611,9 +1695,10 @@ async function readControllerLendingEvidence(token, loadSummary, appliedCapacity
     `${base}/v1/capacity-groups/${CAPACITY_GROUP.name}/rebalance`,
     { method: "POST", token, allowed: [200, 202] },
   );
-  const [eventsResponse, demandResponse] = await Promise.all([
+  const [eventsResponse, demandResponse, grantsResponse] = await Promise.all([
     jsonRequest(`${base}/v1/events?limit=1000`, { token, allowed: [200] }),
     jsonRequest(`${base}/v1/demand`, { token, allowed: [200] }),
+    jsonRequest(`${base}/v1/grants?limit=1000`, { token, allowed: [200] }),
   ]);
   const batch = CAPACITY_GROUP.members.find((member) => member.pool === "sim-batch");
   if (!batch) throw new Error("demand-aware capacity group is missing sim-batch");
@@ -1621,12 +1706,17 @@ async function readControllerLendingEvidence(token, loadSummary, appliedCapacity
     groupName: CAPACITY_GROUP.name,
     events: eventsResponse.body?.events ?? [],
     demand: demandResponse.body?.demand ?? [],
+    grants: grantsResponse.body?.grants ?? [],
     finalRebalance: rebalanceResponse.body?.rebalance ?? rebalanceResponse.body,
     batchPool: batch.pool,
     batchGuaranteedMaxConcurrent: batch.guaranteedMaxConcurrent,
     batchGuaranteedTokenBudget: batch.guaranteedTokenBudget,
     loadgenStartedAtEpochMs: loadSummary?.startedAtEpochMs ?? null,
-    batchFirstAdmissionAtMs: loadSummary?.classes?.batch?.firstAdmissionAtMs ?? null,
+    batchFirstAttemptAtMs: loadSummary?.classes?.batch?.firstAttemptAtMs ?? null,
+    batchFirstResponseHeadersAtMs:
+      loadSummary?.classes?.batch?.firstResponseHeadersAtMs ??
+      loadSummary?.classes?.batch?.firstAdmissionAtMs ?? null,
+    providerCounters,
     appliedCapacity,
   });
 }
@@ -1892,15 +1982,27 @@ async function runLocalArm({ name, replicaArm, replicaFlags, armLabel, file, nee
  */
 function attachLending(summary, { interactiveCeiling, controlPlane = null } = {}) {
   if (!OPT.lending) return;
+  const metrics = lendingMetrics({
+    summary,
+    peakActiveBySecond: summary.simCounters?.peakActiveBySecond ?? [],
+    batchArrivalMs: WORKLOAD.batchStartMs,
+    runEndMs: WORKLOAD.durationMs,
+    interactiveCeiling: interactiveCeiling ?? OPT.envelope,
+    envelope: OPT.envelope,
+  });
+  const handoff = controlPlane?.handoff ?? null;
+  if (handoff !== null) {
+    metrics.floorReassertion = {
+      ...metrics.floorReassertion,
+      batchFirstAdmissionWindow: handoff.firstBatchAdmissionWindow ?? null,
+      admissionGapMinMs: handoff.attemptToFirstBatchAdmissionMinMs ?? null,
+      admissionGapMaxMs: handoff.attemptToFirstBatchAdmissionMaxMs ?? null,
+      admissionObserved: handoff.firstBatchAdmissionWindow?.notAfterAt !== null &&
+        handoff.firstBatchAdmissionWindow?.notAfterAt !== undefined,
+    };
+  }
   summary.lending = {
-    ...lendingMetrics({
-      summary,
-      peakActiveBySecond: summary.simCounters?.peakActiveBySecond ?? [],
-      batchArrivalMs: WORKLOAD.batchStartMs,
-      runEndMs: WORKLOAD.durationMs,
-      interactiveCeiling: interactiveCeiling ?? OPT.envelope,
-      envelope: OPT.envelope,
-    }),
+    ...metrics,
     controlPlane,
   };
 }
@@ -1993,7 +2095,7 @@ async function runMoflux(env) {
     }, OPT.faultAtMs);
   }
 
-  const capacityObserver = startAppliedCapacityObserver();
+  const capacityObserver = await startAppliedCapacityObserver();
   let summary;
   let appliedCapacity;
   let demandPolicyActivation = null;
@@ -2031,6 +2133,7 @@ async function runMoflux(env) {
     env.LATCHFLO_ADMIN_TOKEN,
     summary,
     appliedCapacity,
+    simCounters,
   );
   const tokenAccounting = subtractAccounting(after, before);
   const grossRecoveryRate =
@@ -2255,9 +2358,14 @@ function printLending(baseline, controlResults, moflux) {
   );
   const batchServed = moflux.lending.floorReassertion.reasserted;
   const controllerRestored = controller?.floorRestored === true;
+  const admissionMin = moflux.lending.floorReassertion.admissionGapMinMs;
+  const admissionMax = moflux.lending.floorReassertion.admissionGapMaxMs;
+  const admissionText = admissionMin !== null && admissionMax !== null
+    ? ` first Tyr admission was bounded to ${admissionMin.toFixed(0)}-${admissionMax.toFixed(0)}ms after the first batch attempt.`
+    : " admission timing was not fully bounded.";
   console.log(
     batchServed && controllerRestored
-      ? `${GREEN}   Floor restored: Latchflo restored the batch guarantee and batch completed work after ${moflux.lending.floorReassertion.admissionGapMs}ms.${OFF}`
+      ? `${GREEN}   Floor restored: Latchflo restored the batch guarantee;${admissionText}${OFF}`
       : batchServed
         ? `${YELLOW}   Batch completed work, but the Latchflo event stream did not prove floor restoration.${OFF}`
         : `${RED}   Floor NOT restored: batch was never served.${OFF}`,

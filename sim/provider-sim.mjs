@@ -149,12 +149,40 @@ const counters = {
    * fact without the simulator needing to know the workload's phase layout.
    */
   peakActiveBySecond: [],
+  /**
+   * First request arrival at the provider by model. Tyr dispatches upstream
+   * only after its local bulkhead has admitted the request, so this is a
+   * tight upper bound on data-plane admission that is independent of TTFT.
+   */
+  firstRequestReceivedAtEpochMsByModel: {},
+  receivedByModel: {},
   emittedTokens: 0,
   ticks: 0,
   tickDtSum: 0,
 };
 
 // ── http helpers ─────────────────────────────────────────────────────
+
+
+function recordModelRequest(model, receivedAtEpochMs) {
+  const key = typeof model === "string" && model !== "" ? model : "sim-model";
+  counters.receivedByModel[key] = Number(counters.receivedByModel[key] ?? 0) + 1;
+  if (counters.firstRequestReceivedAtEpochMsByModel[key] === undefined) {
+    counters.firstRequestReceivedAtEpochMsByModel[key] = receivedAtEpochMs;
+  }
+}
+
+function resetCounters() {
+  for (const [key, value] of Object.entries(counters)) {
+    if (Array.isArray(value)) {
+      value.length = 0;
+    } else if (value !== null && typeof value === "object") {
+      for (const nested of Object.keys(value)) delete value[nested];
+    } else {
+      counters[key] = 0;
+    }
+  }
+}
 
 function sendJson(res, status, body, headers = {}) {
   const payload = JSON.stringify(body);
@@ -537,7 +565,7 @@ const server = createServer(async (req, res) => {
   }
 
   if (req.method === "POST" && req.url === "/admin/reset") {
-    for (const key of Object.keys(counters)) counters[key] = 0;
+    resetCounters();
     sendJson(res, 200, { ok: true });
     return;
   }
@@ -557,8 +585,12 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  const requestReceivedAt = Date.now();
+  const requestModel = typeof body.model === "string" && body.model !== ""
+    ? body.model
+    : "sim-model";
   counters.received += 1;
-
+  recordModelRequest(requestModel, requestReceivedAt);
 
   // Backpressure: envelope full and queue full -> provider-side 429.
   if (active.size >= CONFIG.envelope && waiting.length >= CONFIG.queue) {
@@ -593,10 +625,10 @@ const server = createServer(async (req, res) => {
     id: `${isMessages ? "simmsg" : "simcmpl"}_${requestKey}`,
     api: isMessages ? "anthropic" : "openai",
     res,
-    model: body.model ?? "sim-model",
+    model: requestModel,
     stream: body.stream === true,
-    receivedAt: Date.now(),
-    enqueuedAt: Date.now(),
+    receivedAt: requestReceivedAt,
+    enqueuedAt: requestReceivedAt,
     inputTokens,
     // sampled, and never disclosed to the caller
     targetOutput: sampleOutputTokens(Number.isFinite(cap) && cap > 0 ? cap : 4096, requestKey),

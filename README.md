@@ -56,12 +56,12 @@ cannot release the protected floor. Once the measured load generator is running,
 the presenter waits for a fresh interactive demand report and then arms the
 configured demand policy. Each accepted grant must also have enough remaining
 lifetime for a stable benchmark start. Startup fails if any live local grant is
-too small or too close to expiration. Pool creation also sends Latchflo 0.11.4's durable
+too small or too close to expiration. Pool creation also sends Latchflo 0.11.6's durable
 minimum-grant invariants: one concurrency slot, 755 tokens for interactive, and
 9,942 tokens for batch. Latchflo therefore rejects an unusable split before it
 can issue a zero-capacity or sub-request grant.
 
-The licensed path is pinned to **Tyr 0.25.1**, **Latchflo 0.11.4**,
+The licensed path is pinned to **Tyr 0.25.1**, **Latchflo 0.11.6**,
 **async-bulkhead-llm 3.15.1**, and **async-bulkhead-ts 1.0.1**. The canonical
 comparison uses Anthropic-shaped streaming because that protocol exposes input
 usage at `message_start` and cumulative output usage while the response is still
@@ -82,7 +82,7 @@ Tyr 0.25.1 capacity-aware routing is enabled for the licensed four-replica
 MoFlux arm. Each Tyr polls the private capacity snapshots of the other three
 replicas and may forward a request once to the peer with better headroom for
 that request's concurrency and token reservation. Tyr also reports bounded
-per-pool demand snapshots to Latchflo 0.11.4 on the existing authenticated
+per-pool demand snapshots to Latchflo 0.11.6 on the existing authenticated
 heartbeat. The benchmark generates one local-only shared routing secret in
 `demo/moflux/.env`; the secret is never committed. Latchflo owns grants, demand-
 aware lending, starvation prevention, and lease safety. It does not distribute
@@ -90,7 +90,7 @@ peer topology or the routing secret.
 
 The committed `results/` corpus is deliberately unchanged. Those files are
 historical evidence and retain their recorded Tyr 0.17.0/Latchflo 0.5.1 runtime
-metadata. New licensed runs use Tyr 0.25.1/Latchflo 0.11.4 and should be compared
+metadata. New licensed runs use Tyr 0.25.1/Latchflo 0.11.6 and should be compared
 as a new evidence set rather than silently relabeling the old one.
 
 Run the canonical progressive comparison:
@@ -201,8 +201,8 @@ containers afterward with `npm run demo:down`.
 
 ### Authenticated admission-class benchmark
 
-The four-arm admission-class benchmark introduced in MoFlux Bench 0.16.0 is
-upgraded in 0.18.0 for **Tyr 0.25.1** and **Latchflo 0.11.4**. Every seed replays the same immutable
+The four-arm admission-class benchmark introduced in MoFlux Bench 0.16.0 and
+upgraded in 0.18.0 now runs against **Tyr 0.25.1** and **Latchflo 0.11.6**. Every seed replays the same immutable
 trace through equal 32-request / 64,000-token physical pools:
 
 - `sim-shared` applies only the fleet-wide pool envelope.
@@ -219,8 +219,9 @@ control-plane state so a restored 240-second grant from an earlier seed cannot
 prevent the next seed from exercising idle-floor lending. Before the adaptive
 trace begins, the runner explicitly waits until the quiet noisy floor is proven
 lent. The adaptive arm keeps a 1-second idle threshold and relies on Tyr 0.25.1
-plus Latchflo 0.11.4's acknowledged class handoff to restore that floor before
-the lent lease expires. After workload sampling ends, the runner keeps a bounded
+plus Latchflo 0.11.6's acknowledged class handoff to restore that floor before
+the lent lease expires. (The 0.11.6 successor-authority change applies to physical
+capacity-group handoffs; class-only handoffs retain their predecessor-lease proof.) After workload sampling ends, the runner keeps a bounded
 15-second synchronization window and actively reconciles until Tyr has actually
 applied the restored floor; a Latchflo handoff commit alone is not treated as
 data-plane restoration. The benchmark no longer shortens the adaptive TTL to
@@ -443,21 +444,24 @@ npm run demo:handoff           # five-seed baseline vs MoFlux handoff proof
 npm run demo:hetero:adaptive   # recommended mixed-size, all-arm comparison
 ```
 
-`demo:handoff` is the shortest release-level proof for the Latchflo 0.11.4 /
-Tyr 0.25.1 handoff: five lognormal seeds, the exact `adaptive-28-4` profile,
+`demo:handoff` is the shortest release-level proof for the Latchflo 0.11.6 /
+Tyr 0.25.1 physical-capacity handoff: five lognormal seeds, the exact `adaptive-28-4` profile,
 and the full adaptive safety gate without spending time on the extra control
 arms. Demand-aware runs use a 120-second steady-state grant TTL and do not start
 load until the fleet has at least 55 seconds of grant runway remaining for the
-default 45-second phase. The acknowledged drain + fresh occupancy + commit path
-therefore has ample time to complete by attrition while the source lease is still
-authoritative. This removes the old 11-second lease-cycle timing dependency and
-makes pre-expiry handoff, rather than lease turnover, the normal restoration path.
+default 45-second phase. The acknowledged drain + fresh occupancy + commit path therefore has ample
+time to complete by attrition. Before every restrictive drain is ACKed, the
+predecessor lease remains authoritative; after that ACK barrier, Latchflo 0.11.6
+uses the prepared successor-grant expiry as the safety deadline. Natural source
+lease expiry after the ACK barrier no longer invalidates restoration. This
+removes the old 11-second lease-cycle timing dependency without weakening the
+no-double-allocation proof.
 `demo:hetero:adaptive` uses the same profile and proof gate while adding
 all control arms. Conflicting envelope, concurrency, or token settings are
 rejected. `demo:lending` remains the focused static-partition scene.
 
 `--lending` widens the idle window from 35% to 60% of the phase so Tyr 0.25.1
-can report an idle batch pool and Latchflo 0.11.4 can safely lend its protected
+can report an idle batch pool and Latchflo 0.11.6 can safely lend its protected
 floor. The presenter creates a demand-aware capacity group with 28/4 protected
 concurrency and 24,000/40,000-token guarantees, while both pools may borrow up
 to the shared 32-slot/64,000-token envelope. The larger token envelope is
@@ -468,40 +472,51 @@ lands differently in each arm and makes the windows incomparable.
 
 The reference is a dedicated local `static-partition` arm with per-replica
 interactive caps of 7/7/7/7 and a four-slot batch cap. It cannot exceed 28
-interactive requests before batch arrives. The MoFlux arm is judged with controller events, load-generator admission
-timestamps, and independently sampled Tyr applied capacity:
+interactive requests before batch arrives. The MoFlux arm is judged with controller events, independently sampled Tyr
+admission/capacity state, provider-dispatch timestamps, and client-visible
+response timing:
 
 | Question | Required evidence |
 |---|---|
 | Did interactive borrow? | Idle-window occupancy above 28 **and** a Latchflo `capacity_group.lending_observed` event |
-| Did the floor come back? | A Latchflo 0.11.4 restoration handoff commits **and** batch work completes |
-| Was transfer ordered safely? | `handoff_prepared` → every drain grant `applied` ACK → `handoff_committed` |
-| Did the commit actually precede batch admission? | Wall-clock controller commit occurs no later than the load generator's first batch 2xx |
-| Did handoff beat the fallback? | Commit occurs before `floorRestorationDeadline` / old-lease expiry |
+| Did the floor come back? | A Latchflo 0.11.6 restoration handoff commits **and** a post-lending Tyr `/stats` sample shows the full 4-slot / 40,000-token batch floor applied |
+| Was transfer ordered safely? | `handoff_prepared` → the **first** `applied` ACK for every unique drain grant → `handoff_committed`; later duplicate ACKs are diagnostic only |
+| Did the commit actually precede batch admission? | Tyr's monotonic admitted counter plus the provider's first batch request receipt bound the first admission; ordering is `proven_after_commit`, `proven_before_commit`, or explicitly inconclusive |
+| Did handoff stay within its safety authority? | Before drain ACKs, the predecessor lease is authoritative; after every restrictive drain is ACKed, commit must occur before the prepared successor-grant deadline |
 | Was capacity ever double allocated? | 500 ms Tyr `/stats` samples never exceed the 32-slot / 64,000-token physical envelope |
-| How long did each stage take? | Demand → drain → ACK → commit → first batch admission, reported separately |
+| How long did each stage take? | Reliable demand timing when available, drain → first complete unique-ACK barrier → commit → first data-plane-restored sample, then a bounded first-admission interval; client response headers and completion are reported separately |
 
 Configuration is not proof. A run-long 32/32 peak can occur under a static
 28/4 split after batch starts, and occupancy without a matching controller
-event can be a measurement artifact. MoFlux Bench 0.18.0 therefore fails the
-adaptive proof if the restoration handoff is missing, drain acknowledgements
-are unordered, batch is admitted before an observed commit, the handoff reaches
-its lease fallback, or applied-capacity sampling cannot prove that the envelope was
-never double allocated. A policy that borrows but never restores the batch
+event can be a measurement artifact. MoFlux Bench 0.21.0 therefore fails the
+adaptive proof if the restoration handoff is missing, the unique drain-ACK
+barrier is unordered, the full concurrency **and token** floor is not observed
+at Tyr after lending, admission is not **proven** to occur after commit, the
+handoff reaches its safety deadline, or applied-capacity sampling cannot prove
+that the envelope was never double allocated. If the admission observation interval
+straddles commit, the result says `inconclusive` and the strict proof gate fails
+for insufficient ordering evidence instead of pretending a later client 2xx
+proves admission ordering. A policy that borrows but never restores the batch
 guarantee is starvation, not lending.
 
-`batchFloorAdmissionGapMs` is now strictly an admission-layer metric: first
-batch attempt to first batch **2xx**. `batchFloorFirstSuccessGapMs` separately
-measures first attempt to first fully completed response. Version 0.16.0 used
-the first completion as its "admission gap", which mixed provider execution
-time into the reclaim measurement. The load generator also emits
-`startedAtEpochMs`, allowing those relative timestamps to share one wall-clock
-timeline with Latchflo events.
+Version 0.21.0 corrects an important measurement error in earlier releases.
+The load generator's first 2xx is **not** an admission timestamp: Tyr cannot
+send those response headers until the provider has completed prefill and sent
+its own headers. Client timing is therefore named `firstResponseHeadersAtMs`
+and `responseHeadersGapMs`. MoFlux admission timing is reported as a bounded
+interval using Tyr's sampled monotonic admitted counter and the provider's
+model-scoped first request receipt. Seed aggregates expose
+`batchFloorAdmissionGapMinMs` / `batchFloorAdmissionGapMaxMs` separately from
+`batchFloorResponseHeadersGapMs`; completion remains
+`batchFloorFirstSuccessGapMs`. The load generator also emits
+`startedAtEpochMs`, allowing relative client timestamps to share the same
+wall-clock timeline as Latchflo events.
 
 Each run is written below `results/runs/<sweep>/<run-id>/`; the seed summary
 aggregates borrowed slots, controller proof, the complete handoff timeline,
-lease time avoided, sampled applied-capacity safety, batch admission/completion
-gaps, batch service, and an explicit adaptive pass/fail record. Reviewed
+lease time avoided, sampled applied-capacity safety, bounded batch admission,
+response-header/completion gaps, batch service, and an explicit adaptive
+pass/fail record. Reviewed
 evidence is not overwritten. A failed `--require-adaptive-proof` run keeps its
 summary and per-seed files but does not update the latest successful pointer.
 Two implementation notes are load-bearing:
@@ -920,13 +935,15 @@ Three things worth reading carefully, including the ones that are inconvenient:
   envelope never saturates, so every arm looks identical. Both failure modes
   were hit while building this. Check that peak occupancy reaches the envelope
   and that success rates are neither 0% nor 100% before trusting a comparison.
-- **Adaptive class-floor restoration is acknowledged and non-preemptive.**
+- **Adaptive capacity-floor restoration is acknowledged and non-preemptive.**
   Tyr 0.25.1 reports bounded per-class demand plus ordered class occupancy
-  evidence, and Latchflo 0.11.4 can restore a returning protected floor before
-  the lent lease expires. Running borrowers are never revoked; the lower shared
-  authority drains by attrition, Tyr acknowledges the class shrink, and Latchflo
-  commits only after fresh occupancy proves the transfer safe. Lease expiry
-  remains the conservative fallback if that proof cannot be obtained.
+  evidence. Latchflo 0.11.6 transfers physical handoff safety authority to the
+  restrictive successor grants after every drain ACK, so natural expiry of the
+  predecessor lease no longer aborts an otherwise safe restoration. Running
+  borrowers are never revoked; the lower shared authority drains by attrition,
+  Tyr acknowledges the shrink, and Latchflo commits only after fresh occupancy
+  proves the transfer safe. Prepared-successor expiry remains the conservative
+  fallback after ACK; before ACK, the predecessor lease remains authoritative.
 - **Streaming chunk granularity** is one SSE frame per simulator tick, not per
   token.
 

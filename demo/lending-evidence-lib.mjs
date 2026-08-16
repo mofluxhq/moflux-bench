@@ -95,12 +95,19 @@ export function summarizeControllerLending({
   groupName = DEFAULT_CAPACITY_GROUP_NAME,
   events = [],
   demand = [],
+  grants = [],
   finalRebalance = null,
   batchPool = "sim-batch",
   batchGuaranteedMaxConcurrent = 1,
   batchGuaranteedTokenBudget = 1,
   loadgenStartedAtEpochMs = null,
+  batchFirstAttemptAtMs = null,
+  batchFirstResponseHeadersAtMs = null,
+  // Compatibility only for synthetic fixtures and pre-0.21 callers. This was
+  // client-visible 2xx timing, not an admission timestamp.
   batchFirstAdmissionAtMs = null,
+  batchModel = "sim-model-batch",
+  providerCounters = null,
   appliedCapacity = null,
 }) {
   const allEvents = [...events].sort((a, b) => Number(a?.id ?? 0) - Number(b?.id ?? 0));
@@ -149,7 +156,7 @@ export function summarizeControllerLending({
   ) ?? null;
   const matchingPending = handoffId === null
     ? pending.at(-1) ?? null
-    : pending.find((event) => event?.payload?.handoffId === handoffId) ?? pending.at(-1) ?? null;
+    : pending.filter((event) => event?.payload?.handoffId === handoffId).at(-1) ?? pending.at(-1) ?? null;
 
   const latestPending = matchingPending;
   const pendingId = Number(latestPending?.id ?? -1);
@@ -198,42 +205,130 @@ export function summarizeControllerLending({
 
   const preparedAt = eventTime(restorationPrepared);
   const commitAt = eventTime(committed);
-  const appliedAt = appliedDrainEvents
+  const drainIds = new Set(drainGrants.map((grant) => grant.grantId).filter(Boolean));
+  const drainAppliedEvents = appliedDrainEvents.filter((event) =>
+    drainIds.has(event?.entityId ?? event?.payload?.grantId),
+  );
+  const firstAckByGrantId = new Map();
+  const lastAckByGrantId = new Map();
+  const ackCountByGrantId = new Map();
+  for (const event of drainAppliedEvents) {
+    const grantId = event?.entityId ?? event?.payload?.grantId;
+    const at = eventTime(event);
+    if (!grantId || at === null) continue;
+    if (!firstAckByGrantId.has(grantId) || at < firstAckByGrantId.get(grantId)) {
+      firstAckByGrantId.set(grantId, at);
+    }
+    if (!lastAckByGrantId.has(grantId) || at > lastAckByGrantId.get(grantId)) {
+      lastAckByGrantId.set(grantId, at);
+    }
+    ackCountByGrantId.set(grantId, (ackCountByGrantId.get(grantId) ?? 0) + 1);
+  }
+  const everyDrainApplied =
+    drainIds.size > 0 && [...drainIds].every((grantId) => firstAckByGrantId.has(grantId));
+  const allDrainsAcknowledgedAt = everyDrainApplied
+    ? Math.max(...[...drainIds].map((grantId) => firstAckByGrantId.get(grantId)))
+    : null;
+  const lastDrainAckAt = drainAppliedEvents
     .map(eventTime)
-    .filter((value) => value !== null);
-  const allDrainsAcknowledgedAt =
-    drainGrants.length > 0 && appliedDrainEvents.length >= drainGrants.length && appliedAt.length > 0
-      ? Math.max(...appliedAt)
-      : null;
+    .filter((value) => value !== null)
+    .reduce((latest, value) => latest === null ? value : Math.max(latest, value), null);
   const latestBatchDemand = latestDemandByPool[batchPool] ?? null;
   const demandStateSince = latestBatchDemand?.hasDemand === true
     ? Date.parse(latestBatchDemand.stateSince ?? "")
     : Number.NaN;
-  const demandDetectedAt = Number.isFinite(demandStateSince)
-    ? demandStateSince
-    : pendingAt;
-  const fallbackDeadline = Date.parse(
-    matchingPending?.payload?.floorRestorationDeadline ??
+  // /v1/demand is a current-state view, not a demand-event history. A final idle
+  // snapshot can therefore describe a state transition that happened after the
+  // restoration handoff. Only use stateSince when it is temporally compatible
+  // with the prepared handoff; otherwise leave demand detection unobserved.
+  const demandDetectedAt =
+    Number.isFinite(demandStateSince) && preparedAt !== null && demandStateSince <= preparedAt
+      ? demandStateSince
+      : null;
+  const grantById = new Map(
+    (Array.isArray(grants) ? grants : []).map((grant) => [grant?.grantId, grant]),
+  );
+  const preparedEntries = Array.isArray(restorationPrepared?.payload?.grants)
+    ? restorationPrepared.payload.grants
+    : [];
+  const sourceExpiries = preparedEntries
+    .map((entry) => grantById.get(entry?.fromGrantId))
+    .map((grant) => Date.parse(grant?.expiresAt ?? ""))
+    .filter(Number.isFinite);
+  const successorExpiries = preparedEntries
+    .map((entry) => grantById.get(entry?.grantId))
+    .map((grant) => Date.parse(grant?.expiresAt ?? ""))
+    .filter(Number.isFinite);
+  const predecessorLeaseDeadline = sourceExpiries.length > 0
+    ? Math.max(...sourceExpiries)
+    : null;
+  const successorGrantDeadline = successorExpiries.length === preparedEntries.length && successorExpiries.length > 0
+    ? Math.min(...successorExpiries)
+    : null;
+  const reportedFallbackDeadline = Date.parse(
+    finalRebalance?.handoff?.fallbackDeadline ??
+      matchingPending?.payload?.floorRestorationDeadline ??
       finalRebalance?.floorRestorationDeadline ??
       "",
   );
-  const firstBatchAdmissionAt =
-    Number.isFinite(Number(loadgenStartedAtEpochMs)) &&
-    Number.isFinite(Number(batchFirstAdmissionAtMs))
-      ? Number(loadgenStartedAtEpochMs) + Number(batchFirstAdmissionAtMs)
+  const finiteNumber = (value) => {
+    if (value === null || value === undefined || value === "") return null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+  const parsedTime = (value) => {
+    if (typeof value !== "string" || value === "") return null;
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+  const loadgenStartedAt = finiteNumber(loadgenStartedAtEpochMs);
+  const batchAttemptOffset = finiteNumber(batchFirstAttemptAtMs);
+  const responseHeadersOffset = finiteNumber(
+    batchFirstResponseHeadersAtMs ?? batchFirstAdmissionAtMs,
+  );
+  const firstBatchAttemptAt =
+    loadgenStartedAt !== null && batchAttemptOffset !== null
+      ? loadgenStartedAt + batchAttemptOffset
       : null;
+  const firstBatchResponseHeadersAt =
+    loadgenStartedAt !== null && responseHeadersOffset !== null
+      ? loadgenStartedAt + responseHeadersOffset
+      : null;
+
+  // Tyr's admitted counter is sampled independently of client response timing.
+  // The previous poll gives a conservative lower bound; the provider's first
+  // receipt of the batch model is an upper bound because Tyr cannot dispatch
+  // upstream until its local bulkhead has admitted the request. If provider
+  // timing is absent, the first counter observation remains a coarser upper
+  // bound. This is intentionally an interval, not a fabricated point estimate.
+  const admissionObservation = appliedCapacity?.admissionObservation ?? null;
+  const previousAdmissionPollStartedAt = parsedTime(
+    admissionObservation?.previousPollStartedAt ?? null,
+  );
+  const firstAdmissionCounterObservedAt = parsedTime(
+    admissionObservation?.firstObservedAt ?? null,
+  );
+  const providerDispatchAt = finiteNumber(
+    providerCounters?.firstRequestReceivedAtEpochMsByModel?.[batchModel],
+  );
+  const firstBatchAdmissionNotBeforeAt = previousAdmissionPollStartedAt;
+  const upperCandidates = [providerDispatchAt, firstAdmissionCounterObservedAt]
+    .filter((value) => value !== null);
+  const firstBatchAdmissionNotAfterAt = upperCandidates.length > 0
+    ? Math.min(...upperCandidates)
+    : null;
+  const admissionWindowMs =
+    firstBatchAdmissionNotBeforeAt !== null && firstBatchAdmissionNotAfterAt !== null
+      ? Math.max(0, firstBatchAdmissionNotAfterAt - firstBatchAdmissionNotBeforeAt)
+      : null;
+
   const delta = (from, to) =>
-    from !== null && to !== null && Number.isFinite(from) && Number.isFinite(to)
-      ? Math.max(0, to - from)
+    from !== null && to !== null && Number.isFinite(from) && Number.isFinite(to) && to >= from
+      ? to - from
       : null;
   const iso = (value) =>
     value !== null && Number.isFinite(value) ? new Date(value).toISOString() : null;
-  const drainIds = new Set(drainGrants.map((grant) => grant.grantId));
-  const appliedDrainIds = new Set(
-    appliedDrainEvents.map((event) => event?.entityId).filter(Boolean),
-  );
-  const everyDrainApplied =
-    drainIds.size > 0 && [...drainIds].every((grantId) => appliedDrainIds.has(grantId));
+  const appliedDrainIds = new Set(firstAckByGrantId.keys());
   const safeEventOrder =
     preparedAt !== null &&
     allDrainsAcknowledgedAt !== null &&
@@ -243,13 +338,93 @@ export function summarizeControllerLending({
     aborted === null &&
     everyDrainApplied;
   const commitBeforeBatchAdmission =
-    commitAt !== null &&
-    firstBatchAdmissionAt !== null &&
-    commitAt <= firstBatchAdmissionAt;
-  const committedBeforeLeaseExpiry =
-    commitAt !== null && Number.isFinite(fallbackDeadline)
-      ? commitAt < fallbackDeadline
+    commitAt === null
+      ? null
+      : firstBatchAdmissionNotBeforeAt !== null && commitAt <= firstBatchAdmissionNotBeforeAt
+        ? true
+        : firstBatchAdmissionNotAfterAt !== null && commitAt > firstBatchAdmissionNotAfterAt
+          ? false
+          : null;
+  const admissionOrderingStatus =
+    commitBeforeBatchAdmission === true
+      ? "proven_after_commit"
+      : commitBeforeBatchAdmission === false
+        ? "proven_before_commit"
+        : firstBatchAdmissionNotAfterAt !== null
+          ? "inconclusive"
+          : "unobserved";
+  // Latchflo 0.11.6 transfers physical handoff safety authority after the ACK
+  // barrier. Before every restrictive drain is applied, the predecessor lease
+  // is the fallback. Afterwards the prepared successor envelope is already
+  // authoritative at Tyr, so natural predecessor expiry is not a failure; the
+  // earliest successor-grant expiry becomes the safety deadline.
+  const safetyDeadline = everyDrainApplied
+    ? successorGrantDeadline
+    : predecessorLeaseDeadline ?? (Number.isFinite(reportedFallbackDeadline) ? reportedFallbackDeadline : null);
+  const safetyDeadlineSource = everyDrainApplied
+    ? (successorGrantDeadline !== null ? "prepared_successor_grants" : null)
+    : predecessorLeaseDeadline !== null
+      ? "predecessor_leases"
+      : Number.isFinite(reportedFallbackDeadline)
+        ? "controller_fallback"
+        : null;
+  const committedBeforeSafetyDeadline =
+    commitAt !== null && safetyDeadline !== null
+      ? commitAt < safetyDeadline
       : null;
+  // Retain the predecessor comparison as a diagnostic so 0.11.6 runs can show
+  // that a safe handoff legitimately committed after old source expiry.
+  const committedBeforeLeaseExpiry =
+    commitAt !== null && predecessorLeaseDeadline !== null
+      ? commitAt < predecessorLeaseDeadline
+      : null;
+  const controllerFloorRestored = committed !== null || restoredEvent !== null || finalFloorRestored;
+  const dataPlaneFloorRestored = appliedCapacity?.observedRestoredPartition === true;
+  const restoredObservedAt = parsedTime(appliedCapacity?.restorationObservation?.firstObservedAt ?? null);
+  const effectiveRestoredAt = appliedCapacity === null || appliedCapacity === undefined
+    ? eventTime(restoredEvent) ?? eventTime(committed)
+    : restoredObservedAt;
+  const effectiveFloorRestored = appliedCapacity === null || appliedCapacity === undefined
+    ? controllerFloorRestored
+    : controllerFloorRestored && dataPlaneFloorRestored;
+  const effectiveRestorationDurationMs =
+    pendingAt !== null && effectiveRestoredAt !== null && effectiveRestoredAt >= pendingAt
+      ? effectiveRestoredAt - pendingAt
+      : null;
+
+  const appliedTimeline = Array.isArray(appliedCapacity?.timeline) ? appliedCapacity.timeline : [];
+  const drainReadiness = drainGrants.map((grant) => {
+    const grantId = grant?.grantId ?? null;
+    const targetConcurrent = Number(grant?.limits?.maxConcurrent ?? 0);
+    const targetTokens = Number(grant?.limits?.tokenBudget?.budget ?? 0);
+    const matching = appliedTimeline.flatMap((sample) =>
+      (Array.isArray(sample?.replicas) ? sample.replicas : [])
+        .filter((replica) => replica?.interactive?.grants?.some((entry) => entry?.grantId === grantId))
+        .map((replica) => ({ sample, replica })),
+    );
+    const firstApplied = matching.at(0) ?? null;
+    const firstOccupancyReady = matching.find(({ replica }) =>
+      Number(replica?.interactive?.inFlight ?? 0) <= targetConcurrent &&
+      Number(replica?.interactive?.inFlightTokens ?? 0) <= targetTokens
+    ) ?? null;
+    return {
+      grantId,
+      instanceId: grant?.instanceId ?? null,
+      target: { maxConcurrent: targetConcurrent, tokenBudget: targetTokens },
+      firstAckAt: iso(firstAckByGrantId.get(grantId) ?? null),
+      lastAckAt: iso(lastAckByGrantId.get(grantId) ?? null),
+      ackEvents: ackCountByGrantId.get(grantId) ?? 0,
+      firstObservedAppliedAt: firstApplied?.sample?.observedAt ?? null,
+      firstObservedOccupancyReadyAt: firstOccupancyReady?.sample?.observedAt ?? null,
+      firstObservedOccupancy: firstOccupancyReady
+        ? {
+            port: firstOccupancyReady.replica?.port ?? null,
+            inFlight: firstOccupancyReady.replica?.interactive?.inFlight ?? null,
+            inFlightTokens: firstOccupancyReady.replica?.interactive?.inFlightTokens ?? null,
+          }
+        : null,
+    };
+  });
 
   return {
     group: groupName,
@@ -264,42 +439,106 @@ export function summarizeControllerLending({
     floorRestorePendingObserved: pending.length > 0,
     floorRestorationDeadline: matchingPending?.payload?.floorRestorationDeadline ??
       finalRebalance?.floorRestorationDeadline ?? null,
-    floorRestored: committed !== null || restoredEvent !== null || finalFloorRestored,
-    floorRestoredAt: committed?.createdAt ?? restoredEvent?.createdAt ?? null,
-    restorationDurationMs,
+    floorRestored: effectiveFloorRestored,
+    controllerFloorRestored,
+    dataPlaneFloorRestored,
+    floorRestoredAt: iso(effectiveRestoredAt),
+    restorationDurationMs: effectiveRestorationDurationMs,
     handoff: {
       observed: restorationPrepared !== null,
       handoffId,
       drainGrants: drainGrants.length,
       appliedDrainGrants: appliedDrainIds.size,
       everyDrainApplied,
+      drainGrantAcks: drainGrants.map((grant) => ({
+        grantId: grant?.grantId ?? null,
+        instanceId: grant?.instanceId ?? null,
+        firstAckAt: iso(firstAckByGrantId.get(grant?.grantId) ?? null),
+        lastAckAt: iso(lastAckByGrantId.get(grant?.grantId) ?? null),
+        ackEvents: ackCountByGrantId.get(grant?.grantId) ?? 0,
+      })),
+      duplicateDrainAckEvents: Math.max(0, drainAppliedEvents.length - appliedDrainIds.size),
       aborted: aborted !== null,
       abortReason: aborted?.payload?.reason ?? null,
       demandDetectedAt: iso(demandDetectedAt),
-      demandDetectionSource: Number.isFinite(demandStateSince)
-        ? "demand.stateSince"
-        : pendingAt !== null
-          ? "capacity_group.floor_restore_pending"
-          : null,
+      demandDetectionSource: demandDetectedAt !== null ? "demand.stateSince" : null,
+      restorePendingObservedAt: iso(pendingAt),
       drainStartedAt: iso(preparedAt),
       capacityAcknowledgedAt: iso(allDrainsAcknowledgedAt),
+      lastDrainAckAt: iso(lastDrainAckAt),
       committedAt: iso(commitAt),
-      firstBatchAdmissionAt: iso(firstBatchAdmissionAt),
-      fallbackDeadline: Number.isFinite(fallbackDeadline)
-        ? new Date(fallbackDeadline).toISOString()
+      firstBatchAdmissionWindow: {
+        source: "tyr.stats.llm.admitted+provider.request_received",
+        sampleIntervalMs: admissionObservation?.sampleIntervalMs ?? null,
+        notBeforeAt: iso(firstBatchAdmissionNotBeforeAt),
+        notAfterAt: iso(firstBatchAdmissionNotAfterAt),
+        widthMs: admissionWindowMs,
+        firstCounterObservedAt: iso(firstAdmissionCounterObservedAt),
+        firstProviderDispatchAt: iso(providerDispatchAt),
+        admittedCountAtFirstObservation:
+          admissionObservation?.admittedCountAtFirstObservation ?? null,
+      },
+      firstBatchAttemptAt: iso(firstBatchAttemptAt),
+      firstBatchResponseHeadersAt: iso(firstBatchResponseHeadersAt),
+      fallbackDeadline: safetyDeadline !== null
+        ? new Date(safetyDeadline).toISOString()
+        : null,
+      safetyDeadline: safetyDeadline !== null ? new Date(safetyDeadline).toISOString() : null,
+      safetyDeadlineSource,
+      predecessorLeaseDeadline: predecessorLeaseDeadline !== null
+        ? new Date(predecessorLeaseDeadline).toISOString()
+        : null,
+      successorGrantDeadline: successorGrantDeadline !== null
+        ? new Date(successorGrantDeadline).toISOString()
         : null,
       demandToDrainStartMs: delta(demandDetectedAt, preparedAt),
       drainStartToAcknowledgedMs: delta(preparedAt, allDrainsAcknowledgedAt),
       acknowledgedToCommitMs: delta(allDrainsAcknowledgedAt, commitAt),
-      commitToFirstBatchAdmissionMs: delta(commitAt, firstBatchAdmissionAt),
-      demandToFirstBatchAdmissionMs: delta(demandDetectedAt, firstBatchAdmissionAt),
+      commitToFirstBatchAdmissionMinMs:
+        commitAt !== null && firstBatchAdmissionNotBeforeAt !== null
+          ? Math.max(0, firstBatchAdmissionNotBeforeAt - commitAt)
+          : null,
+      commitToFirstBatchAdmissionMaxMs:
+        commitAt !== null && firstBatchAdmissionNotAfterAt !== null
+          ? Math.max(0, firstBatchAdmissionNotAfterAt - commitAt)
+          : null,
+      demandToFirstBatchAdmissionMinMs:
+        demandDetectedAt !== null && firstBatchAdmissionNotBeforeAt !== null
+          ? Math.max(0, firstBatchAdmissionNotBeforeAt - demandDetectedAt)
+          : null,
+      demandToFirstBatchAdmissionMaxMs:
+        demandDetectedAt !== null && firstBatchAdmissionNotAfterAt !== null
+          ? Math.max(0, firstBatchAdmissionNotAfterAt - demandDetectedAt)
+          : null,
+      attemptToFirstBatchAdmissionMinMs:
+        firstBatchAttemptAt !== null && firstBatchAdmissionNotBeforeAt !== null
+          ? Math.max(0, firstBatchAdmissionNotBeforeAt - firstBatchAttemptAt)
+          : null,
+      attemptToFirstBatchAdmissionMaxMs:
+        firstBatchAttemptAt !== null && firstBatchAdmissionNotAfterAt !== null
+          ? Math.max(0, firstBatchAdmissionNotAfterAt - firstBatchAttemptAt)
+          : null,
+      commitToFirstBatchResponseHeadersMs: delta(commitAt, firstBatchResponseHeadersAt),
+      demandToFirstBatchResponseHeadersMs: delta(demandDetectedAt, firstBatchResponseHeadersAt),
+      attemptToFirstBatchResponseHeadersMs: delta(firstBatchAttemptAt, firstBatchResponseHeadersAt),
       handoffDurationMs: delta(preparedAt, commitAt),
       leaseTimeAvoidedMs:
-        commitAt !== null && Number.isFinite(fallbackDeadline)
-          ? Math.max(0, fallbackDeadline - commitAt)
+        commitAt !== null && predecessorLeaseDeadline !== null
+          ? Math.max(0, predecessorLeaseDeadline - commitAt)
+          : null,
+      predecessorLeaseLeadMs:
+        commitAt !== null && predecessorLeaseDeadline !== null
+          ? predecessorLeaseDeadline - commitAt
+          : null,
+      safetyTimeRemainingMs:
+        commitAt !== null && safetyDeadline !== null
+          ? safetyDeadline - commitAt
           : null,
       safeEventOrder,
+      drainReadiness,
       commitBeforeBatchAdmission,
+      admissionOrderingStatus,
+      committedBeforeSafetyDeadline,
       committedBeforeLeaseExpiry,
       appliedCapacity,
     },

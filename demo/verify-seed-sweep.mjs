@@ -191,29 +191,51 @@ const adaptiveRecords = records.map((record) => {
   moflux.classes.batch.success = 4;
   moflux.lending = {
     idleWindow: { borrowed: true, borrowedSlots: 4 },
-    floorReassertion: { admissionGapMs: 750 },
+    floorReassertion: {
+      admissionGapMinMs: 50,
+      admissionGapMaxMs: 150,
+      responseHeadersGapMs: 750,
+    },
     controlPlane: {
       lendingObserved: true,
       floorRestored: true,
+      controllerFloorRestored: true,
+      dataPlaneFloorRestored: true,
       restorationDurationMs: 500,
       handoff: {
         observed: true,
         committedAt: "2026-08-08T20:00:27.900Z",
-        firstBatchAdmissionAt: "2026-08-08T20:00:28.150Z",
-        fallbackDeadline: "2026-08-08T20:00:32.000Z",
+        firstBatchAdmissionWindow: {
+          notBeforeAt: "2026-08-08T20:00:27.950Z",
+          notAfterAt: "2026-08-08T20:00:28.050Z",
+          widthMs: 100,
+        },
+        fallbackDeadline: "2026-08-08T20:01:27.200Z",
+        safetyDeadline: "2026-08-08T20:01:27.200Z",
+        safetyDeadlineSource: "prepared_successor_grants",
+        predecessorLeaseDeadline: "2026-08-08T20:00:27.700Z",
+        successorGrantDeadline: "2026-08-08T20:01:27.200Z",
         everyDrainApplied: true,
         aborted: false,
         abortReason: null,
         safeEventOrder: true,
         commitBeforeBatchAdmission: true,
-        committedBeforeLeaseExpiry: true,
+        admissionOrderingStatus: "proven_after_commit",
+        committedBeforeSafetyDeadline: true,
+        committedBeforeLeaseExpiry: false,
         handoffDurationMs: 450,
         demandToDrainStartMs: 100,
         drainStartToAcknowledgedMs: 150,
         acknowledgedToCommitMs: 200,
-        commitToFirstBatchAdmissionMs: 250,
-        demandToFirstBatchAdmissionMs: 700,
-        leaseTimeAvoidedMs: 3500,
+        commitToFirstBatchAdmissionMinMs: 50,
+        commitToFirstBatchAdmissionMaxMs: 150,
+        demandToFirstBatchAdmissionMinMs: 500,
+        demandToFirstBatchAdmissionMaxMs: 600,
+        commitToFirstBatchResponseHeadersMs: 250,
+        demandToFirstBatchResponseHeadersMs: 700,
+        leaseTimeAvoidedMs: 0,
+        predecessorLeaseLeadMs: -200,
+        safetyTimeRemainingMs: 59300,
         appliedCapacity: { noAppliedOverallocation: true },
       },
     },
@@ -235,14 +257,53 @@ assert.equal(adaptive.adaptiveProof.batchTargetSeeds, 2);
 assert.equal(adaptive.adaptiveProof.occupancyObservedSeeds, 2);
 assert.equal(adaptive.adaptiveProof.controllerObservedSeeds, 2);
 assert.equal(adaptive.adaptiveProof.floorRestoredSeeds, 2);
+assert.equal(adaptive.adaptiveProof.controllerFloorRestoredSeeds, 2);
+assert.equal(adaptive.adaptiveProof.dataPlaneFloorRestoredSeeds, 2);
 assert.equal(adaptive.adaptiveProof.handoffObservedSeeds, 2);
 assert.equal(adaptive.adaptiveProof.handoffCommittedSeeds, 2);
 assert.equal(adaptive.adaptiveProof.safeHandoffSeeds, 2);
 assert.equal(adaptive.adaptiveProof.commitBeforeAdmissionSeeds, 2);
-assert.equal(adaptive.adaptiveProof.handoffBeatLeaseExpirySeeds, 2);
+assert.equal(adaptive.adaptiveProof.admissionOrderViolationSeeds, 0);
+assert.equal(adaptive.aggregate.lending.batchFloorAdmissionGapMaxMs.median, 150);
+assert.equal(adaptive.aggregate.lending.batchFloorResponseHeadersGapMs.median, 750);
+assert.equal(adaptive.aggregate.lending.commitToFirstBatchAdmissionMaxMs.median, 150);
+assert.equal(adaptive.aggregate.lending.commitToFirstBatchResponseHeadersMs.median, 250);
+assert.equal(adaptive.adaptiveProof.handoffWithinSafetyDeadlineSeeds, 2);
+assert.equal(adaptive.adaptiveProof.handoffBeatLeaseExpirySeeds, 0);
 assert.equal(adaptive.adaptiveProof.noAppliedOverallocationSeeds, 2);
 assert.equal(adaptive.adaptiveProof.batchServedSeeds, 2);
 assert.equal(adaptiveProofFailureMessage(adaptive.adaptiveProof), null);
+
+const inconclusiveAdmissionRecords = structuredClone(adaptiveRecords);
+inconclusiveAdmissionRecords[1].moflux.lending.controlPlane.handoff.commitBeforeBatchAdmission = null;
+inconclusiveAdmissionRecords[1].moflux.lending.controlPlane.handoff.admissionOrderingStatus = "inconclusive";
+const inconclusiveAdmission = buildSweepSummary({
+  mode: "compare",
+  fault: false,
+  seeds: [1, 2],
+  records: inconclusiveAdmissionRecords,
+});
+assert.equal(inconclusiveAdmission.adaptiveProof.passed, false);
+assert.equal(inconclusiveAdmission.adaptiveProof.commitBeforeAdmissionSeeds, 1);
+assert.equal(inconclusiveAdmission.adaptiveProof.admissionOrderInconclusiveSeeds, 1);
+assert.equal(inconclusiveAdmission.adaptiveProof.admissionOrderViolationSeeds, 0);
+assert.match(
+  adaptiveProofFailureMessage(inconclusiveAdmission.adaptiveProof),
+  /commit-before-batch-admission ordering inconclusive/,
+);
+
+const violatedAdmissionRecords = structuredClone(adaptiveRecords);
+violatedAdmissionRecords[1].moflux.lending.controlPlane.handoff.commitBeforeBatchAdmission = false;
+violatedAdmissionRecords[1].moflux.lending.controlPlane.handoff.admissionOrderingStatus = "proven_before_commit";
+const violatedAdmission = buildSweepSummary({
+  mode: "compare",
+  fault: false,
+  seeds: [1, 2],
+  records: violatedAdmissionRecords,
+});
+assert.equal(violatedAdmission.adaptiveProof.passed, false);
+assert.equal(violatedAdmission.adaptiveProof.admissionOrderViolationSeeds, 1);
+assert.match(adaptiveProofFailureMessage(violatedAdmission.adaptiveProof), /batch admission proven before handoff commit/);
 
 const partialOccupancyRecords = structuredClone(adaptiveRecords);
 partialOccupancyRecords[1].moflux.lending.idleWindow.borrowed = false;

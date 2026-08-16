@@ -106,7 +106,7 @@ if (lock.packages?.[""]?.version !== pkg.version || lock.version !== pkg.version
 const example = readFileSync(path.join(ROOT, "demo/moflux/.env.example"), "utf8");
 for (const expected of [
   "MOFLUX_TYR_IMAGE=tyr-admission-controller:0.25.1",
-  "MOFLUX_LATCHFLO_IMAGE=latchflo-control-plane:0.11.4",
+  "MOFLUX_LATCHFLO_IMAGE=latchflo-control-plane:0.11.6",
 ]) {
   if (!example.includes(expected)) {
     findings.push(`demo/moflux/.env.example: missing pinned runtime ${expected}`);
@@ -235,6 +235,30 @@ if (!loadgen.includes('interactiveIdentityToken: interactiveIdentityToken ? "pro
   findings.push("load/loadgen.mjs: identity attribution or token redaction is missing");
 }
 
+if (!loadgen.includes("firstResponseHeadersAtMs") ||
+    !loadgen.includes("responseHeadersGapMs") ||
+    loadgen.includes("Admission-layer wait only: first attempt until the first 2xx response")) {
+  findings.push("load/loadgen.mjs: client 2xx timing must be labelled as response-header timing");
+}
+const providerSim = readFileSync(path.join(ROOT, "sim/provider-sim.mjs"), "utf8");
+if (!providerSim.includes("firstRequestReceivedAtEpochMsByModel") ||
+    !providerSim.includes("receivedByModel") ||
+    !providerSim.includes("resetCounters")) {
+  findings.push("sim/provider-sim.mjs: model-scoped provider dispatch timing is missing");
+}
+const lendingEvidence = readFileSync(path.join(ROOT, "demo/lending-evidence-lib.mjs"), "utf8");
+for (const required of [
+  "firstBatchAdmissionWindow",
+  "commitToFirstBatchAdmissionMinMs",
+  "commitToFirstBatchAdmissionMaxMs",
+  "admissionOrderingStatus",
+  "firstBatchResponseHeadersAt",
+]) {
+  if (!lendingEvidence.includes(required)) {
+    findings.push(`demo/lending-evidence-lib.mjs: missing corrected admission evidence ${required}`);
+  }
+}
+
 if (pkg.scripts?.demo !== "node demo/seed-sweep.mjs --seeds=1-5 --pause-ms=0 --provider-api=anthropic" ||
     pkg.scripts?.predemo !== "npm run demo:prepare" ||
     pkg.scripts?.["demo:record"] !== "node demo/seed-sweep.mjs --seeds=1-5 --step") {
@@ -247,8 +271,8 @@ if (!pkg.scripts?.["demo:progressive"]?.includes("--provider-api=anthropic") ||
     !pkg.scripts?.["demo:openai"]?.includes("--provider-api=openai")) {
   findings.push("package.json: progressive and OpenAI compatibility demo commands are required");
 }
-if (pkg.version !== "0.20.0") {
-  findings.push("package.json: the current benchmark release must be version 0.20.0");
+if (pkg.version !== "0.21.0") {
+  findings.push("package.json: the current benchmark release must be version 0.21.0");
 }
 const classesScript = pkg.scripts?.["demo:classes"] ?? "";
 for (const required of ["demo/tenant-fairness.mjs", "--seeds=1-5", "--require-proof"]) {

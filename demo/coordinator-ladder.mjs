@@ -442,7 +442,7 @@ function buildReport() {
   const redis = ladder.get("redis");
   const moflux = ladder.get("moflux");
   return {
-    schemaVersion: 4,
+    schemaVersion: 6,
     generatedAt: new Date().toISOString(),
     ladderId: LADDER_ID,
     reanalyzed: REANALYZE ? true : undefined,

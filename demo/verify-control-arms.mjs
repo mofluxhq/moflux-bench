@@ -155,8 +155,8 @@ check("MoFlux keeps its own peak occupancy",
   summary.aggregate.arms.moflux.peakActive.median === 32);
 check("the static cap's lower occupancy is preserved",
   summary.aggregate.arms.staticCap.peakActive.median === 24);
-check("batch admission gap aggregates for the lending benchmark",
-  summary.aggregate.arms.moflux.batchAdmissionGapMs.median === 300);
+check("batch response-header gap aggregates for the lending benchmark",
+  summary.aggregate.arms.moflux.batchResponseHeadersGapMs.median === 300);
 
 // ── head-to-head, which is the point of the exercise ─────────────────
 const versusStatic = summary.aggregate.mofluxVersus.staticCap;

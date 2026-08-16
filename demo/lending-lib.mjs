@@ -127,6 +127,11 @@ export function lendingMetrics({
 
   const borrowedSlots = idlePeak === null ? null : Math.max(0, idlePeak - interactiveCeiling);
 
+  const firstResponseHeadersAtMs =
+    batch.firstResponseHeadersAtMs ?? batch.firstAdmissionAtMs ?? null;
+  const responseHeadersGapMs =
+    batch.responseHeadersGapMs ?? batch.admissionGapMs ?? null;
+
   return {
     batchArrivalMs,
     interactiveCeiling,
@@ -144,14 +149,14 @@ export function lendingMetrics({
     },
     floorReassertion: {
       batchFirstAttemptAtMs: batch.firstAttemptAtMs ?? null,
-      batchFirstAdmissionAtMs: batch.firstAdmissionAtMs ?? null,
+      batchFirstResponseHeadersAtMs: firstResponseHeadersAtMs,
       batchFirstSuccessAtMs: batch.firstSuccessAtMs ?? null,
-      /** Admission-layer reclaim cost; provider execution time is excluded. */
-      admissionGapMs: batch.admissionGapMs ?? null,
+      /** Client-visible wait; includes upstream prefill before response headers. */
+      responseHeadersGapMs,
       /** End-to-end time to the first fully completed batch request. */
       firstSuccessGapMs: batch.firstSuccessGapMs ?? null,
       batchSuccess: batch.success ?? 0,
-      admitted: batch.firstAdmissionAtMs !== null && batch.firstAdmissionAtMs !== undefined,
+      responseHeadersObserved: firstResponseHeadersAtMs !== null,
       /** A floor that never completes work is still a failed restoration outcome. */
       reasserted: (batch.success ?? 0) > 0,
     },
@@ -189,21 +194,27 @@ export function lendingComparison(staticMetrics, lendingMetrics_) {
       staticIdleGoodput && lendingIdleGoodput
         ? +(((lendingIdleGoodput / staticIdleGoodput) - 1) * 100).toFixed(2)
         : null,
-    batchAdmissionGapStaticMs: staticMetrics?.floorReassertion?.admissionGapMs ?? null,
-    batchAdmissionGapLendingMs: lendingMetrics_?.floorReassertion?.admissionGapMs ?? null,
+    batchResponseHeadersGapStaticMs:
+      staticMetrics?.floorReassertion?.responseHeadersGapMs ??
+      staticMetrics?.floorReassertion?.admissionGapMs ?? null,
+    batchResponseHeadersGapLendingMs:
+      lendingMetrics_?.floorReassertion?.responseHeadersGapMs ??
+      lendingMetrics_?.floorReassertion?.admissionGapMs ?? null,
     /**
-     * The cost of lending: batch may wait longer for its first slot because a
-     * borrowed slot has to drain first. If this grows without bound, the floor
-     * is not a floor.
+     * Client-visible difference to first response headers. This includes
+     * provider prefill and is intentionally not labelled admission latency.
      */
-    reassertionCostMs:
-      staticMetrics?.floorReassertion?.admissionGapMs !== null &&
-      lendingMetrics_?.floorReassertion?.admissionGapMs !== null
-        ? +(
-            lendingMetrics_.floorReassertion.admissionGapMs -
-            staticMetrics.floorReassertion.admissionGapMs
-          ).toFixed(1)
-        : null,
+    responseHeadersCostMs: (() => {
+      const staticGap =
+        staticMetrics?.floorReassertion?.responseHeadersGapMs ??
+        staticMetrics?.floorReassertion?.admissionGapMs ?? null;
+      const lendingGap =
+        lendingMetrics_?.floorReassertion?.responseHeadersGapMs ??
+        lendingMetrics_?.floorReassertion?.admissionGapMs ?? null;
+      return staticGap !== null && lendingGap !== null
+        ? +(lendingGap - staticGap).toFixed(1)
+        : null;
+    })(),
     bothReasserted: Boolean(
       staticMetrics?.floorReassertion?.reasserted && lendingMetrics_?.floorReassertion?.reasserted,
     ),

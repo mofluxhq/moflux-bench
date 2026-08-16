@@ -230,10 +230,57 @@ async function testOutputDistribution() {
   return ok;
 }
 
+async function testRequestTimingByModel() {
+  const { child, base } = await startSim([
+    "--envelope=4",
+    "--queue=4",
+    "--r1=100000",
+    "--prefill-r1=1000000",
+    "--output-sigma=0",
+  ]);
+
+  let ok = false;
+  try {
+    const before = Date.now();
+    const response = await fetch(`${base}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "sim-model-batch",
+        max_tokens: 1,
+        messages: [{ role: "user", content: "timing probe" }],
+      }),
+    });
+    await response.arrayBuffer();
+    const after = Date.now();
+    const stats = await (await fetch(`${base}/admin/stats`)).json();
+    const first = stats.counters.firstRequestReceivedAtEpochMsByModel?.["sim-model-batch"];
+    const received = stats.counters.receivedByModel?.["sim-model-batch"];
+
+    await fetch(`${base}/admin/reset`, { method: "POST" });
+    const reset = await (await fetch(`${base}/admin/stats`)).json();
+    ok =
+      received === 1 &&
+      Number.isFinite(first) &&
+      first >= before &&
+      first <= after &&
+      Object.keys(reset.counters.firstRequestReceivedAtEpochMsByModel ?? {}).length === 0 &&
+      Array.isArray(reset.counters.peakActiveBySecond);
+
+    console.log("\nTest D — model-scoped provider request timing");
+    console.log(`  first batch request received at ${first}; client window ${before}-${after}`);
+    console.log(`${ok ? "PASS" : "FAIL"}  provider dispatch upper bound is timestamped and reset-safe`);
+  } finally {
+    await stopChild(child);
+  }
+  return ok;
+}
+
 const results = [];
 results.push(["curve fidelity", await testCurveFidelity()]);
 results.push(["backpressure", await testBackpressure()]);
 results.push(["output distribution", await testOutputDistribution()]);
+results.push(["request timing", await testRequestTimingByModel()]);
 
 console.log("\n──────── summary ────────");
 for (const [name, pass] of results) console.log(`${pass ? "PASS" : "FAIL"}  ${name}`);

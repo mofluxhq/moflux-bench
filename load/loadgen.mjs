@@ -149,7 +149,9 @@ for (const cls of classes) {
     localRejectDetails: {},
     admissionClassResponses: {},
     firstAttemptAtMs: null,
-    firstAdmissionAtMs: null,
+    lastAttemptAtMs: null,
+    lastLocalRejectAtMs: null,
+    firstResponseHeadersAtMs: null,
     firstSuccessAtMs: null,
     /**
      * Every completion, kept for the whole run.
@@ -204,15 +206,17 @@ function offsetMs() {
   return performance.now() - startedAtMonotonic;
 }
 
-/** First attempt, first 2xx admission, and first fully completed request for each class. */
+/** First attempt, first 2xx response headers, and first fully completed request for each class. */
 function markAttempt(cls) {
   const s = stats[cls];
-  if (s.firstAttemptAtMs === null) s.firstAttemptAtMs = +offsetMs().toFixed(1);
+  const at = +offsetMs().toFixed(1);
+  if (s.firstAttemptAtMs === null) s.firstAttemptAtMs = at;
+  s.lastAttemptAtMs = at;
 }
 
-function markAdmission(cls) {
+function markResponseHeaders(cls) {
   const s = stats[cls];
-  if (s.firstAdmissionAtMs === null) s.firstAdmissionAtMs = +offsetMs().toFixed(1);
+  if (s.firstResponseHeadersAtMs === null) s.firstResponseHeadersAtMs = +offsetMs().toFixed(1);
 }
 
 function markSuccess(cls) {
@@ -463,6 +467,7 @@ async function issue(entry) {
             response.headers.has("x-admission-reason");
           if (rejectedLocally) {
             s.localReject += 1;
+            s.lastLocalRejectAtMs = +offsetMs().toFixed(1);
             const raw = await response.text().catch(() => "");
             let parsed = null;
             try {
@@ -506,21 +511,26 @@ async function issue(entry) {
             s.upstreamReject += 1;
             await response.arrayBuffer().catch(() => {});
           }
-          touch("backoff");
-          await backoff(s, entry, attempt, response);
+          if (attempt + 1 < CONFIG.maxAttempts) {
+            touch("backoff");
+            await backoff(s, entry, attempt, response);
+          }
           continue;
         }
         if (response.status >= 500) {
           s.serverError += 1;
           await response.arrayBuffer().catch(() => {});
-          touch("backoff");
-          await backoff(s, entry, attempt, response);
+          if (attempt + 1 < CONFIG.maxAttempts) {
+            touch("backoff");
+            await backoff(s, entry, attempt, response);
+          }
           continue;
         }
 
-        // 2xx: the admission decision has succeeded. Record it before stream
-        // execution so handoff latency is not conflated with provider service time.
-        markAdmission(cls);
+        // 2xx response headers are client-visible only after the upstream has
+        // produced its own headers. Do not call this admission latency: for
+        // streaming LLM traffic it includes provider prefill / TTFT.
+        markResponseHeaders(cls);
 
         // Drain the stream, capture TTFT and output tokens. A replica may
         // disappear after the headers have arrived; in that case Undici throws
@@ -586,8 +596,10 @@ async function issue(entry) {
         s.transportError += 1;
         await response?.body?.cancel().catch(() => {});
         // A stream that died mid-flight carries no capacity hint.
-        touch("backoff");
-        await backoff(s, entry, attempt, undefined);
+        if (attempt + 1 < CONFIG.maxAttempts) {
+          touch("backoff");
+          await backoff(s, entry, attempt, undefined);
+        }
       }
     }
     s.exhausted += 1;
@@ -900,13 +912,15 @@ for (const cls of classes) {
      */
     bindingConstraint: bindingConstraint(s),
     firstAttemptAtMs: s.firstAttemptAtMs,
-    firstAdmissionAtMs: s.firstAdmissionAtMs,
+    lastAttemptAtMs: s.lastAttemptAtMs,
+    lastLocalRejectAtMs: s.lastLocalRejectAtMs,
+    firstResponseHeadersAtMs: s.firstResponseHeadersAtMs,
     firstSuccessAtMs: s.firstSuccessAtMs,
-    /** Admission-layer wait only: first attempt until the first 2xx response. */
-    admissionGapMs:
-      s.firstAttemptAtMs === null || s.firstAdmissionAtMs === null
+    /** Client-visible wait from first attempt until the first 2xx response headers. */
+    responseHeadersGapMs:
+      s.firstAttemptAtMs === null || s.firstResponseHeadersAtMs === null
         ? null
-        : +(s.firstAdmissionAtMs - s.firstAttemptAtMs).toFixed(1),
+        : +(s.firstResponseHeadersAtMs - s.firstAttemptAtMs).toFixed(1),
     /** End-to-end wait to the first fully completed request. */
     firstSuccessGapMs:
       s.firstAttemptAtMs === null || s.firstSuccessAtMs === null

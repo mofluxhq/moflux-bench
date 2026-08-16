@@ -2,7 +2,7 @@
 
 MoFlux Bench 0.19.0 includes the four-arm authenticated noisy-neighbor scenario
 introduced in 0.16.0, including demand-aware protected-floor lending with Tyr
-0.25.1 and Latchflo 0.11.4.
+0.25.1 and Latchflo 0.11.6.
 
 ## What it compares
 
@@ -138,7 +138,7 @@ performance metric improves.
 ## Floor semantics
 
 Tyr 0.25.1 reports bounded per-class demand and ordered class occupancy evidence while enforcing the class limits in its
-currently applied Latchflo grant. Latchflo 0.11.4 owns the lending and handoff decisions.
+currently applied Latchflo grant. Latchflo 0.11.6 owns the lending and handoff decisions.
 
 A configured protected floor is therefore the **nominal floor**. In the
 adaptive arm the **active floor** may temporarily be lower while the class is
