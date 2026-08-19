@@ -132,6 +132,17 @@ if (CONFIG.traceOut) {
 // ── state ────────────────────────────────────────────────────────────
 
 const classes = ["interactive", "batch"];
+const CAPACITY_REJECT_REASONS = new Set([
+  "budget_limit",
+  "concurrency_limit",
+  "queue_limit",
+  "timeout",
+]);
+const CAPACITY_CONSTRAINTS = new Set([
+  "global",
+  "admission_class",
+  "admission_class_protection",
+]);
 const stats = {};
 for (const cls of classes) {
   stats[cls] = {
@@ -146,7 +157,11 @@ for (const cls of classes) {
     outputTokens: 0,
     localRejectReasons: {},
     localRejectPools: {},
+    localRejectConstraints: {},
     localRejectDetails: {},
+    // One evidence record per local rejection attempt. `detail` is Tyr's
+    // complete admission-time capacity snapshot, preserved verbatim.
+    localRejectSnapshots: [],
     admissionClassResponses: {},
     firstAttemptAtMs: null,
     lastAttemptAtMs: null,
@@ -480,9 +495,61 @@ async function issue(entry) {
               parsed?.error?.reason ??
               "unknown";
             const pool = parsed?.error?.pool ?? "unknown";
+            const rejectionDetail = parsed?.error?.detail ?? null;
+            const rawCapacityConstraint =
+              typeof rejectionDetail?.constraint === "string" && rejectionDetail.constraint.length > 0
+                ? rejectionDetail.constraint
+                : null;
+            const capacityConstraint = rawCapacityConstraint !== null
+              ? (CAPACITY_CONSTRAINTS.has(rawCapacityConstraint) ? rawCapacityConstraint : "other")
+              : (
+                  rejectionDetail?.admissionClass === undefined && CAPACITY_REJECT_REASONS.has(reason)
+                    ? "global"
+                    : "unspecified"
+                );
             s.localRejectReasons[reason] = (s.localRejectReasons[reason] ?? 0) + 1;
             s.localRejectPools[pool] = (s.localRejectPools[pool] ?? 0) + 1;
-            const detail = parsed?.error?.detail?.tokenBudget;
+            s.localRejectConstraints[capacityConstraint] =
+              (s.localRejectConstraints[capacityConstraint] ?? 0) + 1;
+
+            const numericHeader = (name) => {
+              const value = response.headers.get(name);
+              if (value === null || value.trim() === "") return null;
+              const parsedValue = Number(value);
+              return Number.isFinite(parsedValue) ? parsedValue : null;
+            };
+            const grantId = response.headers.get("x-latchflo-grant-id");
+            const controllerEpoch = numericHeader("x-latchflo-controller-epoch");
+            s.localRejectSnapshots.push({
+              requestId: entry.id,
+              requestClass: cls,
+              attempt: attempt + 1,
+              rejectedAtMs: s.lastLocalRejectAtMs,
+              target,
+              type: parsed?.error?.type ?? null,
+              pool,
+              reason,
+              admissionClass:
+                responseAdmissionClass === "unclassified" ? null : responseAdmissionClass,
+              admissionRevision:
+                numericHeader("x-admission-revision") ??
+                (rejectionDetail?.limitRevision !== null &&
+                rejectionDetail?.limitRevision !== undefined &&
+                Number.isFinite(Number(rejectionDetail.limitRevision))
+                  ? Number(rejectionDetail.limitRevision)
+                  : null),
+              retryAfterMs: numericHeader("x-admission-retry-after-ms"),
+              grant:
+                grantId === null && controllerEpoch === null
+                  ? null
+                  : { id: grantId, controllerEpoch },
+              detail: rejectionDetail,
+            });
+
+            // Keep the historical compact token-range aggregate for dashboards
+            // and existing consumers. The full snapshot above is the evidence
+            // source when the exact admission-time state matters.
+            const tokenDetail = rejectionDetail?.tokenBudget;
             const key = `${pool}/${reason}`;
             const aggregate = s.localRejectDetails[key] ?? {
               pool,
@@ -501,7 +568,7 @@ async function issue(entry) {
               ["available", "availableMin", "availableMax"],
               ["budget", "budgetMin", "budgetMax"],
             ]) {
-              const value = Number(detail?.[field]);
+              const value = Number(tokenDetail?.[field]);
               if (!Number.isFinite(value)) continue;
               aggregate[minKey] = aggregate[minKey] === null ? value : Math.min(aggregate[minKey], value);
               aggregate[maxKey] = aggregate[maxKey] === null ? value : Math.max(aggregate[maxKey], value);
@@ -668,6 +735,23 @@ function renderMetrics() {
       "bench_local_reject_reason_total",
       "Local admission rejects split by pool and exact reason.",
       detailRows,
+    );
+  }
+  {
+    const constraintRows = [];
+    for (const cls of classes) {
+      for (const [constraint, count] of Object.entries(stats[cls].localRejectConstraints)) {
+        constraintRows.push([
+          `{arm="${arm}",seed="${seed}",class="${promLabel(cls)}",constraint="${promLabel(constraint)}"}`,
+          count,
+        ]);
+      }
+    }
+    emit(
+      "counter",
+      "bench_local_reject_constraint_total",
+      "Local admission rejects split by the capacity layer that bound the decision.",
+      constraintRows,
     );
   }
   emit("counter", "bench_upstream_rejects_total", "429s earned after upstream work.", rows((s) => s.upstreamReject));
@@ -895,7 +979,9 @@ for (const cls of classes) {
     localReject: s.localReject,
     localRejectReasons: s.localRejectReasons,
     localRejectPools: s.localRejectPools,
+    localRejectConstraints: s.localRejectConstraints,
     localRejectDetails: Object.values(s.localRejectDetails),
+    localRejectSnapshots: s.localRejectSnapshots,
     admissionClassResponses: s.admissionClassResponses,
     upstreamReject: s.upstreamReject,
     serverError: s.serverError,

@@ -50,7 +50,25 @@ const scenario = {
   provider: { api: "anthropic", envelope: 32, seed, sigma: 0.25 },
   trace: { version: 1, hash: trace.hash, planned: trace.planned, evidence: "results/scenario-trace.json" },
 };
+function rejectionSnapshots(count) {
+  return Array.from({ length: count }, (_, index) => ({
+    requestId: "interactive-reject-" + index,
+    requestClass: "interactive",
+    attempt: 1,
+    rejectedAtMs: 100 + index,
+    target: "http://127.0.0.1:8100",
+    type: "admission_rejected",
+    pool: "sim-interactive",
+    reason: "concurrency_limit",
+    admissionClass: null,
+    admissionRevision: 1,
+    retryAfterMs: null,
+    grant: null,
+    detail: { limitRevision: 1, constraint: "global", inFlight: 1, maxConcurrent: 1, pending: 0, maxQueue: 0 },
+  }));
+}
 function arm(name, successRate, success, p95, upstream, tokenAccounting) {
+  const localReject = name === "baseline" ? 0 : 4;
   return {
     arm: name,
     seed,
@@ -59,12 +77,15 @@ function arm(name, successRate, success, p95, upstream, tokenAccounting) {
     trace: { version: 1, hash: trace.hash, planned: trace.planned, source: "scenario-trace.json" },
     classes: {
       interactive: {
-        logical: 10, successRate, success, retryAmplification: 1.2, localReject: name === "baseline" ? 0 : 4,
+        logical: 10, successRate, success, retryAmplification: 1.2, localReject,
+        localRejectConstraints: localReject > 0 ? { global: localReject } : {},
+        localRejectSnapshots: rejectionSnapshots(localReject),
         upstreamReject: upstream, latencyMs: { p50: 1000, p95, p99: p95 },
         ttftMs: { p50: 100, p95: 200, p99: 200 },
       },
       batch: {
         logical: 5, successRate: 0.5, success: 5, retryAmplification: 1.5, localReject: 0,
+        localRejectConstraints: {}, localRejectSnapshots: [],
         upstreamReject: 0, latencyMs: { p50: 2000, p95: 3000, p99: 3000 },
         ttftMs: { p50: 300, p95: 400, p99: 400 },
       },

@@ -240,6 +240,17 @@ if (!loadgen.includes("firstResponseHeadersAtMs") ||
     loadgen.includes("Admission-layer wait only: first attempt until the first 2xx response")) {
   findings.push("load/loadgen.mjs: client 2xx timing must be labelled as response-header timing");
 }
+for (const required of [
+  "localRejectSnapshots",
+  "localRejectConstraints",
+  "bench_local_reject_constraint_total",
+  "x-latchflo-grant-id",
+  "rejectionDetail",
+]) {
+  if (!loadgen.includes(required)) {
+    findings.push(`load/loadgen.mjs: full rejection evidence is missing ${required}`);
+  }
+}
 const providerSim = readFileSync(path.join(ROOT, "sim/provider-sim.mjs"), "utf8");
 if (!providerSim.includes("firstRequestReceivedAtEpochMsByModel") ||
     !providerSim.includes("receivedByModel") ||
@@ -271,8 +282,8 @@ if (!pkg.scripts?.["demo:progressive"]?.includes("--provider-api=anthropic") ||
     !pkg.scripts?.["demo:openai"]?.includes("--provider-api=openai")) {
   findings.push("package.json: progressive and OpenAI compatibility demo commands are required");
 }
-if (pkg.version !== "0.21.0") {
-  findings.push("package.json: the current benchmark release must be version 0.21.0");
+if (pkg.version !== "0.22.0") {
+  findings.push("package.json: the current benchmark release must be version 0.22.0");
 }
 const classesScript = pkg.scripts?.["demo:classes"] ?? "";
 for (const required of ["demo/tenant-fairness.mjs", "--seeds=1-5", "--require-proof"]) {

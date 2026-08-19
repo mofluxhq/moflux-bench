@@ -111,6 +111,16 @@ function tokenAwarenessByArm(records, controlArmKeys) {
 export function armMetrics(summary) {
   const interactive = summary.classes.interactive;
   const batch = summary.classes.batch;
+  const constraintRejects = (constraint) =>
+    Number(interactive.localRejectConstraints?.[constraint] ?? 0) +
+    Number(batch.localRejectConstraints?.[constraint] ?? 0);
+  const rejectionSnapshotsCaptured =
+    (Array.isArray(interactive.localRejectSnapshots) ? interactive.localRejectSnapshots.length : 0) +
+    (Array.isArray(batch.localRejectSnapshots) ? batch.localRejectSnapshots.length : 0);
+  const rejectionSnapshotsWithDetail = [
+    ...(Array.isArray(interactive.localRejectSnapshots) ? interactive.localRejectSnapshots : []),
+    ...(Array.isArray(batch.localRejectSnapshots) ? batch.localRejectSnapshots : []),
+  ].filter((snapshot) => snapshot?.detail !== null && snapshot?.detail !== undefined).length;
   return {
     interactiveSuccessRate: interactive.successRate,
     interactiveGoodputRps: interactiveGoodput(summary),
@@ -122,6 +132,12 @@ export function armMetrics(summary) {
     interactiveRetryAmplification: interactive.retryAmplification,
     batchSuccessRate: batch.successRate,
     localRejects: interactive.localReject + batch.localReject,
+    rejectionSnapshotsCaptured,
+    rejectionSnapshotsWithDetail,
+    globalConstraintRejects: constraintRejects("global"),
+    admissionClassConstraintRejects: constraintRejects("admission_class"),
+    admissionClassProtectionRejects: constraintRejects("admission_class_protection"),
+    unspecifiedConstraintRejects: constraintRejects("unspecified"),
     upstream429s: interactive.upstreamReject + batch.upstreamReject,
     peakActive: Number(summary.simCounters?.peakActive ?? 0),
     batchResponseHeadersGapMs:

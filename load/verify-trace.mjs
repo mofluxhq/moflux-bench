@@ -31,6 +31,46 @@ assert.ok(trace.planned.interactive > 0);
 assert.ok(trace.planned.batch > 0);
 writeFileSync(traceFile, JSON.stringify(trace));
 
+const rejectionDetail = {
+  limitRevision: 17,
+  constraint: "admission_class_protection",
+  inFlight: 4,
+  maxConcurrent: 8,
+  pending: 0,
+  maxQueue: 0,
+  tokenBudget: {
+    budget: 2500,
+    inFlightTokens: 2500,
+    effectiveBudget: 2500,
+    available: 0,
+    requested: 9008,
+  },
+  sharedCapacity: {
+    concurrency: { capacity: 4, inUse: 4, available: 0, requestedBorrowed: 1 },
+    tokenBudget: { capacity: 1000, inUse: 1000, available: 0, requestedBorrowed: 6508 },
+  },
+  admissionClass: {
+    id: "batch",
+    inFlight: 1,
+    protectedConcurrent: 1,
+    protectedConcurrentInUse: 1,
+    borrowedConcurrent: 0,
+    availableProtectedConcurrent: 0,
+    maxConcurrent: 4,
+    availableConcurrent: 3,
+    tokenBudget: {
+      inFlightTokens: 2500,
+      protectedInFlightTokens: 2500,
+      protectedTokensInUse: 2500,
+      borrowedInFlightTokens: 0,
+      availableProtectedTokens: 0,
+      maxInFlightTokens: 10000,
+      available: 7500,
+      requested: 9008,
+    },
+  },
+};
+
 const server = createServer(async (req, res) => {
   if (req.url !== "/v1/chat/completions") return res.writeHead(404).end();
   const chunks = [];
@@ -42,13 +82,18 @@ const server = createServer(async (req, res) => {
         type: "admission_rejected",
         reason: "budget_limit",
         pool: "sim-batch",
-        detail: { tokenBudget: { budget: 2500, available: 2500, requested: 9008 } },
+        detail: rejectionDetail,
       },
     });
     res.writeHead(429, {
       "content-type": "application/json",
       "content-length": Buffer.byteLength(payload),
       "x-admission-reason": "budget_limit",
+      "x-admission-class": "batch",
+      "x-admission-revision": "17",
+      "x-admission-retry-after-ms": "1250",
+      "x-latchflo-grant-id": "grant-17",
+      "x-latchflo-controller-epoch": "3",
     });
     return res.end(payload);
   }
@@ -96,8 +141,27 @@ try {
   assert.equal(summary.classes.batch.logical, trace.planned.batch);
   assert.equal(summary.classes.batch.localRejectReasons.budget_limit, trace.planned.batch);
   assert.equal(summary.classes.batch.localRejectDetails[0].requestedMin, 9008);
-  assert.equal(summary.classes.batch.localRejectDetails[0].availableMax, 2500);
-  console.log("PASS  immutable trace replay and exact rejection diagnostics");
+  assert.equal(summary.classes.batch.localRejectDetails[0].availableMax, 0);
+  assert.equal(
+    summary.classes.batch.localRejectConstraints.admission_class_protection,
+    trace.planned.batch,
+  );
+  assert.equal(summary.classes.batch.localRejectSnapshots.length, trace.planned.batch);
+  const snapshot = summary.classes.batch.localRejectSnapshots[0];
+  assert.equal(snapshot.requestClass, "batch");
+  assert.equal(snapshot.attempt, 1);
+  assert.match(snapshot.requestId, /^batch-/);
+  assert.equal(snapshot.type, "admission_rejected");
+  assert.equal(snapshot.pool, "sim-batch");
+  assert.equal(snapshot.reason, "budget_limit");
+  assert.equal(snapshot.admissionClass, "batch");
+  assert.equal(snapshot.admissionRevision, 17);
+  assert.equal(snapshot.retryAfterMs, 1250);
+  assert.deepEqual(snapshot.grant, { id: "grant-17", controllerEpoch: 3 });
+  assert.deepEqual(snapshot.detail, rejectionDetail);
+  assert.match(snapshot.target, /^http:\/\/127\.0\.0\.1:/);
+  assert.ok(Number.isFinite(snapshot.rejectedAtMs));
+  console.log("PASS  immutable trace replay and full local-rejection snapshots");
 } finally {
   server.closeAllConnections?.();
   await new Promise((resolve) => server.close(resolve));

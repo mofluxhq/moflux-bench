@@ -10,6 +10,8 @@ This repository contains a local synthetic benchmark harness. Tyr and Latchflo a
 
 The benchmark intentionally trusts `x-priority` in its controlled local Tyr configuration. Do not copy that setting into an untrusted deployment without authenticating and authorizing the caller.
 
+MoFlux Bench 0.22.0 preserves Tyr rejection capacity snapshots in result JSON. The harness does not copy request bodies or identity tokens into those records, but admission-class names, pool names, grant IDs, controller epochs, limits, and live capacity state are operational metadata. Treat benchmark result files as telemetry and review them before publishing results produced against non-synthetic deployments.
+
 ## Supported versions
 
 Security fixes are applied to the latest released version of the benchmark harness. Historical curated results are evidence files and are not supported runtime artifacts.

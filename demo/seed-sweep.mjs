@@ -261,8 +261,19 @@ function validateSeed(summary, seed, label) {
     throw new Error(`${label} seed ${seed} did not replay its recorded trace`);
   }
   for (const cls of ["interactive", "batch"]) {
-    if (Number(summary?.classes?.[cls]?.logical) !== Number(trace?.planned?.[cls])) {
+    const classSummary = summary?.classes?.[cls];
+    if (Number(classSummary?.logical) !== Number(trace?.planned?.[cls])) {
       throw new Error(`${label} seed ${seed} ${cls} request count differs from its trace`);
+    }
+    const snapshots = classSummary?.localRejectSnapshots;
+    if (!Array.isArray(snapshots)) {
+      throw new Error(`${label} seed ${seed} ${cls} omitted local rejection snapshots`);
+    }
+    if (snapshots.length !== Number(classSummary?.localReject ?? 0)) {
+      throw new Error(
+        `${label} seed ${seed} ${cls} preserved ${snapshots.length} rejection snapshots for ` +
+        `${classSummary?.localReject ?? 0} local rejects`,
+      );
     }
   }
 }

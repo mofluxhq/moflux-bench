@@ -44,8 +44,8 @@ function arm(name, managed) {
     generatorSaturated: 0,
     trace: { version: 1, hash: trace.hash, planned: trace.planned, source: "scenario-trace.json" },
     classes: {
-      interactive: { logical: 2, successRate: managed ? 1 : 0.5, success: managed ? 2 : 1, retryAmplification: 1, localReject: 0, upstreamReject: managed ? 0 : 1, latencyMs: { p50: 10, p95: 20, p99: 20 }, ttftMs: { p50: 1, p95: 2, p99: 2 } },
-      batch: { logical: 1, successRate: 1, success: 1, retryAmplification: 1, localReject: 0, upstreamReject: 0, latencyMs: { p50: 10, p95: 20, p99: 20 }, ttftMs: { p50: 1, p95: 2, p99: 2 } },
+      interactive: { logical: 2, successRate: managed ? 1 : 0.5, success: managed ? 2 : 1, retryAmplification: 1, localReject: 0, localRejectConstraints: {}, localRejectSnapshots: [], upstreamReject: managed ? 0 : 1, latencyMs: { p50: 10, p95: 20, p99: 20 }, ttftMs: { p50: 1, p95: 2, p99: 2 } },
+      batch: { logical: 1, successRate: 1, success: 1, retryAmplification: 1, localReject: 0, localRejectConstraints: {}, localRejectSnapshots: [], upstreamReject: 0, latencyMs: { p50: 10, p95: 20, p99: 20 }, ttftMs: { p50: 1, p95: 2, p99: 2 } },
     },
     simCounters: { peakActive: managed ? 32 : 32 },
     scenario,

@@ -49,14 +49,35 @@ const scenario = {
   provider: { api: "anthropic", envelope: 32, seed, sigma: 0.25 },
   trace: { version: 2, hash: trace.hash, planned: trace.planned, evidence: "results/scenario-trace.json" },
 };
+function rejectionSnapshots(count, cls) {
+  return Array.from({ length: count }, (_, index) => ({
+    requestId: cls + "-reject-" + index,
+    requestClass: cls,
+    attempt: 1,
+    rejectedAtMs: 100 + index,
+    target: "http://127.0.0.1:8100",
+    type: "admission_rejected",
+    pool: "sim-" + cls,
+    reason: "concurrency_limit",
+    admissionClass: null,
+    admissionRevision: 1,
+    retryAfterMs: null,
+    grant: null,
+    detail: { limitRevision: 1, constraint: "global", inFlight: 1, maxConcurrent: 1, pending: 0, maxQueue: 0 },
+  }));
+}
 function classes(managed) {
+  const interactiveRejects = managed ? 1 : 0;
+  const batchRejects = managed ? 8 : 0;
   return {
     interactive: {
       logical: 10,
       successRate: managed ? 0.95 : 0.65,
       success: managed ? 9 : 6,
       retryAmplification: managed ? 1.2 : 2.2,
-      localReject: managed ? 1 : 0,
+      localReject: interactiveRejects,
+      localRejectConstraints: interactiveRejects > 0 ? { global: interactiveRejects } : {},
+      localRejectSnapshots: rejectionSnapshots(interactiveRejects, "interactive"),
       upstreamReject: managed ? 0 : 12,
       latencyMs: { p50: managed ? 600 : 1000, p95: managed ? 1200 : 2000, p99: managed ? 1200 : 2000 },
       ttftMs: { p50: 100, p95: 200, p99: 200 },
@@ -66,7 +87,9 @@ function classes(managed) {
       successRate: managed ? (fail ? 0.05 : 0.2) : 0.5,
       success: managed ? (fail ? 0 : 4) : 5,
       retryAmplification: 1.5,
-      localReject: managed ? 8 : 0,
+      localReject: batchRejects,
+      localRejectConstraints: batchRejects > 0 ? { global: batchRejects } : {},
+      localRejectSnapshots: rejectionSnapshots(batchRejects, "batch"),
       upstreamReject: 0,
       latencyMs: { p50: 2000, p95: 3000, p99: 3000 },
       ttftMs: { p50: 300, p95: 400, p99: 400 },

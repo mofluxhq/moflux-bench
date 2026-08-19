@@ -872,9 +872,55 @@ every request, or a provider that 429s throughout, is a result and still passes.
 The one that carries the argument is the **reject split**. A local reject costs
 nothing. An upstream 429 was earned only after provider capacity had already
 been spent on the request. Both look like a 429 to the caller; they are not the
-same event, and the harness counts them separately. Local rejects are also
-retained by pool and exact reason, including the observed `requested`,
-`available`, and `budget` token ranges from Tyr's rejection detail.
+same event, and the harness counts them separately.
+
+Since 0.22.0, every local rejection is also preserved as a full admission-time
+evidence record in `classes.<class>.localRejectSnapshots`. The record is keyed
+back to the immutable trace request and includes the target replica, attempt,
+rejection timestamp, Tyr pool/reason/type, admission class and revision, retry
+hint, Latchflo grant provenance, and Tyr's complete `error.detail` object. That
+object carries the global concurrency state, token-budget state, shared
+capacity, class-protected/borrowed capacity, and the capacity constraint that
+bound the decision. It is intentionally retained as an object rather than
+flattened so new Tyr detail fields survive without a benchmark release.
+
+For compact analysis, local rejects remain aggregated by pool and exact reason
+with the observed `requested`, `available`, and `budget` token ranges.
+`localRejectConstraints` additionally counts `global`, `admission_class`,
+`admission_class_protection`, and `unspecified` decisions, and Prometheus exports
+those counts as `bench_local_reject_constraint_total`. Seed preservation requires
+`localRejectSnapshots.length === localReject`, so missing rejection evidence
+invalidates the run instead of disappearing from the result.
+
+A snapshot looks like this (values are illustrative):
+
+```json
+{
+  "requestId": "batch-17",
+  "requestClass": "batch",
+  "attempt": 1,
+  "rejectedAtMs": 18432.1,
+  "target": "http://127.0.0.1:8104",
+  "type": "admission_rejected",
+  "pool": "sim-batch",
+  "reason": "budget_limit",
+  "admissionClass": "batch",
+  "admissionRevision": 17,
+  "retryAfterMs": 1250,
+  "grant": { "id": "...", "controllerEpoch": 3 },
+  "detail": {
+    "limitRevision": 17,
+    "constraint": "admission_class_protection",
+    "inFlight": 4,
+    "maxConcurrent": 8,
+    "pending": 0,
+    "maxQueue": 0,
+    "tokenBudget": { "budget": 2500, "inFlightTokens": 2500, "effectiveBudget": 2500, "available": 0, "requested": 9008 },
+    "sharedCapacity": { "concurrency": { "capacity": 4, "inUse": 4, "available": 0, "requestedBorrowed": 1 } },
+    "admissionClass": { "id": "batch", "inFlight": 1, "protectedConcurrent": 1, "borrowedConcurrent": 0 }
+  }
+}
+```
 
 The others: token goodput (not throughput — abandoned work does not count),
 latency and TTFT percentiles **split by class**, retry amplification (with the

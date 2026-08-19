@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.22.0 - 2026-08-18
+
+### Added
+
+- Preserve one `localRejectSnapshots` evidence record for every local 429 attempt. Each record is joinable to the immutable request trace and records the target replica, attempt, rejection time, Tyr error type/pool/reason, admission class and revision, retry hint, Latchflo grant provenance, and Tyr's complete `error.detail` capacity snapshot without flattening away future fields.
+- Aggregate `localRejectConstraints` by Tyr's admission-time capacity layer (`global`, `admission_class`, `admission_class_protection`, `other`, or `unspecified`) while retaining the existing reason/pool and compact token-range diagnostics for compatibility.
+- Export `bench_local_reject_constraint_total` so Prometheus can distinguish which capacity layer actually refused work.
+- Carry rejection-snapshot coverage and constraint counts into seed-sweep arm aggregates.
+
+### Changed
+
+- Make seed preservation fail if a class reports a local rejection count that does not exactly match the number of preserved rejection snapshots. A published run can no longer silently drop the admission-time evidence for one of its local 429s.
+- Bump MoFlux Bench to 0.22.0. Runtime pins remain Tyr 0.25.1, Latchflo 0.11.6, async-bulkhead-llm 3.15.1, and async-bulkhead-ts 1.0.1; this release changes benchmark evidence capture, not runtime admission behavior.
+
 ## 0.21.0 - 2026-08-14
 
 ### Fixed

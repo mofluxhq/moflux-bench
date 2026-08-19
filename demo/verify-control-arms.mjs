@@ -38,6 +38,12 @@ function scenario(seed) {
 }
 
 /** One arm's result file, with only the fields the aggregation reads. */
+function snapshots(count, detail = true) {
+  return Array.from({ length: count }, (_, index) => ({
+    requestId: `reject-${index}`,
+    detail: detail ? { limitRevision: 1 } : null,
+  }));
+}
 function arm({ seed, successRate, goodputSuccess, p95, ttftP95, batchRate, upstream429, peakActive, admissionGapMs = null, budgetLimited = 0 }) {
   return {
     generatorSaturated: 0,
@@ -51,6 +57,10 @@ function arm({ seed, successRate, goodputSuccess, p95, ttftP95, batchRate, upstr
         successRate,
         retryAmplification: 1.5,
         localReject: 40,
+        localRejectConstraints: budgetLimited > 0
+          ? { admission_class: budgetLimited, global: 40 - budgetLimited }
+          : { global: 40 },
+        localRejectSnapshots: snapshots(40),
         upstreamReject: upstream429,
         latencyMs: { p50: p95 / 2, p95 },
         ttftMs: { p50: ttftP95 / 3, p95: ttftP95 },
@@ -67,6 +77,8 @@ function arm({ seed, successRate, goodputSuccess, p95, ttftP95, batchRate, upstr
         success: Math.round(60 * batchRate),
         successRate: batchRate,
         localReject: 20,
+        localRejectConstraints: { admission_class_protection: 20 },
+        localRejectSnapshots: snapshots(20),
         upstreamReject: 0,
         latencyMs: { p50: 8000, p95: 15000 },
         ttftMs: { p50: 6000, p95: 9000 },
@@ -224,6 +236,12 @@ check("the static cap also beats no control on success",
   check("the token-bound share is aggregated", moflux.tokenBoundShare?.median === 0.375);
   check("realised request sizes are aggregated",
     moflux.requestSizeP50?.median === 1215 && moflux.requestSizeSpread?.median === 32);
+  check("full rejection snapshot coverage is aggregated",
+    moflux.rejectionSnapshotsCaptured?.median === 60 && moflux.rejectionSnapshotsWithDetail?.median === 60);
+  check("global rejection constraints are aggregated", moflux.globalConstraintRejects?.median === 25);
+  check("class rejection constraints are aggregated", moflux.admissionClassConstraintRejects?.median === 15);
+  check("class-protection rejection constraints are aggregated",
+    moflux.admissionClassProtectionRejects?.median === 20);
 
   const awareness = summary.tokenAwareness;
   check("a token-aware arm is reported as exercised",
