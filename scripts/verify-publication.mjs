@@ -106,7 +106,7 @@ if (lock.packages?.[""]?.version !== pkg.version || lock.version !== pkg.version
 const example = readFileSync(path.join(ROOT, "demo/moflux/.env.example"), "utf8");
 for (const expected of [
   "MOFLUX_TYR_IMAGE=tyr-admission-controller:0.26.0",
-  "MOFLUX_LATCHFLO_IMAGE=latchflo-control-plane:0.12.2",
+  "MOFLUX_LATCHFLO_IMAGE=latchflo-control-plane:0.12.4",
 ]) {
   if (!example.includes(expected)) {
     findings.push(`demo/moflux/.env.example: missing pinned runtime ${expected}`);
@@ -293,11 +293,14 @@ for (const required of [
   "headroomLending",
   "minConcurrentHeadroom",
   "minTokenHeadroom",
+  "demandingSustainMs",
+  "maxDemandingConcurrentLend",
+  "maxDemandingTokenLend",
   "summarizeAdmissionProvenance",
   "observedHeadroomTransfer",
 ]) {
   if (!presenter023.includes(required)) {
-    findings.push(`demo/present.mjs: missing 0.23.0 headroom/provenance feature ${required}`);
+    findings.push(`demo/present.mjs: missing 0.24.0 headroom/provenance feature ${required}`);
   }
 }
 
@@ -313,8 +316,8 @@ if (!pkg.scripts?.["demo:progressive"]?.includes("--provider-api=anthropic") ||
     !pkg.scripts?.["demo:openai"]?.includes("--provider-api=openai")) {
   findings.push("package.json: progressive and OpenAI compatibility demo commands are required");
 }
-if (pkg.version !== "0.23.0") {
-  findings.push("package.json: the current benchmark release must be version 0.23.0");
+if (pkg.version !== "0.24.0") {
+  findings.push("package.json: the current benchmark release must be version 0.24.0");
 }
 const classesScript = pkg.scripts?.["demo:classes"] ?? "";
 for (const required of ["demo/tenant-fairness.mjs", "--seeds=1-5", "--require-proof"]) {
@@ -355,6 +358,50 @@ for (const required of [
 const headroomCompareScript = pkg.scripts?.["demo:headroom:compare"] ?? "";
 for (const required of ["demo/headroom-compare.mjs", "--seeds=1-5"]) {
   if (!headroomCompareScript.includes(required)) findings.push(`package.json: demo:headroom:compare is missing ${required}`);
+}
+const headroomCompareCli = readFileSync(path.join(ROOT, "demo/headroom-compare.mjs"), "utf8");
+for (const required of [
+  "HEADROOM_EXERCISE_INTERACTIVE_RPS = 3",
+  'HEADROOM_EXERCISE_SIZE_DISTRIBUTION = "uniform"',
+  "--interactive-rps=${HEADROOM_EXERCISE_INTERACTIVE_RPS}",
+  "--size-distribution=${HEADROOM_EXERCISE_SIZE_DISTRIBUTION}",
+  "--adaptive-proof-context=headroom-compare",
+]) {
+  if (!headroomCompareCli.includes(required)) {
+    findings.push(`demo/headroom-compare.mjs: missing deterministic exercise workload ${required}`);
+  }
+}
+const headroomCompareLib = readFileSync(path.join(ROOT, "demo/headroom-compare-lib.mjs"), "utf8");
+for (const required of [
+  "effectiveFundedDemandingLend",
+  "exercisedBatchSuccessDelta",
+  "bounded-headroom-capacity",
+  "schemaVersion: 4",
+]) {
+  if (!headroomCompareLib.includes(required)) {
+    findings.push(`demo/headroom-compare-lib.mjs: missing 0.24.0 capacity-aware payoff evidence ${required}`);
+  }
+}
+const seedSweepLib024 = readFileSync(path.join(ROOT, "demo/seed-sweep-lib.mjs"), "utf8");
+if (!seedSweepLib024.includes("schemaVersion: 7")) {
+  findings.push("demo/seed-sweep-lib.mjs: 0.24.0 strict in-window headroom evidence requires schemaVersion 7");
+}
+for (const required of ["proofContext: context", "idleOccupancyRequired", 'context !== "headroom-compare"']) {
+  if (!seedSweepLib024.includes(required)) {
+    findings.push(`demo/seed-sweep-lib.mjs: missing headroom-comparison adaptive proof context ${required}`);
+  }
+}
+for (const required of [
+  "rawHeadroomTransferCandidateObserved",
+  "headroomTransferCorrelations",
+  "headroomCandidateLendingObserved",
+  "headroomEvidenceWindow",
+  'demandState !== "demanding"',
+  "measuredRunEndedAt",
+]) {
+  if (!lendingEvidence.includes(required)) {
+    findings.push(`demo/lending-evidence-lib.mjs: missing correlated headroom evidence ${required}`);
+  }
 }
 const verifyRunner = readFileSync(path.join(ROOT, "scripts/verify.mjs"), "utf8");
 for (const required of ["demo/verify-admission-provenance.mjs", "demo/verify-headroom-compare.mjs"]) {

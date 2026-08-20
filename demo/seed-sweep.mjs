@@ -109,6 +109,12 @@ const pauseMs = num("pause-ms", 2500);
 const keepStack = !flag("cleanup");
 const openGrafana = !flag("no-open");
 const requireAdaptiveProof = flag("require-adaptive-proof");
+const adaptiveProofContext = str("adaptive-proof-context", "default");
+if (!new Set(["default", "headroom-compare"]).has(adaptiveProofContext)) {
+  throw new Error(
+    `unsupported --adaptive-proof-context=${adaptiveProofContext}; expected default or headroom-compare`,
+  );
+}
 
 if (!Number.isFinite(pauseMs) || pauseMs < 0) throw new Error("--pause-ms must be non-negative");
 if (fault && mode === "baseline") throw new Error("--fault is not meaningful with --mode=baseline");
@@ -203,6 +209,7 @@ function childArgs(seed, index) {
     "publish-as",
     "force-publish",
     "require-adaptive-proof",
+    "adaptive-proof-context",
   ]);
   const forwarded = originalArgs.filter((arg) => {
     const match = /^--([^=]+)(?:=.*)?$/.exec(arg);
@@ -494,7 +501,9 @@ function printAggregate(summary) {
         "zero upstream 429": `${adaptive.zeroUpstream429Seeds}/${adaptive.seeds}`,
         "interactive ≥90%": `${adaptive.interactiveTargetSeeds}/${adaptive.seeds}`,
         "batch ≥ floor": `${adaptive.batchTargetSeeds}/${adaptive.seeds}`,
-        "occupancy proof": `${adaptive.occupancyObservedSeeds}/${adaptive.seeds}`,
+        "occupancy proof": adaptive.idleOccupancyRequired
+          ? `${adaptive.occupancyObservedSeeds}/${adaptive.seeds}`
+          : `${adaptive.occupancyObservedSeeds}/${adaptive.seeds} (diagnostic)`,
         "controller proof": `${adaptive.controllerObservedSeeds}/${adaptive.seeds}`,
         "floor restored": `${adaptive.floorRestoredSeeds}/${adaptive.seeds}`,
         "controller restored": `${adaptive.controllerFloorRestoredSeeds}/${adaptive.seeds}`,
@@ -622,7 +631,13 @@ try {
     console.log(`${GREEN}   ✓ preserved seed ${seed} evidence in ${relativePath(sweepDir)}${OFF}`);
   }
 
-  const summary = buildSweepSummary({ mode, fault, seeds, records });
+  const summary = buildSweepSummary({
+    mode,
+    fault,
+    seeds,
+    records,
+    adaptiveProofContext,
+  });
   writeFileSync(summaryFile, JSON.stringify(summary, null, 2));
   if (requireAdaptiveProof) {
     const failure = adaptiveProofFailureMessage(summary.adaptiveProof);

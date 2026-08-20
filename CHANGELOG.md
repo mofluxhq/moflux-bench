@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.24.0 - 2026-08-20
+
+### Added
+
+- Exercise Latchflo 0.12.4 sustained active-demand headroom in `adaptive-headroom-28-4`. Interactive may lend only after 3,000 ms of continuing safe slack, with hard caps of 2 concurrency slots and 10,000 tokens; the control `adaptive-28-4` policy is unchanged.
+- Validate and preserve the full active-demand `headroomLending` policy (`demandingSustainMs`, `maxDemandingConcurrentLend`, and `maxDemandingTokenLend`) in capacity-group construction, bootstrap restoration, publication checks, and exact profile acceptance.
+
+### Changed
+
+- Make `demo:headroom:compare` capacity-aware instead of requiring a fixed 8 completions / +4 gain. The default payoff gate now derives the additional funded batch reservations from `maxDemandingConcurrentLend`, `maxDemandingTokenLend`, and the batch `requiredLocalGrant`, then evaluates batch payoff only on seeds where headroom is jointly proven. Explicit CLI threshold overrides remain available.
+- Bump seed-sweep output to `schemaVersion` 7 and headroom-policy comparison output to `schemaVersion` 4 for strict in-window demanding-headroom evidence, capacity-derived threshold basis, and exercised-seed payoff aggregates.
+- Pin new licensed runs to Tyr 0.26.0 and Latchflo 0.12.4. async-bulkhead-llm 3.15.1 and async-bulkhead-ts 1.0.1 remain unchanged.
+- Refresh 0.24.0 to Latchflo 0.12.4 starvation semantics: long-lived pressure-free demand remains `demanding`; `starved` now requires aged demand plus pending or recent rejection pressure. The ordinary heterogeneous/adaptive workloads are unchanged; the paired headroom experiment now uses its own controlled active-but-slack trace so the feature is intentionally exercised instead of depending on stochastic occupancy.
+- Keep MoFlux Bench at 0.24.0 while correcting the benchmark around the already-introduced Latchflo 0.12.4 headroom policy. The 28/4 plus 24k/40k nominal entitlements are unchanged; only `demo:headroom:compare` receives a dedicated 3-RPS uniform interactive exercise workload, replayed identically through both paired policies.
+
+### Fixed
+
+- Make `demo/verify-presenter.mjs` clean up its temporary `error`/`listening` listeners on every bind attempt, so a busy fixed port no longer accumulates `Server` listeners and emits `MaxListenersExceededWarning`. Fixed infrastructure ports now fail fast with an actionable `npm run demo:down`/owner-process message; only the Tyr 8101–8104 handoff ports retain wait-and-retry semantics.
+- Stop `demo:headroom:compare` from inheriting the ordinary adaptive sweep's idle-occupancy-above-28 prerequisite. The paired 3-RPS exercise now runs both control and headroom sweeps with an explicit `headroom-compare` proof context: idle occupancy remains visible as a diagnostic, while the actual safety gate continues to require per-seed success/floor/handoff/provenance/overallocation correctness and the comparison separately requires majority in-window demanding-headroom evidence. Ordinary `demo:hetero:adaptive` and `demo:hetero:headroom` runs keep the existing occupancy prerequisite.
+- Stop treating any temporary Tyr 26/6-style split as data-plane headroom proof. A transfer now counts only when an in-measurement Latchflo interactive-to-batch event reports `demandState=demanding`, `reason=headroom`, stays within the configured active-demand slot/token caps, and precedes a matching bounded Tyr applied-capacity change that is also observed before the measured workload ends. Direction-only and post-workload candidates remain preserved as diagnostics.
+- Stop penalizing the headroom policy for zero batch gain on seeds where headroom never executed. The paired outcome report now keeps the all-seed aggregate for transparency but gates payoff on jointly proven headroom-exercised seeds, while the existing >=60% evidence requirement still prevents cherry-picking a single favorable seed.
+- Make `demo:headroom:compare` intentionally exercise sustained demanding-state slack: both arms replay the same fixed 3 interactive RPS / uniform-size trace, batch still arrives at 60% of the 45-second phase, and the ordinary `demo:hetero:*` commands keep their existing 6-RPS lognormal workloads. This gives Latchflo more than the configured 3,000 ms sustain window while real batch demand is present, without weakening the 3/5 joint-evidence gate.
+
 ## 0.23.0 - 2026-08-19
 
 ### Added

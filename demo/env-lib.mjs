@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import path from "node:path";
 
 export const TYR_VERSION = "0.26.0";
-export const LATCHFLO_VERSION = "0.12.2";
+export const LATCHFLO_VERSION = "0.12.4";
 export const ASYNC_BULKHEAD_LLM_VERSION = "3.15.1";
 export const ASYNC_BULKHEAD_TS_VERSION = "1.0.1";
 export const DEFAULT_TYR_IMAGE = `tyr-admission-controller:${TYR_VERSION}`;

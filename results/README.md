@@ -52,16 +52,30 @@ A refund means unused safety reservation was returned for reuse; it is not newly
 
 ## Headroom-aware policy runs
 
-MoFlux Bench 0.23.0 adds `adaptive-headroom-28-4` without replacing the existing
+MoFlux Bench 0.24.0 exercises `adaptive-headroom-28-4` with Latchflo 0.12.4 sustained active-demand lending; 0.12.4 keeps long-lived pressure-free interactive demand in `demanding` and reserves `starved` for aged demand with pending/rejection pressure. 0.23.0 introduced the profile without replacing the existing
 `adaptive-28-4` control policy. `npm run demo:hetero:headroom` writes an ordinary
 five-seed sweep for the new policy. `npm run demo:headroom:compare` runs the two
 policies over the same ordered seed set and verifies same-seed immutable trace
 hashes before writing `results/runs/headroom-policy-comparison/<run-id>/summary.json`.
-That paired summary reports batch-success changes alongside interactive success,
-p95/TTFT changes, rejects, and upstream 429s. It also reports controller and
-data-plane headroom evidence plus exact Tyr 0.26.0 successor-grant admission
-proof coverage. A failed adaptive gate is preserved as evidence but is not a
-publishable passing comparison.
+That paired summary reports all-seed batch-success changes alongside interactive
+success, p95/TTFT changes, rejects, and upstream 429s, plus a separate
+exercised-seed batch-payoff aggregate over seeds with joint headroom proof. The
+default payoff threshold is derived from the configured demanding-state lend and
+the batch reservation size rather than a fixed completion count. Data-plane
+headroom evidence is correlated: a temporary Tyr split below/above the nominal
+28/4 partition is retained as a raw diagnostic but counts as headroom only when
+an in-window Latchflo interactive-to-batch event reports `demandState=demanding`,
+`reason=headroom`, stays within the configured active-demand lend caps, and
+precedes a bounded Tyr applied-capacity transfer observed before the measured
+workload ends. `demo:headroom:compare` uses a dedicated 3-RPS uniform interactive
+trace for both policies so this sustained-slack state is intentionally exercised;
+the heterogeneous headroom command keeps the ordinary 6-RPS lognormal workload.
+The summary also retains exact Tyr 0.26.0 successor-grant admission proof coverage.
+Seed-sweep schema version 7 carries the strict in-window evidence semantics;
+headroom-policy comparison schema version 4 adds the capacity-derived threshold
+basis and exercised-seed aggregates. A failed
+adaptive gate is preserved as evidence but is not a publishable passing
+comparison.
 
 ## Admission-class lending runs
 
@@ -84,7 +98,7 @@ Latchflo 0.5.1**. Read that field rather than any prose description — prose dr
 and an earlier revision of this file and of `.gitignore` both described this
 corpus as Tyr 0.16.0 / Latchflo 0.5.0, which the files themselves contradict.
 
-New licensed runs use Tyr 0.26.0, Latchflo 0.12.2,
+New licensed runs use Tyr 0.26.0, Latchflo 0.12.4,
 async-bulkhead-llm 3.15.1, and async-bulkhead-ts 1.0.1. The main sweep retains
 one-hop capacity-aware routing, per-pool demand heartbeats, pool-level lending,
 and progressive reconciliation for Anthropic-shaped streams. Demand-aware pool

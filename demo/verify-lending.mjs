@@ -319,7 +319,13 @@ const starvedBatch = { success: 0, firstAttemptAtMs: 15_100, firstResponseHeader
       priority: 100,
       guaranteedMaxConcurrent: 28,
       guaranteedTokenBudget: 24_000,
-      headroomLending: { minConcurrentHeadroom: 4, minTokenHeadroom: 4000 },
+      headroomLending: {
+        minConcurrentHeadroom: 4,
+        minTokenHeadroom: 4000,
+        demandingSustainMs: 3000,
+        maxDemandingConcurrentLend: 2,
+        maxDemandingTokenLend: 10_000,
+      },
     },
     batch: {
       pool: "sim-batch",
@@ -331,7 +337,10 @@ const starvedBatch = { success: 0, firstAttemptAtMs: 15_100, firstResponseHeader
   check(
     "headroom-aware group preserves the explicit interactive lending policy",
     headroomGroup.members[0].headroomLending?.minConcurrentHeadroom === 4 &&
-      headroomGroup.members[0].headroomLending?.minTokenHeadroom === 4000,
+      headroomGroup.members[0].headroomLending?.minTokenHeadroom === 4000 &&
+      headroomGroup.members[0].headroomLending?.demandingSustainMs === 3000 &&
+      headroomGroup.members[0].headroomLending?.maxDemandingConcurrentLend === 2 &&
+      headroomGroup.members[0].headroomLending?.maxDemandingTokenLend === 10_000,
   );
   check("batch remains non-headroom-lending by default", headroomGroup.members[1].headroomLending === undefined);
 
@@ -662,7 +671,7 @@ const starvedBatch = { success: 0, firstAttemptAtMs: 15_100, firstResponseHeader
       },
     },
   });
-  check("0.12.2 handoff is identified as the floor-restoration handoff", handoffProof.handoff.observed === true);
+  check("0.12.4 handoff is identified as the floor-restoration handoff", handoffProof.handoff.observed === true);
   check("post-restoration handoff is not retroactively selected for earlier batch admissions", handoffProof.handoff.handoffId === "restore-1");
   check("every drain grant was acknowledged before commit", handoffProof.handoff.safeEventOrder === true);
   check("capacity acknowledgement uses the first unique ACK barrier", handoffProof.handoff.capacityAcknowledgedAt === "2026-08-01T20:00:27.450Z");
@@ -717,6 +726,185 @@ const starvedBatch = { success: 0, firstAttemptAtMs: 15_100, firstResponseHeader
   });
   check("occupancy without a Latchflo event is not controller proof", occupancyOnly.lendingObserved === false);
   check("null response timing stays null instead of becoming the Unix epoch", occupancyOnly.handoff.firstBatchResponseHeadersAt === null);
+
+  const rawHeadroomCandidate = {
+    observedHeadroomTransfer: true,
+    headroomTransferObservation: {
+      firstObservedAt: "2026-08-01T20:00:10.500Z",
+      interactive: { maxConcurrent: 26, tokenBudget: 14000 },
+      batch: { maxConcurrent: 6, tokenBudget: 48000 },
+    },
+    timeline: [{
+      observedAt: "2026-08-01T20:00:10.500Z",
+      interactive: { maxConcurrent: 26, tokenBudget: 14000 },
+      batch: { maxConcurrent: 6, tokenBudget: 48000 },
+      replicas: [],
+    }],
+  };
+  const uncorrelatedHeadroom = summarizeControllerLending({
+    events: [],
+    batchGuaranteedMaxConcurrent: 4,
+    batchGuaranteedTokenBudget: 40000,
+    interactiveGuaranteedMaxConcurrent: 28,
+    interactiveGuaranteedTokenBudget: 24000,
+    appliedCapacity: rawHeadroomCandidate,
+  });
+  check(
+    "a raw 26/6 data-plane split without a controller headroom event is not headroom proof",
+    uncorrelatedHeadroom.handoff.appliedCapacity.observedHeadroomTransfer === false,
+  );
+  check(
+    "the uncorrelated data-plane candidate remains available as a diagnostic",
+    uncorrelatedHeadroom.handoff.appliedCapacity.rawHeadroomTransferCandidateObserved === true,
+  );
+
+  const demandingHeadroomPolicy = {
+    demandingSustainMs: 3000,
+    maxDemandingConcurrentLend: 2,
+    maxDemandingTokenLend: 10000,
+  };
+  const correlatedHeadroom = summarizeControllerLending({
+    events: [{
+      id: 90,
+      type: "capacity_group.lending_observed",
+      entityType: "capacity_group",
+      entityId: "sim-workloads",
+      createdAt: "2026-08-01T20:00:10.000Z",
+      payload: {
+        lenders: [{
+          pool: "sim-interactive",
+          released: { maxConcurrent: 2, tokenBudget: 10000 },
+          demandState: "demanding",
+          reason: "headroom",
+        }],
+        borrowers: [{
+          pool: "sim-batch",
+          borrowed: { maxConcurrent: 2, tokenBudget: 10000 },
+        }],
+      },
+    }],
+    batchGuaranteedMaxConcurrent: 4,
+    batchGuaranteedTokenBudget: 40000,
+    interactiveGuaranteedMaxConcurrent: 28,
+    interactiveGuaranteedTokenBudget: 24000,
+    interactiveHeadroomLending: demandingHeadroomPolicy,
+    loadgenStartedAtEpochMs: Date.parse("2026-08-01T20:00:00.000Z"),
+    measuredRunDurationMs: 45000,
+    appliedCapacity: rawHeadroomCandidate,
+  });
+  check(
+    "controller headroom plus a matching bounded Tyr split is correlated headroom proof",
+    correlatedHeadroom.handoff.appliedCapacity.observedHeadroomTransfer === true,
+  );
+  check(
+    "correlated headroom proof records the controller event",
+    correlatedHeadroom.handoff.appliedCapacity.headroomTransferObservation?.controllerEventId === 90,
+  );
+
+  const protectedPostWorkload = summarizeControllerLending({
+    events: [{
+      id: 91,
+      type: "capacity_group.lending_observed",
+      entityType: "capacity_group",
+      entityId: "sim-workloads",
+      createdAt: "2026-08-01T20:00:50.000Z",
+      payload: {
+        lenders: [{
+          pool: "sim-interactive",
+          released: { maxConcurrent: 24, tokenBudget: 20000 },
+          demandState: "protected",
+          reason: "headroom",
+        }],
+        borrowers: [{
+          pool: "sim-batch",
+          borrowed: { maxConcurrent: 24, tokenBudget: 20000 },
+        }],
+      },
+    }],
+    batchGuaranteedMaxConcurrent: 4,
+    batchGuaranteedTokenBudget: 40000,
+    interactiveGuaranteedMaxConcurrent: 28,
+    interactiveGuaranteedTokenBudget: 24000,
+    interactiveHeadroomLending: demandingHeadroomPolicy,
+    loadgenStartedAtEpochMs: Date.parse("2026-08-01T20:00:00.000Z"),
+    measuredRunDurationMs: 45000,
+    appliedCapacity: {
+      observedHeadroomTransfer: true,
+      headroomTransferObservation: {
+        firstObservedAt: "2026-08-01T20:00:50.500Z",
+        interactive: { maxConcurrent: 4, tokenBudget: 4000 },
+        batch: { maxConcurrent: 28, tokenBudget: 60000 },
+      },
+      timeline: [{
+        observedAt: "2026-08-01T20:00:50.500Z",
+        interactive: { maxConcurrent: 4, tokenBudget: 4000 },
+        batch: { maxConcurrent: 28, tokenBudget: 60000 },
+        replicas: [],
+      }],
+    },
+  });
+  check(
+    "post-workload protected lending remains a diagnostic candidate",
+    protectedPostWorkload.headroomCandidateLendingObserved === true,
+  );
+  check(
+    "post-workload protected lending is not demanding-state headroom proof",
+    protectedPostWorkload.headroomLendingObserved === false &&
+      protectedPostWorkload.handoff.appliedCapacity.observedHeadroomTransfer === false,
+  );
+  check(
+    "headroom evidence window records the measured workload boundary",
+    protectedPostWorkload.headroomEvidenceWindow.measuredRunEndedAt === "2026-08-01T20:00:45.000Z",
+  );
+
+  const rejectedDemandingVariants = [
+    {
+      label: "protected in-window lending",
+      createdAt: "2026-08-01T20:00:20.000Z",
+      demandState: "protected",
+      released: { maxConcurrent: 2, tokenBudget: 8000 },
+      borrowed: { maxConcurrent: 2, tokenBudget: 8000 },
+    },
+    {
+      label: "over-cap demanding lending",
+      createdAt: "2026-08-01T20:00:20.000Z",
+      demandState: "demanding",
+      released: { maxConcurrent: 3, tokenBudget: 12000 },
+      borrowed: { maxConcurrent: 3, tokenBudget: 12000 },
+    },
+  ];
+  for (const variant of rejectedDemandingVariants) {
+    const result = summarizeControllerLending({
+      events: [{
+        id: 92,
+        type: "capacity_group.lending_observed",
+        entityType: "capacity_group",
+        entityId: "sim-workloads",
+        createdAt: variant.createdAt,
+        payload: {
+          lenders: [{
+            pool: "sim-interactive",
+            released: variant.released,
+            demandState: variant.demandState,
+            reason: "headroom",
+          }],
+          borrowers: [{ pool: "sim-batch", borrowed: variant.borrowed }],
+        },
+      }],
+      batchGuaranteedMaxConcurrent: 4,
+      batchGuaranteedTokenBudget: 40000,
+      interactiveGuaranteedMaxConcurrent: 28,
+      interactiveGuaranteedTokenBudget: 24000,
+      interactiveHeadroomLending: demandingHeadroomPolicy,
+      loadgenStartedAtEpochMs: Date.parse("2026-08-01T20:00:00.000Z"),
+      measuredRunDurationMs: 45000,
+      appliedCapacity: rawHeadroomCandidate,
+    });
+    check(
+      `${variant.label} remains diagnostic but cannot satisfy strict headroom proof`,
+      result.headroomCandidateLendingObserved === true && result.headroomLendingObserved === false,
+    );
+  }
 }
 
 console.log();

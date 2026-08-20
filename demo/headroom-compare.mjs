@@ -32,6 +32,13 @@ const baselineId = `${baseId}-adaptive`;
 const headroomId = `${baseId}-headroom`;
 const SEED_SWEEP = path.join(ROOT, "demo", "seed-sweep.mjs");
 const SWEEP_NAME = "moflux-seed-sweep";
+// This paired test is about active-demand headroom, not heterogeneous sizing.
+// Keep interactive traffic continuously active but comfortably below its 28-slot
+// guarantee so Latchflo gets a deterministic >=3s demanding-with-headroom
+// interval while batch is present. The ordinary hetero/adaptive demos retain
+// the 6 RPS lognormal workload.
+const HEADROOM_EXERCISE_INTERACTIVE_RPS = 3;
+const HEADROOM_EXERCISE_SIZE_DISTRIBUTION = "uniform";
 
 function runSweep(profile, id, cleanup = false) {
   const args = [
@@ -40,10 +47,12 @@ function runSweep(profile, id, cleanup = false) {
     `--seeds=${seeds.join(",")}`,
     "--pause-ms=0",
     "--no-open",
-    "--size-distribution=lognormal",
+    `--interactive-rps=${HEADROOM_EXERCISE_INTERACTIVE_RPS}`,
+    `--size-distribution=${HEADROOM_EXERCISE_SIZE_DISTRIBUTION}`,
     `--capacity-profile=${profile}`,
     "--provider-api=anthropic",
     "--require-adaptive-proof",
+    "--adaptive-proof-context=headroom-compare",
     `--run-id=${id}`,
   ];
   if (cleanup) args.push("--cleanup");
@@ -55,6 +64,10 @@ const headroomFile = path.join(runDir(RESULTS, SWEEP_NAME, headroomId), "summary
 
 console.log("\nMoFlux policy comparison — adaptive 28/4 vs headroom-aware 28/4");
 console.log(`seeds: ${seeds.join(", ")}`);
+console.log(
+  `exercise workload: ${HEADROOM_EXERCISE_INTERACTIVE_RPS} interactive RPS, ` +
+  `${HEADROOM_EXERCISE_SIZE_DISTRIBUTION} request sizes; batch begins at 60% of the phase`,
+);
 const baselineRun = runSweep("adaptive-28-4", baselineId, false);
 const baselineResult = readCompletedSweepSummary(baselineFile, baselineRun, "adaptive-28-4");
 if (baselineResult.nonZeroExit) {
@@ -116,7 +129,8 @@ writeFileSync(
 
 const med = (metric) => comparison.aggregate[metric]?.median;
 console.table([{
-  "batch success Δ": med("batchSuccessDelta"),
+  "all-seed batch success Δ": med("batchSuccessDelta"),
+  "exercised batch success Δ": med("exercisedBatchSuccessDelta"),
   "batch success pp Δ": med("batchSuccessRatePercentagePointDelta"),
   "interactive success pp Δ": med("interactiveSuccessPercentagePointDelta"),
   "interactive p95 % Δ": med("interactiveP95LatencyChangePercent"),
@@ -125,10 +139,19 @@ console.table([{
   "upstream 429 Δ": med("upstream429Delta"),
 }]);
 console.log(`headroom controller evidence: ${comparison.headroomObservedSeeds}/${seeds.length} seeds`);
-console.log(`headroom data-plane evidence: ${comparison.dataPlaneHeadroomObservedSeeds}/${seeds.length} seeds`);
+console.log(`headroom correlated data-plane evidence: ${comparison.dataPlaneHeadroomObservedSeeds}/${seeds.length} seeds`);
 console.log(`headroom joint evidence: ${comparison.headroomEvidenceSeeds}/${seeds.length} seeds`);
 console.log(`exact successor-grant proof: ${comparison.exactAdmissionProofSeeds}/${seeds.length} seeds`);
 console.log(`zero upstream 429s: ${comparison.zeroUpstream429Seeds}/${seeds.length} seeds`);
+console.log(
+  `bounded demanding-state lend: ${comparison.headroomCapacityExpectation.effectiveFundedDemandingLend} ` +
+  "additional batch reservation(s) funded",
+);
+console.log(
+  `batch payoff gate on headroom-evidence seeds: median completions >= ` +
+  `${comparison.acceptance.thresholds.minimumMedianBatchSuccesses}, median gain >= ` +
+  `${comparison.acceptance.thresholds.minimumMedianBatchSuccessDelta}`,
+);
 console.log(`headroom outcome gate: ${comparison.acceptance.passed ? "PASS" : "FAIL"}`);
 console.log(`summary: ${repoRelative(comparisonFile, ROOT)}`);
 

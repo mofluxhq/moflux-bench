@@ -382,9 +382,35 @@ const noOccupancy = buildSweepSummary({
   records: noOccupancyRecords,
 });
 assert.equal(noOccupancy.adaptiveProof.passed, false);
+assert.equal(noOccupancy.adaptiveProof.proofContext, "default");
+assert.equal(noOccupancy.adaptiveProof.idleOccupancyRequired, true);
 assert.match(
   adaptiveProofFailureMessage(noOccupancy.adaptiveProof),
   /no seed showed idle occupancy above the static 28-slot floor/,
+);
+
+const noOccupancyHeadroomCompare = buildSweepSummary({
+  mode: "compare",
+  fault: false,
+  seeds: [1, 2],
+  records: noOccupancyRecords,
+  adaptiveProofContext: "headroom-compare",
+});
+assert.equal(noOccupancyHeadroomCompare.adaptiveProof.passed, true);
+assert.equal(noOccupancyHeadroomCompare.adaptiveProof.proofContext, "headroom-compare");
+assert.equal(noOccupancyHeadroomCompare.adaptiveProof.idleOccupancyRequired, false);
+assert.equal(noOccupancyHeadroomCompare.adaptiveProof.occupancyObservedSeeds, 0);
+assert.equal(adaptiveProofFailureMessage(noOccupancyHeadroomCompare.adaptiveProof), null);
+
+assert.throws(
+  () => buildSweepSummary({
+    mode: "compare",
+    fault: false,
+    seeds: [1, 2],
+    records: adaptiveRecords,
+    adaptiveProofContext: "unknown",
+  }),
+  /unsupported adaptive proof context unknown/,
 );
 assert.equal(adaptiveProofFailureMessage(null), "the run did not use an adaptive 28/4 capacity profile");
 
@@ -399,6 +425,9 @@ for (const record of headroomRecords) {
     .find((member) => member.pool === "sim-interactive").headroomLending = {
       minConcurrentHeadroom: 4,
       minTokenHeadroom: 4000,
+      demandingSustainMs: 3000,
+      maxDemandingConcurrentLend: 2,
+      maxDemandingTokenLend: 10_000,
     };
   assert.equal(
     record.moflux.capacity.pools.find((pool) => pool.name === "sim-interactive").headroomLending,
@@ -417,6 +446,20 @@ assert.equal(headroom.capacityPolicy.profile, "adaptive-headroom-28-4");
 assert.equal(headroom.adaptiveProof.passed, true);
 assert.equal(headroom.adaptiveProof.headroomObservedSeeds, 2);
 assert.equal(headroom.adaptiveProof.dataPlaneHeadroomObservedSeeds, 2);
+
+const headroomCompareNoOccupancyRecords = structuredClone(headroomRecords);
+for (const record of headroomCompareNoOccupancyRecords) record.moflux.lending.idleWindow.borrowed = false;
+const headroomCompareNoOccupancy = buildSweepSummary({
+  mode: "compare",
+  fault: false,
+  seeds: [1, 2],
+  records: headroomCompareNoOccupancyRecords,
+  adaptiveProofContext: "headroom-compare",
+});
+assert.equal(headroomCompareNoOccupancy.adaptiveProof.passed, true);
+assert.equal(headroomCompareNoOccupancy.adaptiveProof.idleOccupancyRequired, false);
+assert.equal(headroomCompareNoOccupancy.adaptiveProof.occupancyObservedSeeds, 0);
+assert.equal(headroomCompareNoOccupancy.adaptiveProof.headroomEvidenceSeeds, 2);
 
 const partialHeadroomEvidenceRecords = structuredClone(headroomRecords);
 partialHeadroomEvidenceRecords[1].moflux.lending.controlPlane.headroomLendingObserved = false;

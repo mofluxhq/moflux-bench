@@ -38,7 +38,13 @@ const liveHeadroom = Object.freeze({
   members: Object.freeze([
     Object.freeze({
       ...live.members[0],
-      headroomLending: Object.freeze({ minConcurrentHeadroom: 4, minTokenHeadroom: 4_000 }),
+      headroomLending: Object.freeze({
+        minConcurrentHeadroom: 4,
+        minTokenHeadroom: 4_000,
+        demandingSustainMs: 3_000,
+        maxDemandingConcurrentLend: 2,
+        maxDemandingTokenLend: 10_000,
+      }),
     }),
     live.members[1],
   ]),
@@ -59,7 +65,13 @@ assert.equal(
 );
 assert.deepEqual(
   liveHeadroom.members[0].headroomLending,
-  { minConcurrentHeadroom: 4, minTokenHeadroom: 4_000 },
+  {
+    minConcurrentHeadroom: 4,
+    minTokenHeadroom: 4_000,
+    demandingSustainMs: 3_000,
+    maxDemandingConcurrentLend: 2,
+    maxDemandingTokenLend: 10_000,
+  },
   "bootstrap must not mutate the measured headroom policy",
 );
 

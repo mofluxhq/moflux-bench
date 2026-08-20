@@ -35,8 +35,15 @@ try {
     "--headroom-min-concurrent=3",
   );
   assert.notEqual(headroomConflict.status, 0);
-  assert.match(headroomConflict.stderr, /plus 4-slot\/4000-token retained interactive headroom/);
+  assert.match(headroomConflict.stderr, /plus sustained\/capped interactive headroom/);
   assert.match(headroomConflict.stderr, /--headroom-min-concurrent \(must be 4\)/);
+
+  const demandingCapConflict = run(
+    "--capacity-profile=adaptive-headroom-28-4",
+    "--headroom-max-demanding-concurrent-lend=3",
+  );
+  assert.notEqual(demandingCapConflict.status, 0);
+  assert.match(demandingCapConflict.stderr, /--headroom-max-demanding-concurrent-lend \(must be 2\)/);
 
   const headroomFlagWithoutProfile = run(
     "--capacity-profile=adaptive-28-4",

@@ -266,11 +266,12 @@ function capacityPolicy(summary) {
 const ADAPTIVE_MIN_INTERACTIVE_SUCCESS_RATE = 0.9;
 const ADAPTIVE_MIN_BATCH_SUCCESSES = 4;
 
-function adaptiveProof(records, capacity) {
+function adaptiveProof(records, capacity, { context = "default" } = {}) {
   const supportedProfiles = new Set(["adaptive-28-4", "adaptive-headroom-28-4"]);
   if (!supportedProfiles.has(capacity?.profile)) return null;
 
   const headroomProfile = capacity.profile === "adaptive-headroom-28-4";
+  const idleOccupancyRequired = context !== "headroom-compare";
   const interactivePool = capacity.pools?.find((pool) => pool.name === "sim-interactive");
   const batchPool = capacity.pools?.find((pool) => pool.name === "sim-batch");
   // headroomLending is a capacity-group member policy. The resolved pool
@@ -297,7 +298,11 @@ function adaptiveProof(records, capacity) {
     interactivePool?.ceilingMaxConcurrent === 32 &&
     interactivePool?.ceilingTokenBudget === 64_000 &&
     (headroomProfile
-      ? headroom?.minConcurrentHeadroom === 4 && headroom?.minTokenHeadroom === 4000
+      ? headroom?.minConcurrentHeadroom === 4 &&
+        headroom?.minTokenHeadroom === 4000 &&
+        headroom?.demandingSustainMs === 3000 &&
+        headroom?.maxDemandingConcurrentLend === 2 &&
+        headroom?.maxDemandingTokenLend === 10_000
       : headroom === undefined) &&
     batchPool?.guaranteedMaxConcurrent === 4 &&
     batchPool?.guaranteedTokenBudget === 40_000 &&
@@ -500,7 +505,7 @@ function adaptiveProof(records, capacity) {
   }
 
   const occupancyObservedSeeds = count("occupancyLendingObserved");
-  if (occupancyObservedSeeds === 0) {
+  if (idleOccupancyRequired && occupancyObservedSeeds === 0) {
     failures.push("no seed showed idle occupancy above the static 28-slot floor");
   }
   const headroomEvidenceSeeds = perSeed.filter(
@@ -518,6 +523,8 @@ function adaptiveProof(records, capacity) {
       maximumUpstream429s: 0,
     },
     policyMatches,
+    proofContext: context,
+    idleOccupancyRequired,
     seeds: perSeed.length,
     passedSeeds: perSeed.filter((seed) => seed.passed).length,
     zeroUpstream429Seeds: perSeed.filter((seed) => seed.upstream429s === 0).length,
@@ -548,7 +555,7 @@ function adaptiveProof(records, capacity) {
     passed:
       policyMatches &&
       perSeed.length > 0 &&
-      occupancyObservedSeeds > 0 &&
+      (!idleOccupancyRequired || occupancyObservedSeeds > 0) &&
       (!headroomProfile || headroomEvidenceSeeds > 0) &&
       perSeed.every((seed) => seed.passed),
     failures,
@@ -570,7 +577,10 @@ function omitSeed(object) {
   return rest;
 }
 
-export function buildSweepSummary({ mode, fault, seeds, records }) {
+export function buildSweepSummary({ mode, fault, seeds, records, adaptiveProofContext = "default" }) {
+  if (!new Set(["default", "headroom-compare"]).has(adaptiveProofContext)) {
+    throw new Error(`unsupported adaptive proof context ${adaptiveProofContext}`);
+  }
   if (!Array.isArray(records) || records.length === 0) {
     throw new Error("cannot aggregate an empty seed sweep");
   }
@@ -682,7 +692,7 @@ export function buildSweepSummary({ mode, fault, seeds, records }) {
   const numericTokenMetrics = tokenMetrics.map(({ progressiveConfiguration: _configuration, ...metrics }) => metrics);
 
   return {
-    schemaVersion: 5,
+    schemaVersion: 7,
     generatedAt: new Date().toISOString(),
     kind: mode === "compare" ? "paired-seed-sweep" : "seed-sweep",
     mode,
@@ -696,7 +706,7 @@ export function buildSweepSummary({ mode, fault, seeds, records }) {
         }
       : null,
     capacityPolicy: firstCapacityPolicy,
-    adaptiveProof: adaptiveProof(records, firstCapacityPolicy),
+    adaptiveProof: adaptiveProof(records, firstCapacityPolicy, { context: adaptiveProofContext }),
     runs: records.map((record) => ({
       seed: record.seed,
       scenario: record.scenario,

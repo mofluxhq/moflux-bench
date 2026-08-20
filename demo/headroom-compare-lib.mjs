@@ -28,8 +28,6 @@ export function readCompletedSweepSummary(file, result, profile) {
 }
 
 export const HEADROOM_ACCEPTANCE_DEFAULTS = Object.freeze({
-  minimumMedianBatchSuccesses: 8,
-  minimumMedianBatchSuccessDelta: 4,
   maximumMedianInteractiveSuccessRegressionPp: 2,
   maximumMedianInteractiveP95RegressionPercent: 10,
   minimumHeadroomEvidenceSeedFraction: 0.6,
@@ -70,22 +68,81 @@ function median(metric) {
   return metric?.median ?? null;
 }
 
-function normalizeThresholds(seedCount, overrides = {}) {
+function headroomCapacityExpectation(summary) {
+  const policy = summary?.capacityPolicy ?? {};
+  const members = policy?.capacityGroup?.members ?? [];
+  const interactive = members.find((member) => member?.pool === "sim-interactive");
+  const batch = members.find((member) => member?.pool === "sim-batch");
+  const headroom = interactive?.headroomLending ?? null;
+  const batchPool = (policy?.pools ?? []).find((pool) => pool?.name === "sim-batch");
+  const maxDemandingConcurrentLend = finite(headroom?.maxDemandingConcurrentLend);
+  const maxDemandingTokenLend = finite(headroom?.maxDemandingTokenLend);
+  const batchRequiredLocalGrant = finite(batchPool?.reservation?.requiredLocalGrant);
+  const concurrencyFundedDemandingLend = maxDemandingConcurrentLend === null
+    ? null
+    : Math.floor(maxDemandingConcurrentLend);
+  const tokenFundedDemandingLend =
+    maxDemandingTokenLend === null || batchRequiredLocalGrant === null || batchRequiredLocalGrant <= 0
+      ? null
+      : Math.floor(maxDemandingTokenLend / batchRequiredLocalGrant);
+  const effectiveFundedDemandingLend =
+    concurrencyFundedDemandingLend === null || tokenFundedDemandingLend === null
+      ? null
+      : Math.min(concurrencyFundedDemandingLend, tokenFundedDemandingLend);
+  return {
+    interactiveGuaranteedMaxConcurrent: finite(interactive?.guaranteedMaxConcurrent),
+    interactiveGuaranteedTokenBudget: finite(interactive?.guaranteedTokenBudget),
+    batchGuaranteedMaxConcurrent: finite(batch?.guaranteedMaxConcurrent),
+    batchGuaranteedTokenBudget: finite(batch?.guaranteedTokenBudget),
+    maxDemandingConcurrentLend,
+    maxDemandingTokenLend,
+    batchRequiredLocalGrant,
+    concurrencyFundedDemandingLend,
+    tokenFundedDemandingLend,
+    effectiveFundedDemandingLend,
+  };
+}
+
+function normalizeThresholds(seedCount, comparison, overrides = {}) {
   const defaults = HEADROOM_ACCEPTANCE_DEFAULTS;
-  const threshold = (name) => {
-    const value = finite(overrides[name] ?? defaults[name]);
+  const threshold = (name, fallback) => {
+    const value = finite(overrides[name] ?? fallback);
     if (value === null) throw new Error(`headroom acceptance threshold ${name} must be finite`);
     return value;
   };
-  const minimumMedianBatchSuccesses = threshold("minimumMedianBatchSuccesses");
-  const minimumMedianBatchSuccessDelta = threshold("minimumMedianBatchSuccessDelta");
+  const fundedLend = finite(comparison?.headroomCapacityExpectation?.effectiveFundedDemandingLend);
+  if (fundedLend === null || fundedLend < 1) {
+    throw new Error(
+      "adaptive-headroom-28-4 must fund at least one additional batch reservation during demanding-state lending",
+    );
+  }
+  const baselineMedian =
+    median(comparison?.aggregate?.exercisedBaselineBatchSuccess) ??
+    median(comparison?.aggregate?.baselineBatchSuccess);
+  if (baselineMedian === null) {
+    throw new Error("headroom comparison is missing baseline batch-success evidence");
+  }
+  const derivedMinimumDelta = Math.max(1, fundedLend);
+  const minimumMedianBatchSuccessDelta = threshold(
+    "minimumMedianBatchSuccessDelta",
+    derivedMinimumDelta,
+  );
+  const minimumMedianBatchSuccesses = threshold(
+    "minimumMedianBatchSuccesses",
+    baselineMedian + minimumMedianBatchSuccessDelta,
+  );
   const maximumMedianInteractiveSuccessRegressionPp = threshold(
     "maximumMedianInteractiveSuccessRegressionPp",
+    defaults.maximumMedianInteractiveSuccessRegressionPp,
   );
   const maximumMedianInteractiveP95RegressionPercent = threshold(
     "maximumMedianInteractiveP95RegressionPercent",
+    defaults.maximumMedianInteractiveP95RegressionPercent,
   );
-  const fraction = threshold("minimumHeadroomEvidenceSeedFraction");
+  const fraction = threshold(
+    "minimumHeadroomEvidenceSeedFraction",
+    defaults.minimumHeadroomEvidenceSeedFraction,
+  );
   if (minimumMedianBatchSuccesses < 0 || minimumMedianBatchSuccessDelta < 0) {
     throw new Error("headroom batch acceptance thresholds must be >= 0");
   }
@@ -103,31 +160,47 @@ function normalizeThresholds(seedCount, overrides = {}) {
     maximumMedianInteractiveP95RegressionPercent,
     minimumHeadroomEvidenceSeedFraction: fraction,
     minimumHeadroomEvidenceSeeds: Math.max(1, Math.ceil(seedCount * fraction)),
+    batchThresholdBasis: {
+      mode: overrides.minimumMedianBatchSuccessDelta === undefined &&
+        overrides.minimumMedianBatchSuccesses === undefined
+        ? "bounded-headroom-capacity"
+        : "explicit-override",
+      baselineMedianBatchSuccesses: baselineMedian,
+      effectiveFundedDemandingLend: fundedLend,
+    },
   };
 }
 
 export function evaluateHeadroomAcceptance(comparison, overrides = {}) {
   const seedCount = comparison?.seeds?.length ?? 0;
   if (seedCount <= 0) throw new Error("headroom comparison has no seeds to evaluate");
-  const thresholds = normalizeThresholds(seedCount, overrides);
+  const thresholds = normalizeThresholds(seedCount, comparison, overrides);
   const aggregate = comparison.aggregate ?? {};
-  const criticalMetrics = [
+  const allSeedMetrics = [
     aggregate.headroomBatchSuccess,
     aggregate.batchSuccessDelta,
     aggregate.interactiveSuccessPercentagePointDelta,
     aggregate.interactiveP95LatencyChangePercent,
   ];
+  const headroomEvidenceSeeds = comparison.headroomEvidenceSeeds ?? 0;
+  const exercisedBatchMetricsComplete =
+    aggregate.exercisedHeadroomBatchSuccess?.n === headroomEvidenceSeeds &&
+    aggregate.exercisedBatchSuccessDelta?.n === headroomEvidenceSeeds;
   const observed = {
-    outcomeMetricsComplete: criticalMetrics.every((metric) => metric?.n === seedCount),
-    medianHeadroomBatchSuccesses: median(aggregate.headroomBatchSuccess),
-    medianBatchSuccessDelta: median(aggregate.batchSuccessDelta),
+    outcomeMetricsComplete:
+      allSeedMetrics.every((metric) => metric?.n === seedCount) && exercisedBatchMetricsComplete,
+    exercisedOutcomeSeeds: aggregate.exercisedBatchSuccessDelta?.n ?? 0,
+    medianHeadroomBatchSuccesses: median(aggregate.exercisedHeadroomBatchSuccess),
+    medianBatchSuccessDelta: median(aggregate.exercisedBatchSuccessDelta),
+    allSeedMedianHeadroomBatchSuccesses: median(aggregate.headroomBatchSuccess),
+    allSeedMedianBatchSuccessDelta: median(aggregate.batchSuccessDelta),
     medianInteractiveSuccessPercentagePointDelta: median(
       aggregate.interactiveSuccessPercentagePointDelta,
     ),
     medianInteractiveP95LatencyChangePercent: median(
       aggregate.interactiveP95LatencyChangePercent,
     ),
-    headroomEvidenceSeeds: comparison.headroomEvidenceSeeds ?? 0,
+    headroomEvidenceSeeds,
     exactAdmissionProofSeeds: comparison.exactAdmissionProofSeeds ?? 0,
     zeroUpstream429Seeds: comparison.zeroUpstream429Seeds ?? 0,
   };
@@ -175,9 +248,9 @@ export function evaluateHeadroomAcceptance(comparison, overrides = {}) {
   }
   if (!checks.materiallyMoreBatchCompletions) {
     failures.push(
-      `median headroom batch completions ${observed.medianHeadroomBatchSuccesses ?? "n/a"} ` +
-      `(need >= ${thresholds.minimumMedianBatchSuccesses}) and median gain ` +
-      `${observed.medianBatchSuccessDelta ?? "n/a"} ` +
+      `among ${observed.exercisedOutcomeSeeds} headroom-evidence seed(s), median headroom batch completions ` +
+      `${observed.medianHeadroomBatchSuccesses ?? "n/a"} (need >= ${thresholds.minimumMedianBatchSuccesses}) ` +
+      `and median gain ${observed.medianBatchSuccessDelta ?? "n/a"} ` +
       `(need >= ${thresholds.minimumMedianBatchSuccessDelta})`,
     );
   }
@@ -196,7 +269,7 @@ export function evaluateHeadroomAcceptance(comparison, overrides = {}) {
 
   return {
     question:
-      "Does restored batch floor plus headroom-aware lending produce materially more batch completions without giving back interactive protection?",
+      "When bounded headroom is actually applied, does it produce the capacity-funded batch gain without giving back interactive protection?",
     thresholds,
     observed,
     checks,
@@ -279,14 +352,19 @@ export function buildHeadroomPolicyComparison(baseline, headroom, acceptanceOver
     };
   });
 
+  const headroomCapacity = headroomCapacityExpectation(headroom);
+  const exercisedRows = perSeed.filter((row) => row.headroomEvidence === true);
   const comparison = {
-    schemaVersion: 2,
+    schemaVersion: 4,
     generatedAt: new Date().toISOString(),
     kind: "headroom-policy-comparison",
     seeds: baselineSeeds,
     baselineProfile: "adaptive-28-4",
     headroomProfile: "adaptive-headroom-28-4",
     sameScenarioTemplate: true,
+    headroomEvidenceDefinition:
+      "in-window demanding controller event + bounded correlated Tyr transfer",
+    headroomCapacityExpectation: headroomCapacity,
     baselineAdaptiveProofPassed: baseline?.adaptiveProof?.passed === true,
     headroomAdaptiveProofPassed: headroom?.adaptiveProof?.passed === true,
     headroomObservedSeeds: perSeed.filter((row) => row.headroomLendingObserved === true).length,
@@ -320,6 +398,15 @@ export function buildHeadroomPolicyComparison(baseline, headroom, acceptanceOver
       ),
       localRejectDelta: summarize(perSeed.map((row) => row.localRejectDelta)),
       upstream429Delta: summarize(perSeed.map((row) => row.upstream429Delta)),
+      exercisedBaselineBatchSuccess: summarize(
+        exercisedRows.map((row) => row.baselineBatchSuccess),
+      ),
+      exercisedHeadroomBatchSuccess: summarize(
+        exercisedRows.map((row) => row.headroomBatchSuccess),
+      ),
+      exercisedBatchSuccessDelta: summarize(
+        exercisedRows.map((row) => row.batchSuccessDelta),
+      ),
     },
     perSeed,
   };

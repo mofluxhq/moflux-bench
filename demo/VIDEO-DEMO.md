@@ -19,7 +19,7 @@ request characteristics.
 
 ## Runtime compatibility and setup
 
-The presenter is pinned to Tyr 0.26.0, Latchflo 0.12.2,
+The presenter is pinned to Tyr 0.26.0, Latchflo 0.12.4,
 async-bulkhead-llm 3.15.1, and async-bulkhead-ts 1.0.1. `npm run demo` uses
 Anthropic-shaped streams and enables progressive reconciliation with a
 256-token update step and a 256-token future-output safety margin. Input usage
@@ -50,7 +50,7 @@ Latchflo/Tyr state, then the verified single-pair presenter:
 
 1. validates Docker, Compose, licensed images, and configuration;
 2. starts Latchflo, the telemetry relay, Prometheus, and Grafana;
-3. creates or updates `sim-interactive` and `sim-batch` with a short enrollment lease, an exact 31/1 concurrency split, 30,000/10,000 token budgets, and Latchflo 0.12.2 minimum-grant floors (1 slot; 755 interactive tokens; 9,942 batch tokens);
+3. creates or updates `sim-interactive` and `sim-batch` with a short enrollment lease, an exact 31/1 concurrency split, 30,000/10,000 token budgets, and Latchflo 0.12.4 minimum-grant floors (1 slot; 755 interactive tokens; 9,942 batch tokens);
 4. runs the no-control arm;
 5. replaces passthrough replicas with Tyr, waits for all four registrations,
    promotes the pools to the steady-state lease, and waits for one simultaneous
@@ -90,16 +90,30 @@ npm run demo:hetero:headroom
 npm run demo:headroom:compare
 ```
 
-The first command runs the fixed `adaptive-headroom-28-4` profile. The paired
-`demo:headroom:compare` command is also an outcome gate: its defaults require
-median batch completions >=8 and a median gain >=4 while preserving interactive
-success/p95 within the documented tolerances, proving headroom transfer on a
-majority of seeds, retaining exact admission provenance, and producing zero
-upstream 429s. The paired
+The first command runs the fixed `adaptive-headroom-28-4` profile on the ordinary
+6-RPS heterogeneous workload. The paired `demo:headroom:compare` command is also an
+outcome gate and deliberately replays a controlled 3 interactive RPS, uniform-size
+trace through both policies while batch still begins at 60% of the phase. This keeps
+interactive demand active but leaves sustained safe slack for longer than Latchflo's
+3,000 ms demanding-state threshold, so the feature is exercised intentionally rather
+than only when a stochastic trace happens to create the right occupancy. Its batch-payoff default
+is capacity-derived: the configured demanding-state slot/token lend is converted
+to the number of additional batch reservations it can actually fund, and the
+median completion gain is measured only across seeds with jointly proven
+Latchflo plus correlated Tyr headroom transfer. The current 2-slot / 10,000-token
+lend funds one additional default batch reservation. Interactive success/p95
+protections, majority headroom evidence, exact admission provenance, and zero
+upstream 429 requirements remain strict. Unlike the ordinary heterogeneous adaptive
+sweeps, this deliberate active-demand exercise treats idle occupancy above 28 as a
+diagnostic rather than a prerequisite; its relevant lending proof is the stricter
+in-window demanding controller event plus correlated bounded Tyr transfer. The paired
 command runs classic `adaptive-28-4` and headroom-aware 28/4 over the same seeds,
-requires identical same-seed trace hashes, and reports batch-success gains
-alongside interactive success, p95 latency, TTFT p95, rejects, and exact
-successor-grant proof coverage.
+requires identical same-seed trace hashes, and counts headroom only when an
+in-measurement `demandState=demanding` / `reason=headroom` controller event stays
+within the configured active-demand lend caps and is followed by a matching Tyr
+transfer before workload end. Protected or post-workload events remain diagnostic
+only. The report includes batch-success gains alongside interactive success, p95
+latency, TTFT p95, rejects, and exact successor-grant proof coverage.
 
 ## Choose a different sweep
 
@@ -156,7 +170,7 @@ npm run demo:hetero:adaptive:blind
 ```
 
 `demo:lending` is the focused static-partition comparison. `demo:handoff` is
-the five-seed release proof for the acknowledged Latchflo 0.12.2 / Tyr 0.26.0
+the five-seed release proof for the acknowledged Latchflo 0.12.4 / Tyr 0.26.0
 handoff without the extra control arms. The adaptive heterogeneous commands are
 the recommended mixed-workload scenes: they add all control arms while keeping
 the same lognormal request sizes and acceptance gate. The blind variant
@@ -165,13 +179,13 @@ policy.
 
 This is a separate five-seed comparison because it changes the control-plane
 policy and lease cadence. The reference arm is an exact static 28/4 partition
-with interactive caps of 7/7/7/7. The MoFlux arm creates a Latchflo 0.12.2 demand-aware capacity group and
+with interactive caps of 7/7/7/7. The MoFlux arm creates a Latchflo 0.12.4 demand-aware capacity group and
 receives live demand snapshots from Tyr 0.26.0. When batch demand returns,
 Latchflo prepares drain grants for borrowed capacity; Tyr applies the lower
 limit by attrition, acknowledges it, and publishes fresh occupancy evidence.
 Latchflo can then commit the restored batch floor. Before every restrictive
 drain ACK arrives, the predecessor lease is the safety fallback. After the ACK
-barrier, Latchflo 0.12.2 transfers authority to the prepared successor grants,
+barrier, Latchflo 0.12.4 transfers authority to the prepared successor grants,
 so their earliest expiry becomes the handoff safety deadline and natural
 predecessor expiry no longer aborts restoration.
 The harness uses a 120-second steady-state grant TTL and waits for at least 55

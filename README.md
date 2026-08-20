@@ -56,12 +56,12 @@ cannot release the protected floor. Once the measured load generator is running,
 the presenter waits for a fresh interactive demand report and then arms the
 configured demand policy. Each accepted grant must also have enough remaining
 lifetime for a stable benchmark start. Startup fails if any live local grant is
-too small or too close to expiration. Pool creation also sends Latchflo 0.12.2's durable
+too small or too close to expiration. Pool creation also sends Latchflo 0.12.4's durable
 minimum-grant invariants: one concurrency slot, 755 tokens for interactive, and
 9,942 tokens for batch. Latchflo therefore rejects an unusable split before it
 can issue a zero-capacity or sub-request grant.
 
-The licensed path is pinned to **Tyr 0.26.0**, **Latchflo 0.12.2**,
+The licensed path is pinned to **Tyr 0.26.0**, **Latchflo 0.12.4**,
 **async-bulkhead-llm 3.15.1**, and **async-bulkhead-ts 1.0.1**. The canonical
 comparison uses Anthropic-shaped streaming because that protocol exposes input
 usage at `message_start` and cumulative output usage while the response is still
@@ -82,7 +82,7 @@ Tyr 0.26.0 capacity-aware routing is enabled for the licensed four-replica
 MoFlux arm. Each Tyr polls the private capacity snapshots of the other three
 replicas and may forward a request once to the peer with better headroom for
 that request's concurrency and token reservation. Tyr also reports bounded
-per-pool demand snapshots to Latchflo 0.12.2 on the existing authenticated
+per-pool demand snapshots to Latchflo 0.12.4 on the existing authenticated
 heartbeat. The benchmark generates one local-only shared routing secret in
 `demo/moflux/.env`; the secret is never committed. Latchflo owns grants, demand-
 aware lending, starvation prevention, and lease safety. It does not distribute
@@ -90,7 +90,7 @@ peer topology or the routing secret.
 
 The committed `results/` corpus is deliberately unchanged. Those files are
 historical evidence and retain their recorded Tyr 0.17.0/Latchflo 0.5.1 runtime
-metadata. New licensed runs use Tyr 0.26.0/Latchflo 0.12.2 and should be compared
+metadata. New licensed runs use Tyr 0.26.0/Latchflo 0.12.4 and should be compared
 as a new evidence set rather than silently relabeling the old one.
 
 Run the canonical progressive comparison:
@@ -169,14 +169,18 @@ reconciliation with a fixed 32-slot / 64,000-token envelope. `adaptive-28-4` is
 the control policy: interactive and batch keep 28/4 concurrency entitlements and
 24,000/40,000-token entitlements, and a demanding member retains its full
 entitlement. `adaptive-headroom-28-4` keeps those same nominal entitlements but
-uses Latchflo 0.12.2 demand-safe, non-stranding headroom lending on
-`sim-interactive`. A `demanding` or `starved` interactive member retains its full
-28-slot / 24,000-token guarantee. Only fresh `protected` no-current-demand
-telemetry may expose bounded interactive headroom, retaining at least 4
-concurrency slots and 4,000 tokens above current occupancy. Capacity explicitly
-released as interactive headroom remains source-aware: another eligible demanding
-member may consume it, but if nobody does, it stays usable by interactive instead
-of becoming stranded. Batch itself has no headroom-lending configuration and
+uses Latchflo 0.12.4 demand-safe, non-stranding sustained headroom lending on
+`sim-interactive`. Protected/no-current-demand telemetry may expose headroom as
+before. A demanding interactive member may additionally lend only after safe
+slack persists for 3,000 ms, and that active-demand release is hard-capped at
+2 concurrency slots and 10,000 tokens. Under Latchflo 0.12.4, long-lived
+pressure-free demand remains `demanding`; `starved` requires aged demand plus
+pending or recent rejection pressure. Rejection pressure, starvation, stale or
+incomplete telemetry, pending work, or loss of the sustained-safety condition
+makes the active-demand slice ineligible immediately. Capacity released as
+interactive headroom remains source-aware: another eligible demanding member
+may consume it, but if nobody does, it stays usable by interactive instead of
+becoming stranded. Batch itself has no headroom-lending configuration and
 retains its protected 4-slot / 40,000-token entitlement.
 
 Both profiles enable `--require-adaptive-proof`. The command exits unsuccessfully
@@ -187,19 +191,33 @@ restore the batch floor, double-allocates applied capacity, or produces an
 upstream 429. The headroom profile additionally requires at least one seed to
 prove an interactive-to-batch lending event at both Latchflo and Tyr's applied
 capacity. Because request sizes are
-stochastic, idle-window occupancy above the static 28-slot floor is required
-somewhere in the five-seed sweep rather than on every seed. The complete failed
-run is retained under `results/runs/` for inspection.
+stochastic, ordinary adaptive sweeps require idle-window occupancy above the static
+28-slot floor somewhere in the five-seed sweep rather than on every seed.
+`demo:headroom:compare` is the deliberate exception: its controlled low-pressure
+trace is designed to prove active-demand headroom, so idle occupancy above 28 is
+reported only as a diagnostic there. The paired comparison still requires the
+normal per-seed safety proof plus its stricter in-window `demandState=demanding`
+controller event and correlated bounded Tyr transfer. The complete failed run is
+retained under `results/runs/` for inspection.
 
 For both adaptive profiles, the presenter installs a bootstrap-safe capacity group while the Tyr fleet enrolls. Demand-aware lending stays disabled until fresh measured traffic is observed; for the headroom profile, the bootstrap copy also omits member-level `headroomLending` because Latchflo requires headroom lending and an enabled demand policy to be configured together. The full unchanged headroom policy is installed when measured demand arms lending.
 
 `demo:headroom:compare` is the direct policy outcome experiment. It runs MoFlux-only
 five-seed sweeps for both profiles, verifies that every same-seed trace hash is
 identical, and writes a paired summary of absolute and delta batch success versus
-interactive success, p95 latency, TTFT p95, local rejects, and upstream 429s. It
-then answers one explicit question: after the protected 4-slot batch floor is
-restored, does headroom-aware lending turn additional available capacity into
-materially more completed batch work without giving back interactive protection?
+interactive success, p95 latency, TTFT p95, local rejects, and upstream 429s. This
+paired command deliberately uses a controlled 3 interactive RPS, uniform-size trace
+while batch still begins at 60% of the 45-second phase. That keeps interactive demand
+continuously active but leaves deterministic room below the protected 28-slot /
+24,000-token entitlement for longer than the 3,000 ms demanding-state sustain window.
+The ordinary `demo:hetero:adaptive` and `demo:hetero:headroom` commands remain the
+6-RPS lognormal workload and retain the idle-occupancy-above-28 proof requirement.
+Only the paired headroom exercise marks that older occupancy proof diagnostic, because
+its relevant lending evidence is the stricter in-window demanding-headroom correlation.
+The paired experiment then answers one explicit question:
+after the protected 4-slot batch floor is restored, does headroom-aware lending turn
+that bounded active-demand slack into more completed batch work without giving back
+interactive protection?
 
 A child sweep that completes all seeds and preserves `summary.json` is still a usable
 policy result even when `--require-adaptive-proof` makes that child exit nonzero. The
@@ -207,18 +225,30 @@ paired runner now continues in that case so the final comparison records *why* t
 policy failed. A crash, signal termination, or missing/unreadable summary still stops
 the comparison immediately.
 
-The default release gate requires all of the following: median headroom batch
-completions >=8; median batch-completion gain >=4 over `adaptive-28-4`; joint
-Latchflo/Tyr headroom-transfer evidence on at least 60% of seeds; exact
-successor-grant admission proof on every seed; zero upstream 429s on every seed;
-median interactive-success regression no worse than 2 percentage points; and
-median interactive-p95 regression no worse than 10%. These are benchmark
-acceptance thresholds, not claims that those numbers are universally optimal.
-They can be changed explicitly with
+The default release gate now sizes the batch-payoff requirement from the headroom
+that the configured policy can actually fund. It computes the demanding-state
+increment as `min(maxDemandingConcurrentLend,
+floor(maxDemandingTokenLend / batchRequiredLocalGrant))` and evaluates the batch
+completion gain only on seeds with joint controller plus correlated Tyr
+headroom-transfer evidence. For the default 2-slot / 10,000-token lend and the
+current batch reservation, that funds one additional batch reservation, so the
+default exercised-seed gate requires a median gain of at least one completion
+and a median headroom completion count at least one above the exercised control
+median. The safety gates are unchanged: joint headroom proof is still required
+on at least 60% of seeds; exact successor-grant admission proof is required on
+every seed; upstream 429s must remain zero; median interactive-success regression
+must be no worse than 2 percentage points; and median interactive-p95 regression
+must be no worse than 10%. Explicit overrides remain available with
 `--min-median-batch-successes`, `--min-median-batch-success-delta`,
 `--min-headroom-evidence-seed-fraction`,
 `--max-interactive-success-regression-pp`, and
-`--max-interactive-p95-regression-percent`. If either underlying adaptive gate or
+`--max-interactive-p95-regression-percent`. A raw 26/6 Tyr split is diagnostic
+only. Joint headroom proof requires the controller event to occur during the measured
+workload, report `demandState=demanding` and `reason=headroom`, stay within the
+configured active-demand slot/token caps, and be followed by a matching Tyr applied-
+capacity transfer that is also observed before the measured workload ends. Protected
+or post-workload lending remains visible as diagnostic evidence but cannot satisfy the
+headroom gate. If either underlying adaptive gate or
 the outcome gate fails, the comparison is preserved but the command exits
 unsuccessfully rather than presenting it as a passing result. The named adaptive
 capacity profiles are valid in MoFlux-only mode because this paired experiment
@@ -256,7 +286,7 @@ containers afterward with `npm run demo:down`.
 ### Authenticated admission-class benchmark
 
 The four-arm admission-class benchmark introduced in MoFlux Bench 0.16.0 and
-upgraded in 0.18.0 now runs against **Tyr 0.26.0** and **Latchflo 0.12.2**. Every seed replays the same immutable
+upgraded in 0.18.0 now runs against **Tyr 0.26.0** and **Latchflo 0.12.4**. Every seed replays the same immutable
 trace through equal 32-request / 64,000-token physical pools:
 
 - `sim-shared` applies only the fleet-wide pool envelope.
@@ -273,7 +303,7 @@ control-plane state so a restored 240-second grant from an earlier seed cannot
 prevent the next seed from exercising idle-floor lending. Before the adaptive
 trace begins, the runner explicitly waits until the quiet noisy floor is proven
 lent. The adaptive arm keeps a 1-second idle threshold and relies on Tyr 0.26.0
-plus Latchflo 0.12.2's acknowledged class handoff to restore that floor before
+plus Latchflo 0.12.4's acknowledged class handoff to restore that floor before
 the lent lease expires. (The 0.12.0 successor-authority change applies to physical
 capacity-group handoffs; class-only handoffs retain their predecessor-lease proof.) After workload sampling ends, the runner keeps a bounded
 15-second synchronization window and actively reconciles until Tyr has actually
@@ -500,14 +530,14 @@ npm run demo:hetero:headroom   # same workload with headroom-aware lending
 npm run demo:headroom:compare  # paired 28/4 policy comparison
 ```
 
-`demo:handoff` is the shortest release-level proof for the Latchflo 0.12.2 /
+`demo:handoff` is the shortest release-level proof for the Latchflo 0.12.4 /
 Tyr 0.26.0 physical-capacity handoff: five lognormal seeds, the exact `adaptive-28-4` profile,
 and the full adaptive safety gate without spending time on the extra control
 arms. Demand-aware runs use a 120-second steady-state grant TTL and do not start
 load until the fleet has at least 55 seconds of grant runway remaining for the
 default 45-second phase. The acknowledged drain + fresh occupancy + commit path therefore has ample
 time to complete by attrition. Before every restrictive drain is ACKed, the
-predecessor lease remains authoritative; after that ACK barrier, Latchflo 0.12.2
+predecessor lease remains authoritative; after that ACK barrier, Latchflo 0.12.4
 uses the prepared successor-grant expiry as the safety deadline. Natural source
 lease expiry after the ACK barrier no longer invalidates restoration. This
 removes the old 11-second lease-cycle timing dependency without weakening the
@@ -517,7 +547,7 @@ all control arms. Conflicting envelope, concurrency, or token settings are
 rejected. `demo:lending` remains the focused static-partition scene.
 
 `--lending` widens the idle window from 35% to 60% of the phase so Tyr 0.26.0
-can report an idle batch pool and Latchflo 0.12.2 can safely lend its protected
+can report an idle batch pool and Latchflo 0.12.4 can safely lend its protected
 floor. The presenter creates a demand-aware capacity group with 28/4 protected
 concurrency and 24,000/40,000-token guarantees, while both pools may borrow up
 to the shared 32-slot/64,000-token envelope. The larger token envelope is
@@ -535,7 +565,7 @@ response timing:
 | Question | Required evidence |
 |---|---|
 | Did interactive borrow? | Idle-window occupancy above 28 **and** a Latchflo `capacity_group.lending_observed` event |
-| Did the floor come back? | A Latchflo 0.12.2 restoration handoff commits **and** a post-lending Tyr `/stats` sample shows the full 4-slot / 40,000-token batch floor applied |
+| Did the floor come back? | A Latchflo 0.12.4 restoration handoff commits **and** a post-lending Tyr `/stats` sample shows the full 4-slot / 40,000-token batch floor applied |
 | Was transfer ordered safely? | `handoff_prepared` → the **first** `applied` ACK for every unique drain grant → `handoff_committed`; later duplicate ACKs are diagnostic only |
 | Did the commit actually precede batch admission? | Tyr 0.26.0 exact admission provenance is scoped to the causal restoration handoff: only admissions at or after that handoff's `handoff_prepared` event and belonging to its predecessor/successor grant lineage are considered. The first relevant batch admission must use a staged successor grant ID. A lineage-matched predecessor admission is a proved violation; unrelated or pre-handoff admissions are ignored; dropped/capture-failed provenance is inconclusive. |
 | Did handoff stay within its safety authority? | Before drain ACKs, the predecessor lease is authoritative; after every restrictive drain is ACKed, commit must occur before the prepared successor-grant deadline |
@@ -1053,7 +1083,7 @@ Three things worth reading carefully, including the ones that are inconvenient:
   and that success rates are neither 0% nor 100% before trusting a comparison.
 - **Adaptive capacity-floor restoration is acknowledged and non-preemptive.**
   Tyr 0.26.0 reports bounded per-class demand plus ordered class occupancy
-  evidence. Latchflo 0.12.2 transfers physical handoff safety authority to the
+  evidence. Latchflo 0.12.4 transfers physical handoff safety authority to the
   restrictive successor grants after every drain ACK, so natural expiry of the
   predecessor lease no longer aborts an otherwise safe restoration. Running
   borrowers are never revoked; the lower shared authority drains by attrition,

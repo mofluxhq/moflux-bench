@@ -185,13 +185,28 @@ if (adaptiveProfileRequested) {
     if (rawArgs.has("headroom-min-tokens") && num("headroom-min-tokens", 4000) !== 4000) {
       conflicts.push("--headroom-min-tokens (must be 4000)");
     }
-  } else if (rawArgs.has("headroom-min-concurrent") || rawArgs.has("headroom-min-tokens")) {
+    if (rawArgs.has("headroom-demanding-sustain-ms") && num("headroom-demanding-sustain-ms", 3000) !== 3000) {
+      conflicts.push("--headroom-demanding-sustain-ms (must be 3000)");
+    }
+    if (rawArgs.has("headroom-max-demanding-concurrent-lend") && num("headroom-max-demanding-concurrent-lend", 2) !== 2) {
+      conflicts.push("--headroom-max-demanding-concurrent-lend (must be 2)");
+    }
+    if (rawArgs.has("headroom-max-demanding-token-lend") && num("headroom-max-demanding-token-lend", 10000) !== 10000) {
+      conflicts.push("--headroom-max-demanding-token-lend (must be 10000)");
+    }
+  } else if ([
+    "headroom-min-concurrent",
+    "headroom-min-tokens",
+    "headroom-demanding-sustain-ms",
+    "headroom-max-demanding-concurrent-lend",
+    "headroom-max-demanding-token-lend",
+  ].some((name) => rawArgs.has(name))) {
     conflicts.push("headroom flags require --capacity-profile=adaptive-headroom-28-4");
   }
   if (conflicts.length > 0) {
     throw new Error(
       `--capacity-profile=${requestedCapacityProfile} fixes the protected 28/4, 24k/40k policy` +
-        `${headroomAdaptiveProfileRequested ? " plus 4-slot/4000-token retained interactive headroom" : ""}; ` +
+        `${headroomAdaptiveProfileRequested ? " plus sustained/capped interactive headroom" : ""}; ` +
         `remove conflicting ${conflicts.join(", ")}`,
     );
   }
@@ -202,6 +217,7 @@ const OPT = Object.freeze({
   step: flag("step"),
   pauseMs: num("pause-ms", 0),
   phaseMs: num("phase-ms", 45000),
+  interactiveRps: num("interactive-rps", 6),
   fault: flag("fault"),
   faultAtMs: num("fault-at-ms", 16000),
   keepStack: !flag("cleanup"),
@@ -237,6 +253,9 @@ const OPT = Object.freeze({
         : requestedCapacityProfile || "historical-31-1",
   headroomMinConcurrent: headroomAdaptiveProfileRequested ? 4 : null,
   headroomMinTokens: headroomAdaptiveProfileRequested ? 4000 : null,
+  headroomDemandingSustainMs: headroomAdaptiveProfileRequested ? 3000 : null,
+  headroomMaxDemandingConcurrentLend: headroomAdaptiveProfileRequested ? 2 : null,
+  headroomMaxDemandingTokenLend: headroomAdaptiveProfileRequested ? 10_000 : null,
   lendingReportStaleAfterMs: num("lending-report-stale-after-ms", 6000),
   lendingIdleAfterMs: num("lending-idle-after-ms", 3000),
   lendingMaxStarvationMs: num("lending-max-starvation-ms", 5000),
@@ -465,7 +484,7 @@ if (OPT.mode !== "baseline" && OPT.grantTtlMs < REQUIRED_GRANT_RUNWAY_MS + 5000)
 const WORKLOAD = Object.freeze({
   durationMs: OPT.phaseMs,
   seed: OPT.seed,
-  interactiveRps: 6,
+  interactiveRps: OPT.interactiveRps,
   interactiveInputChars: 1200,
   interactiveMaxTokens: 400,
   batchStartMs: Math.round(OPT.phaseMs * (OPT.lending ? 0.6 : 0.35)),
@@ -548,6 +567,9 @@ const CAPACITY = (() => {
               headroomLending: Object.freeze({
                 minConcurrentHeadroom: OPT.headroomMinConcurrent,
                 minTokenHeadroom: OPT.headroomMinTokens,
+                demandingSustainMs: OPT.headroomDemandingSustainMs,
+                maxDemandingConcurrentLend: OPT.headroomMaxDemandingConcurrentLend,
+                maxDemandingTokenLend: OPT.headroomMaxDemandingTokenLend,
               }),
             }
           : {}),
@@ -631,6 +653,9 @@ const CAPACITY_GROUP = OPT.lending
               headroomLending: {
                 minConcurrentHeadroom: OPT.headroomMinConcurrent,
                 minTokenHeadroom: OPT.headroomMinTokens,
+                demandingSustainMs: OPT.headroomDemandingSustainMs,
+                maxDemandingConcurrentLend: OPT.headroomMaxDemandingConcurrentLend,
+                maxDemandingTokenLend: OPT.headroomMaxDemandingTokenLend,
               },
             }
           : {}),
@@ -1807,7 +1832,9 @@ async function readControllerLendingEvidence(
     jsonRequest(`${base}/v1/grants?limit=1000`, { token, allowed: [200] }),
   ]);
   const batch = CAPACITY_GROUP.members.find((member) => member.pool === "sim-batch");
+  const interactive = CAPACITY_GROUP.members.find((member) => member.pool === "sim-interactive");
   if (!batch) throw new Error("demand-aware capacity group is missing sim-batch");
+  if (!interactive) throw new Error("demand-aware capacity group is missing sim-interactive");
   return summarizeControllerLending({
     groupName: CAPACITY_GROUP.name,
     events: eventsResponse.body?.events ?? [],
@@ -1817,7 +1844,11 @@ async function readControllerLendingEvidence(
     batchPool: batch.pool,
     batchGuaranteedMaxConcurrent: batch.guaranteedMaxConcurrent,
     batchGuaranteedTokenBudget: batch.guaranteedTokenBudget,
+    interactiveGuaranteedMaxConcurrent: interactive.guaranteedMaxConcurrent,
+    interactiveGuaranteedTokenBudget: interactive.guaranteedTokenBudget,
+    interactiveHeadroomLending: interactive.headroomLending ?? null,
     loadgenStartedAtEpochMs: loadSummary?.startedAtEpochMs ?? null,
+    measuredRunDurationMs: loadSummary?.config?.durationMs ?? WORKLOAD.durationMs,
     batchFirstAttemptAtMs: loadSummary?.classes?.batch?.firstAttemptAtMs ?? null,
     batchFirstResponseHeadersAtMs:
       loadSummary?.classes?.batch?.firstResponseHeadersAtMs ??

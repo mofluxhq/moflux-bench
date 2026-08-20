@@ -41,8 +41,21 @@ let presenterChild = null;
 
 function listen(server, port) {
   return new Promise((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(port, "127.0.0.1", resolve);
+    const cleanup = () => {
+      server.off("error", onError);
+      server.off("listening", onListening);
+    };
+    const onError = (error) => {
+      cleanup();
+      reject(error);
+    };
+    const onListening = () => {
+      cleanup();
+      resolve();
+    };
+    server.once("error", onError);
+    server.once("listening", onListening);
+    server.listen(port, "127.0.0.1");
   });
 }
 
@@ -76,6 +89,25 @@ async function waitForFile(file, timeoutMs = 45000) {
     await sleep(100);
   }
   throw new Error(`timed out waiting for ${file}`);
+}
+
+
+async function listenRequired(factory, port, label) {
+  const server = factory(port);
+  try {
+    await listen(server, port);
+    servers.push(server);
+    return server;
+  } catch (error) {
+    await close(server);
+    if (error?.code === "EADDRINUSE") {
+      throw new Error(
+        `${label} test double requires 127.0.0.1:${port}, but that port is already in use. ` +
+          `Stop the running demo stack with \`npm run demo:down\` or stop the owning process, then rerun verification.`,
+      );
+    }
+    throw error;
+  }
 }
 
 async function listenWhenFree(factory, port, timeoutMs = 30000) {
@@ -363,7 +395,7 @@ try {
     ENV_FILE,
     [
       "MOFLUX_TYR_IMAGE=test-tyr:0.26.0",
-      "MOFLUX_LATCHFLO_IMAGE=test-latchflo:0.12.2",
+      "MOFLUX_LATCHFLO_IMAGE=test-latchflo:0.12.4",
       "LATCHFLO_ADMIN_TOKEN=test-admin",
       "LATCHFLO_AGENT_BOOTSTRAP_TOKEN=test-bootstrap",
       "TYR_ROUTING_SECRET=test-routing-secret-with-at-least-32-chars",
@@ -374,15 +406,11 @@ try {
 
   for (const file of RESULT_FILES) rmSync(file, { force: true });
 
-  const cp = controlPlane();
-  const prom = simpleHealth("prometheus");
-  const grafana = simpleHealth("grafana");
-  const relay = createTelemetryRelayServer();
   await Promise.all([
-    listenWhenFree(() => cp, 18080),
-    listenWhenFree(() => prom, 9090),
-    listenWhenFree(() => grafana, 3000),
-    listenWhenFree(() => relay, 8200),
+    listenRequired(controlPlane, 18080, "Latchflo"),
+    listenRequired(() => simpleHealth("prometheus"), 9090, "Prometheus"),
+    listenRequired(() => simpleHealth("grafana"), 3000, "Grafana"),
+    listenRequired(createTelemetryRelayServer, 8200, "telemetry relay"),
   ]);
 
   // The real baseline replicas must own 8101-8104 first. Once they finish and
@@ -479,7 +507,7 @@ ${run.stderr}`);
     if (history.length !== 2) throw new Error(`${pool} was configured ${history.length} times, expected 2`);
     for (const body of history) {
       if (body.minimumGrantMaxConcurrent !== 1) {
-        throw new Error(`${pool} omitted Latchflo 0.12.2 minimumGrantMaxConcurrent=1`);
+        throw new Error(`${pool} omitted Latchflo 0.12.4 minimumGrantMaxConcurrent=1`);
       }
       if (body.minimumGrantTokenBudget !== expectedMinimumTokens[pool]) {
         throw new Error(
@@ -537,8 +565,8 @@ ${run.stderr}`);
       result.capacity?.batchConcurrencySlots !== 1) {
     throw new Error("presenter did not record the historical 31/1 capacity profile");
   }
-  if (result.runtime?.tyr?.version !== "0.26.0" || result.runtime?.latchflo?.version !== "0.12.2") {
-    throw new Error("result did not record the Tyr 0.26.0 / Latchflo 0.12.2 runtime");
+  if (result.runtime?.tyr?.version !== "0.26.0" || result.runtime?.latchflo?.version !== "0.12.4") {
+    throw new Error("result did not record the Tyr 0.26.0 / Latchflo 0.12.4 runtime");
   }
   if (result.runtime?.asyncBulkheadLlm?.version !== "3.15.1" ||
       result.runtime?.asyncBulkheadTs?.version !== "1.0.1") {

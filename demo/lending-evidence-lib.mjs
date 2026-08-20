@@ -1,7 +1,7 @@
 import { proveAdmissionUsesSuccessorGrant } from "./admission-provenance-lib.mjs";
 
 /**
- * Pure helpers for configuring and interpreting Latchflo 0.12 demand-aware
+ * Pure helpers for configuring and interpreting Latchflo 0.12.4 demand-aware
  * capacity groups. Kept separate from presenter orchestration so the safety
  * and evidence contract can be tested without Docker or licensed images.
  */
@@ -40,6 +40,20 @@ export function buildDemandAwareCapacityGroup({
     if (headroom !== undefined) {
       finiteInteger(headroom.minConcurrentHeadroom, `${member.pool}.headroomLending.minConcurrentHeadroom`, 0);
       finiteInteger(headroom.minTokenHeadroom, `${member.pool}.headroomLending.minTokenHeadroom`, 0);
+      const activeDemandConfigured = headroom.demandingSustainMs !== undefined;
+      const activeDemandCapsConfigured =
+        headroom.maxDemandingConcurrentLend !== undefined || headroom.maxDemandingTokenLend !== undefined;
+      if (activeDemandConfigured) {
+        finiteInteger(headroom.demandingSustainMs, `${member.pool}.headroomLending.demandingSustainMs`, 1);
+        finiteInteger(
+          headroom.maxDemandingConcurrentLend,
+          `${member.pool}.headroomLending.maxDemandingConcurrentLend`,
+          1,
+        );
+        finiteInteger(headroom.maxDemandingTokenLend, `${member.pool}.headroomLending.maxDemandingTokenLend`, 1);
+      } else if (activeDemandCapsConfigured) {
+        throw new Error(`${member.pool}.headroomLending demanding lend caps require demandingSustainMs`);
+      }
     }
     return {
       pool: member.pool,
@@ -52,6 +66,15 @@ export function buildDemandAwareCapacityGroup({
             headroomLending: {
               minConcurrentHeadroom: headroom.minConcurrentHeadroom,
               minTokenHeadroom: headroom.minTokenHeadroom,
+              ...(headroom.demandingSustainMs === undefined
+                ? {}
+                : { demandingSustainMs: headroom.demandingSustainMs }),
+              ...(headroom.maxDemandingConcurrentLend === undefined
+                ? {}
+                : { maxDemandingConcurrentLend: headroom.maxDemandingConcurrentLend }),
+              ...(headroom.maxDemandingTokenLend === undefined
+                ? {}
+                : { maxDemandingTokenLend: headroom.maxDemandingTokenLend }),
             },
           }),
     };
@@ -115,7 +138,11 @@ export function summarizeControllerLending({
   batchPool = "sim-batch",
   batchGuaranteedMaxConcurrent = 1,
   batchGuaranteedTokenBudget = 1,
+  interactiveGuaranteedMaxConcurrent = null,
+  interactiveGuaranteedTokenBudget = null,
+  interactiveHeadroomLending = null,
   loadgenStartedAtEpochMs = null,
+  measuredRunDurationMs = null,
   batchFirstAttemptAtMs = null,
   batchFirstResponseHeadersAtMs = null,
   // Compatibility only for synthetic fixtures and pre-0.21 callers. This was
@@ -132,7 +159,10 @@ export function summarizeControllerLending({
       event?.payload?.capacityGroup === groupName,
   );
   const lending = relevant.filter((event) => event.type === "capacity_group.lending_observed");
-  const headroomLending = lending.filter((event) => {
+  // Direction-only candidates are retained for diagnostics. They are not
+  // demanding-state headroom proof until the event is shown to occur inside
+  // the measured workload and within the configured active-demand lend caps.
+  const headroomLendingCandidates = lending.filter((event) => {
     const lenders = Array.isArray(event?.payload?.lenders) ? event.payload.lenders : [];
     const borrowers = Array.isArray(event?.payload?.borrowers) ? event.payload.borrowers : [];
     return lenders.some((member) => member?.pool === "sim-interactive") &&
@@ -325,6 +355,47 @@ export function summarizeControllerLending({
     return Number.isFinite(parsed) ? parsed : null;
   };
   const loadgenStartedAt = finiteNumber(loadgenStartedAtEpochMs);
+  const measuredDuration = finiteNumber(measuredRunDurationMs);
+  const measuredRunEndedAt =
+    loadgenStartedAt !== null && measuredDuration !== null && measuredDuration > 0
+      ? loadgenStartedAt + measuredDuration
+      : null;
+  const maxDemandingConcurrentLend = finiteNumber(
+    interactiveHeadroomLending?.maxDemandingConcurrentLend,
+  );
+  const maxDemandingTokenLend = finiteNumber(
+    interactiveHeadroomLending?.maxDemandingTokenLend,
+  );
+  const strictDemandingHeadroomConfigured =
+    maxDemandingConcurrentLend !== null && maxDemandingConcurrentLend > 0 &&
+    maxDemandingTokenLend !== null && maxDemandingTokenLend > 0;
+  const withinMeasuredRun = (at) =>
+    at !== null &&
+    (loadgenStartedAt === null || at >= loadgenStartedAt) &&
+    (measuredRunEndedAt === null || at <= measuredRunEndedAt);
+  const headroomLending = headroomLendingCandidates.filter((event) => {
+    if (!strictDemandingHeadroomConfigured) return true;
+    const eventAt = eventTime(event);
+    if (!withinMeasuredRun(eventAt)) return false;
+    const lenders = Array.isArray(event?.payload?.lenders) ? event.payload.lenders : [];
+    const borrowers = Array.isArray(event?.payload?.borrowers) ? event.payload.borrowers : [];
+    const lender = lenders.find((member) => member?.pool === "sim-interactive") ?? null;
+    const borrower = borrowers.find((member) => member?.pool === batchPool) ?? null;
+    if (!lender || !borrower) return false;
+    if (lender?.demandState !== "demanding" || lender?.reason !== "headroom") return false;
+    const releasedConcurrent = finiteNumber(lender?.released?.maxConcurrent) ?? 0;
+    const releasedTokens = finiteNumber(lender?.released?.tokenBudget) ?? 0;
+    const borrowedConcurrent = finiteNumber(borrower?.borrowed?.maxConcurrent) ?? 0;
+    const borrowedTokens = finiteNumber(borrower?.borrowed?.tokenBudget) ?? 0;
+    const hasPositiveTransfer =
+      (releasedConcurrent > 0 || releasedTokens > 0) &&
+      (borrowedConcurrent > 0 || borrowedTokens > 0);
+    return hasPositiveTransfer &&
+      releasedConcurrent <= maxDemandingConcurrentLend &&
+      borrowedConcurrent <= maxDemandingConcurrentLend &&
+      releasedTokens <= maxDemandingTokenLend &&
+      borrowedTokens <= maxDemandingTokenLend;
+  });
   const batchAttemptOffset = finiteNumber(batchFirstAttemptAtMs);
   const responseHeadersOffset = finiteNumber(
     batchFirstResponseHeadersAtMs ?? batchFirstAdmissionAtMs,
@@ -422,7 +493,7 @@ export function summarizeControllerLending({
   const admissionOrderingProofSource = exactAdmissionAvailable
     ? exactAdmissionProof.source
     : "tyr.stats.llm.admitted+provider.request_received";
-  // Latchflo 0.12.2 transfers physical handoff safety authority after the ACK
+  // Latchflo 0.12.4 transfers physical handoff safety authority after the ACK
   // barrier. Before every restrictive drain is applied, the predecessor lease
   // is the fallback. Afterwards the prepared successor envelope is already
   // authoritative at Tyr, so natural predecessor expiry is not a failure; the
@@ -462,6 +533,100 @@ export function summarizeControllerLending({
       : null;
 
   const appliedTimeline = Array.isArray(appliedCapacity?.timeline) ? appliedCapacity.timeline : [];
+  const rawHeadroomTransferCandidateObserved = appliedCapacity?.observedHeadroomTransfer === true;
+  const rawHeadroomTransferObservation = appliedCapacity?.headroomTransferObservation ?? null;
+  const interactiveConcurrentGuarantee = finiteNumber(interactiveGuaranteedMaxConcurrent);
+  const interactiveTokenGuarantee = finiteNumber(interactiveGuaranteedTokenBudget);
+  const batchConcurrentGuarantee = finiteNumber(batchGuaranteedMaxConcurrent);
+  const batchTokenGuarantee = finiteNumber(batchGuaranteedTokenBudget);
+
+  const headroomTransferCorrelations = headroomLending.flatMap((event) => {
+    const eventAt = eventTime(event);
+    if (eventAt === null) return [];
+    const lenders = Array.isArray(event?.payload?.lenders) ? event.payload.lenders : [];
+    const borrowers = Array.isArray(event?.payload?.borrowers) ? event.payload.borrowers : [];
+    const lender = lenders.find((member) => member?.pool === "sim-interactive") ?? null;
+    const borrower = borrowers.find((member) => member?.pool === batchPool) ?? null;
+    if (!lender || !borrower) return [];
+    const releasedConcurrent = finiteNumber(lender?.released?.maxConcurrent) ?? 0;
+    const releasedTokens = finiteNumber(lender?.released?.tokenBudget) ?? 0;
+    const borrowedConcurrent = finiteNumber(borrower?.borrowed?.maxConcurrent) ?? 0;
+    const borrowedTokens = finiteNumber(borrower?.borrowed?.tokenBudget) ?? 0;
+
+    const sample = appliedTimeline.find((candidate) => {
+      const observedAt = parsedTime(candidate?.observedAt);
+      if (observedAt === null || observedAt < eventAt || !withinMeasuredRun(observedAt)) return false;
+      if (
+        interactiveConcurrentGuarantee === null || interactiveTokenGuarantee === null ||
+        batchConcurrentGuarantee === null || batchTokenGuarantee === null
+      ) {
+        return false;
+      }
+      const interactiveConcurrent = finiteNumber(candidate?.interactive?.maxConcurrent);
+      const interactiveTokens = finiteNumber(candidate?.interactive?.tokenBudget);
+      const batchConcurrent = finiteNumber(candidate?.batch?.maxConcurrent);
+      const batchTokens = finiteNumber(candidate?.batch?.tokenBudget);
+      if ([interactiveConcurrent, interactiveTokens, batchConcurrent, batchTokens].some((value) => value === null)) {
+        return false;
+      }
+      const actualReleasedConcurrent = interactiveConcurrentGuarantee - interactiveConcurrent;
+      const actualReleasedTokens = interactiveTokenGuarantee - interactiveTokens;
+      const actualBorrowedConcurrent = batchConcurrent - batchConcurrentGuarantee;
+      const actualBorrowedTokens = batchTokens - batchTokenGuarantee;
+      const concurrentMatches = releasedConcurrent <= 0 && borrowedConcurrent <= 0
+        ? true
+        : actualReleasedConcurrent > 0 && actualBorrowedConcurrent > 0 &&
+          actualReleasedConcurrent <= releasedConcurrent && actualBorrowedConcurrent <= borrowedConcurrent;
+      const tokenMatches = releasedTokens <= 0 && borrowedTokens <= 0
+        ? true
+        : actualReleasedTokens > 0 && actualBorrowedTokens > 0 &&
+          actualReleasedTokens <= releasedTokens && actualBorrowedTokens <= borrowedTokens;
+      return concurrentMatches && tokenMatches;
+    }) ?? null;
+
+    if (sample) {
+      return [{
+        controllerEventId: event?.id ?? null,
+        controllerObservedAt: event?.createdAt ?? null,
+        source: "latchflo.capacity_group.lending_observed+tyr.stats.applied_limits",
+        firstObservedAt: sample.observedAt ?? null,
+        interactive: sample.interactive ?? null,
+        batch: sample.batch ?? null,
+      }];
+    }
+
+    // Compatibility for callers that provide only the compact raw candidate,
+    // not the sampled timeline. The controller event is still mandatory and
+    // must precede the candidate observation.
+    const rawObservedAt = parsedTime(rawHeadroomTransferObservation?.firstObservedAt ?? null);
+    if (
+      rawHeadroomTransferCandidateObserved && rawObservedAt !== null && rawObservedAt >= eventAt &&
+      withinMeasuredRun(rawObservedAt) &&
+      (interactiveConcurrentGuarantee === null || interactiveTokenGuarantee === null)
+    ) {
+      return [{
+        controllerEventId: event?.id ?? null,
+        controllerObservedAt: event?.createdAt ?? null,
+        source: "latchflo.capacity_group.lending_observed+tyr.stats.applied_limits",
+        firstObservedAt: rawHeadroomTransferObservation?.firstObservedAt ?? null,
+        interactive: rawHeadroomTransferObservation?.interactive ?? null,
+        batch: rawHeadroomTransferObservation?.batch ?? null,
+      }];
+    }
+    return [];
+  });
+  const correlatedHeadroomTransferObservation = headroomTransferCorrelations.at(0) ?? null;
+  const correlatedAppliedCapacity = appliedCapacity === null || appliedCapacity === undefined
+    ? appliedCapacity
+    : {
+        ...appliedCapacity,
+        rawHeadroomTransferCandidateObserved,
+        rawHeadroomTransferObservation,
+        observedHeadroomTransfer: correlatedHeadroomTransferObservation !== null,
+        headroomTransferObservation: correlatedHeadroomTransferObservation,
+        headroomTransferCorrelations,
+      };
+
   const drainReadiness = drainGrants.map((grant) => {
     const grantId = grant?.grantId ?? null;
     const targetConcurrent = Number(grant?.limits?.maxConcurrent ?? 0);
@@ -505,6 +670,20 @@ export function summarizeControllerLending({
       lenders: event?.payload?.lenders ?? [],
       borrowers: event?.payload?.borrowers ?? [],
     })),
+    headroomCandidateLendingObserved: headroomLendingCandidates.length > 0,
+    headroomCandidateLendingEvents: headroomLendingCandidates.map((event) => ({
+      id: event.id,
+      createdAt: event.createdAt,
+      lenders: event?.payload?.lenders ?? [],
+      borrowers: event?.payload?.borrowers ?? [],
+    })),
+    headroomEvidenceWindow: {
+      measuredRunStartedAt: iso(loadgenStartedAt),
+      measuredRunEndedAt: iso(measuredRunEndedAt),
+      demandingOnly: strictDemandingHeadroomConfigured,
+      maxDemandingConcurrentLend,
+      maxDemandingTokenLend,
+    },
     headroomLendingObserved: headroomLending.length > 0,
     headroomLendingEvents: headroomLending.map((event) => ({
       id: event.id,
@@ -621,7 +800,7 @@ export function summarizeControllerLending({
       intervalAdmissionOrderingStatus,
       committedBeforeSafetyDeadline,
       committedBeforeLeaseExpiry,
-      appliedCapacity,
+      appliedCapacity: correlatedAppliedCapacity,
     },
     finalMembers: Array.isArray(finalRebalance?.members) ? finalRebalance.members : [],
     latestDemandByPool,

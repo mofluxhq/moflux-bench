@@ -16,7 +16,7 @@ const latchflo = path.join(temp, "latchflo-control-plane");
 mkdirSync(bin);
 for (const [dir, name, version] of [
   [tyr, "tyr-admission-controller", "0.26.0"],
-  [latchflo, "latchflo-control-plane", "0.12.2"],
+  [latchflo, "latchflo-control-plane", "0.12.4"],
 ]) {
   mkdirSync(dir);
   writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name, version }));
@@ -54,7 +54,7 @@ writeFileSync(
   envFile,
   [
     "MOFLUX_TYR_IMAGE=tyr-admission-controller:0.26.0",
-    "MOFLUX_LATCHFLO_IMAGE=latchflo-control-plane:0.12.2",
+    "MOFLUX_LATCHFLO_IMAGE=latchflo-control-plane:0.12.4",
     `MOFLUX_TYR_SOURCE_DIR=${tyr}`,
     `MOFLUX_LATCHFLO_SOURCE_DIR=${latchflo}`,
     "LATCHFLO_ADMIN_TOKEN=test-admin",
@@ -93,7 +93,7 @@ try {
   assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
   const calls = readFileSync(marker, "utf8");
   assert.match(calls, new RegExp(`build -t tyr-admission-controller:0\.26\.0 ${tyr.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
-  assert.match(calls, new RegExp(`build -t latchflo-control-plane:0\.12\.2 ${latchflo.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+  assert.match(calls, new RegExp(`build -t latchflo-control-plane:0\.12\.4 ${latchflo.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
   assert.doesNotMatch(calls, /^pull /m);
   console.log("PASS  npm run demo can build missing pinned images from local source directories");
 } finally {
