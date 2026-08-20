@@ -486,7 +486,7 @@ function printAggregate(summary) {
 
   const adaptive = summary.adaptiveProof;
   if (adaptive) {
-    console.log(`${BOLD}   Adaptive 28/4 acceptance gate${OFF}`);
+    console.log(`${BOLD}   Adaptive 28/4 acceptance gate — ${adaptive.profile}${OFF}`);
     console.table([
       {
         "policy exact": adaptive.policyMatches ? "yes" : "NO",
@@ -502,6 +502,8 @@ function printAggregate(summary) {
         "handoff": `${adaptive.handoffObservedSeeds}/${adaptive.seeds}`,
         "committed": `${adaptive.handoffCommittedSeeds}/${adaptive.seeds}`,
         "safe order": `${adaptive.safeHandoffSeeds}/${adaptive.seeds}`,
+        "exact provenance": `${adaptive.exactAdmissionProvenanceCompleteSeeds}/${adaptive.seeds}`,
+        "exact successor proof": `${adaptive.exactAdmissionProofSeeds}/${adaptive.seeds}`,
         "admission after commit": `${adaptive.commitBeforeAdmissionSeeds}/${adaptive.seeds}`,
         "admission inconclusive": `${adaptive.admissionOrderInconclusiveSeeds}/${adaptive.seeds}`,
         "admission violations": `${adaptive.admissionOrderViolationSeeds}/${adaptive.seeds}`,
@@ -523,6 +525,9 @@ function printAggregate(summary) {
       {
         "occupancy proof": `${lending.occupancyObservedSeeds}/${summary.seeds.length} seeds`,
         "controller proof": `${lending.controllerObservedSeeds}/${summary.seeds.length} seeds`,
+        "headroom controller": `${lending.headroomObservedSeeds}/${summary.seeds.length} seeds`,
+        "headroom data plane": `${lending.dataPlaneHeadroomObservedSeeds}/${summary.seeds.length} seeds`,
+        "exact successor proof": `${lending.exactAdmissionProofSeeds}/${summary.seeds.length} seeds`,
         "floor restored": `${lending.floorRestoredSeeds}/${summary.seeds.length} seeds`,
         "controller restored": `${lending.controllerFloorRestoredSeeds}/${summary.seeds.length} seeds`,
         "Tyr restored": `${lending.dataPlaneFloorRestoredSeeds}/${summary.seeds.length} seeds`,

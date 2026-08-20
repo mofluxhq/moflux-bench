@@ -50,6 +50,19 @@ The MoFlux result contains per-run token-accounting deltas:
 
 A refund means unused safety reservation was returned for reuse; it is not newly created capacity.
 
+## Headroom-aware policy runs
+
+MoFlux Bench 0.23.0 adds `adaptive-headroom-28-4` without replacing the existing
+`adaptive-28-4` control policy. `npm run demo:hetero:headroom` writes an ordinary
+five-seed sweep for the new policy. `npm run demo:headroom:compare` runs the two
+policies over the same ordered seed set and verifies same-seed immutable trace
+hashes before writing `results/runs/headroom-policy-comparison/<run-id>/summary.json`.
+That paired summary reports batch-success changes alongside interactive success,
+p95/TTFT changes, rejects, and upstream 429s. It also reports controller and
+data-plane headroom evidence plus exact Tyr 0.26.0 successor-grant admission
+proof coverage. A failed adaptive gate is preserved as evidence but is not a
+publishable passing comparison.
+
 ## Admission-class lending runs
 
 `npm run demo:classes` writes four matched arms under
@@ -71,7 +84,7 @@ Latchflo 0.5.1**. Read that field rather than any prose description — prose dr
 and an earlier revision of this file and of `.gitignore` both described this
 corpus as Tyr 0.16.0 / Latchflo 0.5.0, which the files themselves contradict.
 
-New licensed runs use Tyr 0.25.1, Latchflo 0.11.6,
+New licensed runs use Tyr 0.26.0, Latchflo 0.12.2,
 async-bulkhead-llm 3.15.1, and async-bulkhead-ts 1.0.1. The main sweep retains
 one-hop capacity-aware routing, per-pool demand heartbeats, pool-level lending,
 and progressive reconciliation for Anthropic-shaped streams. Demand-aware pool

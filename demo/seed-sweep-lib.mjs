@@ -168,7 +168,12 @@ export function armMetrics(summary) {
     borrowedSlots: summary.lending?.idleWindow?.borrowedSlots ?? null,
     occupancyLendingObserved: summary.lending?.idleWindow?.borrowed ?? null,
     controllerLendingObserved: summary.lending?.controlPlane?.lendingObserved ?? null,
+    headroomLendingObserved: summary.lending?.controlPlane?.headroomLendingObserved ?? null,
+    dataPlaneHeadroomObserved:
+      summary.lending?.controlPlane?.handoff?.appliedCapacity?.observedHeadroomTransfer ?? null,
     floorRestored: summary.lending?.controlPlane?.floorRestored ?? null,
+    controllerFloorRestored: summary.lending?.controlPlane?.controllerFloorRestored ?? null,
+    dataPlaneFloorRestored: summary.lending?.controlPlane?.dataPlaneFloorRestored ?? null,
     floorRestorationDurationMs: summary.lending?.controlPlane?.restorationDurationMs ?? null,
     batchFloorAdmissionGapMinMs:
       summary.lending?.floorReassertion?.admissionGapMinMs ??
@@ -186,6 +191,14 @@ export function armMetrics(summary) {
       summary.lending?.controlPlane?.handoff?.commitBeforeBatchAdmission ?? null,
     handoffAdmissionOrderingStatus:
       summary.lending?.controlPlane?.handoff?.admissionOrderingStatus ?? null,
+    handoffAdmissionOrderingProofSource:
+      summary.lending?.controlPlane?.handoff?.admissionOrderingProofSource ?? null,
+    handoffExactAdmissionProvenanceComplete:
+      summary.lending?.controlPlane?.handoff?.exactAdmissionProvenance?.complete ?? null,
+    handoffAdmissionProvenanceDroppedDelta:
+      summary.lending?.controlPlane?.handoff?.exactAdmissionProvenance?.droppedDelta ?? null,
+    handoffAdmissionProvenanceCaptureFailuresDelta:
+      summary.lending?.controlPlane?.handoff?.exactAdmissionProvenance?.captureFailuresDelta ?? null,
     handoffCommittedBeforeSafetyDeadline:
       summary.lending?.controlPlane?.handoff?.committedBeforeSafetyDeadline ??
       summary.lending?.controlPlane?.handoff?.committedBeforeLeaseExpiry ?? null,
@@ -254,27 +267,43 @@ const ADAPTIVE_MIN_INTERACTIVE_SUCCESS_RATE = 0.9;
 const ADAPTIVE_MIN_BATCH_SUCCESSES = 4;
 
 function adaptiveProof(records, capacity) {
-  if (capacity?.profile !== "adaptive-28-4") return null;
+  const supportedProfiles = new Set(["adaptive-28-4", "adaptive-headroom-28-4"]);
+  if (!supportedProfiles.has(capacity?.profile)) return null;
 
+  const headroomProfile = capacity.profile === "adaptive-headroom-28-4";
   const interactivePool = capacity.pools?.find((pool) => pool.name === "sim-interactive");
   const batchPool = capacity.pools?.find((pool) => pool.name === "sim-batch");
+  // headroomLending is a capacity-group member policy. The resolved pool
+  // projection intentionally does not carry it, so validate the authoritative
+  // capacityGroup.members representation instead of the derived pool summary.
+  const capacityGroup = capacity.capacityGroup;
+  const interactiveMember = capacityGroup?.members?.find(
+    (member) => member.pool === "sim-interactive",
+  );
+  const headroom = interactiveMember?.headroomLending;
   const policyMatches =
-    capacity.policy === "interactive-first-demand-aware" &&
+    capacity.policy === (headroomProfile
+      ? "interactive-first-headroom-aware"
+      : "interactive-first-demand-aware") &&
     capacity.interactiveConcurrencySlots === 28 &&
     capacity.batchConcurrencySlots === 4 &&
     capacity.envelope === 32 &&
     capacity.tokenBudget === 64_000 &&
     capacity.batchTokenPercent === 62.5 &&
-    Boolean(capacity.capacityGroup) &&
+    Boolean(capacityGroup) &&
     capacity.demandPolicy?.enabled === true &&
     interactivePool?.guaranteedMaxConcurrent === 28 &&
     interactivePool?.guaranteedTokenBudget === 24_000 &&
     interactivePool?.ceilingMaxConcurrent === 32 &&
     interactivePool?.ceilingTokenBudget === 64_000 &&
+    (headroomProfile
+      ? headroom?.minConcurrentHeadroom === 4 && headroom?.minTokenHeadroom === 4000
+      : headroom === undefined) &&
     batchPool?.guaranteedMaxConcurrent === 4 &&
     batchPool?.guaranteedTokenBudget === 40_000 &&
     batchPool?.ceilingMaxConcurrent === 32 &&
     batchPool?.ceilingTokenBudget === 64_000;
+
 
   const perSeed = records.map((record) => {
     const moflux = record.moflux ?? {};
@@ -293,6 +322,9 @@ function adaptiveProof(records, capacity) {
     const batchTargetMet = batchSuccess >= minimumBatchSuccesses;
     const occupancyLendingObserved = lending.idleWindow?.borrowed === true;
     const controllerLendingObserved = lending.controlPlane?.lendingObserved === true;
+    const headroomLendingObserved = lending.controlPlane?.headroomLendingObserved === true;
+    const dataPlaneHeadroomObserved =
+      lending.controlPlane?.handoff?.appliedCapacity?.observedHeadroomTransfer === true;
     const floorRestored = lending.controlPlane?.floorRestored === true;
     const controllerFloorRestored = lending.controlPlane?.controllerFloorRestored === true;
     const dataPlaneFloorRestored = lending.controlPlane?.dataPlaneFloorRestored === true;
@@ -304,13 +336,15 @@ function adaptiveProof(records, capacity) {
     const handoffEveryDrainApplied = handoff.everyDrainApplied === true;
     const handoffSafeEventOrder = handoff.safeEventOrder === true;
     const handoffCommitBeforeBatchAdmission = handoff.commitBeforeBatchAdmission === true;
-    const handoffAdmissionOrderingStatus = handoff.admissionOrderingStatus ??
-      (handoff.commitBeforeBatchAdmission === true
-        ? "proven_after_commit"
-        : handoff.commitBeforeBatchAdmission === false
-          ? "proven_before_commit"
-          : "unobserved");
-    const handoffAdmissionOrderViolated = handoffAdmissionOrderingStatus === "proven_before_commit";
+    const handoffAdmissionOrderingStatus = handoff.admissionOrderingStatus ?? "unobserved";
+    const handoffAdmissionOrderingProofSource = handoff.admissionOrderingProofSource ?? null;
+    const handoffExactAdmissionProvenanceComplete = handoff.exactAdmissionProvenance?.complete === true;
+    const handoffExactAdmissionProof =
+      handoffCommitBeforeBatchAdmission &&
+      handoffAdmissionOrderingStatus === "proven_after_commit_by_successor_grant" &&
+      handoffAdmissionOrderingProofSource === "tyr.stats.tyr.admissionProvenance" &&
+      handoffExactAdmissionProvenanceComplete;
+    const handoffAdmissionOrderViolated = handoffAdmissionOrderingStatus.startsWith("proven_before_commit");
     const handoffCommittedBeforeSafetyDeadline =
       (handoff.committedBeforeSafetyDeadline ?? handoff.committedBeforeLeaseExpiry) === true;
     const handoffCommittedBeforeLeaseExpiry = handoff.committedBeforeLeaseExpiry === true;
@@ -325,7 +359,7 @@ function adaptiveProof(records, capacity) {
       floorRestored &&
       handoffObserved &&
       handoffSafeEventOrder &&
-      handoffCommitBeforeBatchAdmission &&
+      handoffExactAdmissionProof &&
       handoffCommittedBeforeSafetyDeadline &&
       noAppliedOverallocation &&
       batchServed;
@@ -342,6 +376,8 @@ function adaptiveProof(records, capacity) {
       batchTargetMet,
       occupancyLendingObserved,
       controllerLendingObserved,
+      headroomLendingObserved,
+      dataPlaneHeadroomObserved,
       floorRestored,
       controllerFloorRestored,
       dataPlaneFloorRestored,
@@ -353,6 +389,9 @@ function adaptiveProof(records, capacity) {
       handoffSafeEventOrder,
       handoffCommitBeforeBatchAdmission,
       handoffAdmissionOrderingStatus,
+      handoffAdmissionOrderingProofSource,
+      handoffExactAdmissionProvenanceComplete,
+      handoffExactAdmissionProof,
       handoffAdmissionOrderViolated,
       handoffCommittedBeforeSafetyDeadline,
       handoffCommittedBeforeLeaseExpiry,
@@ -397,7 +436,7 @@ function adaptiveProof(records, capacity) {
 
   const count = (key) => perSeed.filter((seed) => seed[key] === true).length;
   const failures = [];
-  if (!policyMatches) failures.push("capacity policy is not the exact adaptive 28/4 profile");
+  if (!policyMatches) failures.push(`capacity policy is not the exact ${capacity.profile} profile`);
   for (const seed of perSeed) {
     const missing = [];
     if (seed.upstream429s !== 0) missing.push(`${seed.upstream429s} upstream 429s`);
@@ -435,11 +474,13 @@ function adaptiveProof(records, capacity) {
         );
       }
 
-      if (seed.handoffCommitted && !seed.handoffCommitBeforeBatchAdmission) {
+      if (seed.handoffCommitted && !seed.handoffExactAdmissionProof) {
         missing.push(
           seed.handoffAdmissionOrderViolated
-            ? "batch admission proven before handoff commit"
-            : "commit-before-batch-admission ordering inconclusive",
+            ? "batch admission proven under predecessor authority"
+            : seed.handoffExactAdmissionProvenanceComplete
+              ? `exact successor-grant admission proof missing (${seed.handoffAdmissionOrderingStatus})`
+              : "exact Tyr admission provenance incomplete",
         );
       }
 
@@ -462,9 +503,15 @@ function adaptiveProof(records, capacity) {
   if (occupancyObservedSeeds === 0) {
     failures.push("no seed showed idle occupancy above the static 28-slot floor");
   }
+  const headroomEvidenceSeeds = perSeed.filter(
+    (seed) => seed.headroomLendingObserved && seed.dataPlaneHeadroomObserved,
+  ).length;
+  if (headroomProfile && headroomEvidenceSeeds === 0) {
+    failures.push("no seed proved interactive-to-batch headroom lending at both controller and data plane");
+  }
 
   return {
-    profile: "adaptive-28-4",
+    profile: capacity.profile,
     targets: {
       minimumInteractiveSuccessRate: ADAPTIVE_MIN_INTERACTIVE_SUCCESS_RATE,
       minimumBatchSuccesses: ADAPTIVE_MIN_BATCH_SUCCESSES,
@@ -478,6 +525,9 @@ function adaptiveProof(records, capacity) {
     batchTargetSeeds: count("batchTargetMet"),
     occupancyObservedSeeds,
     controllerObservedSeeds: count("controllerLendingObserved"),
+    headroomObservedSeeds: count("headroomLendingObserved"),
+    dataPlaneHeadroomObservedSeeds: count("dataPlaneHeadroomObserved"),
+    headroomEvidenceSeeds,
     floorRestoredSeeds: count("floorRestored"),
     controllerFloorRestoredSeeds: count("controllerFloorRestored"),
     dataPlaneFloorRestoredSeeds: count("dataPlaneFloorRestored"),
@@ -485,9 +535,11 @@ function adaptiveProof(records, capacity) {
     handoffCommittedSeeds: count("handoffCommitted"),
     safeHandoffSeeds: count("handoffSafeEventOrder"),
     commitBeforeAdmissionSeeds: count("handoffCommitBeforeBatchAdmission"),
+    exactAdmissionProofSeeds: count("handoffExactAdmissionProof"),
+    exactAdmissionProvenanceCompleteSeeds: count("handoffExactAdmissionProvenanceComplete"),
     admissionOrderViolationSeeds: count("handoffAdmissionOrderViolated"),
     admissionOrderInconclusiveSeeds: perSeed.filter(
-      (seed) => seed.handoffAdmissionOrderingStatus === "inconclusive",
+      (seed) => !seed.handoffExactAdmissionProof && !seed.handoffAdmissionOrderViolated,
     ).length,
     handoffWithinSafetyDeadlineSeeds: count("handoffCommittedBeforeSafetyDeadline"),
     handoffBeatLeaseExpirySeeds: count("handoffCommittedBeforeLeaseExpiry"),
@@ -497,6 +549,7 @@ function adaptiveProof(records, capacity) {
       policyMatches &&
       perSeed.length > 0 &&
       occupancyObservedSeeds > 0 &&
+      (!headroomProfile || headroomEvidenceSeeds > 0) &&
       perSeed.every((seed) => seed.passed),
     failures,
     perSeed,
@@ -504,7 +557,7 @@ function adaptiveProof(records, capacity) {
 }
 
 export function adaptiveProofFailureMessage(proof) {
-  if (!proof) return "the run did not use --capacity-profile=adaptive-28-4";
+  if (!proof) return "the run did not use an adaptive 28/4 capacity profile";
   if (proof.passed) return null;
   return proof.failures.length > 0
     ? proof.failures.join("; ")
@@ -629,7 +682,7 @@ export function buildSweepSummary({ mode, fault, seeds, records }) {
   const numericTokenMetrics = tokenMetrics.map(({ progressiveConfiguration: _configuration, ...metrics }) => metrics);
 
   return {
-    schemaVersion: 4,
+    schemaVersion: 5,
     generatedAt: new Date().toISOString(),
     kind: mode === "compare" ? "paired-seed-sweep" : "seed-sweep",
     mode,
@@ -651,6 +704,9 @@ export function buildSweepSummary({ mode, fault, seeds, records }) {
       metrics: record.comparison?.metrics ?? null,
       tokenAccounting: record.moflux?.tokenAccounting ?? null,
       lending: record.moflux?.lending ?? null,
+      // Additive per-seed policy metrics make same-trace policy comparisons
+      // possible without reopening every raw arm file.
+      mofluxMetrics: record.moflux ? armMetrics(record.moflux) : null,
     })),
     controlArms: controlArmKeys,
     /**
@@ -684,6 +740,8 @@ export function buildSweepSummary({ mode, fault, seeds, records }) {
             borrowedSlots: summarize(mofluxMetrics.map((metrics) => metrics.borrowedSlots)),
             occupancyObservedSeeds: mofluxMetrics.filter((metrics) => metrics.occupancyLendingObserved === true).length,
             controllerObservedSeeds: mofluxMetrics.filter((metrics) => metrics.controllerLendingObserved === true).length,
+            headroomObservedSeeds: mofluxMetrics.filter((metrics) => metrics.headroomLendingObserved === true).length,
+            dataPlaneHeadroomObservedSeeds: mofluxMetrics.filter((metrics) => metrics.dataPlaneHeadroomObserved === true).length,
             floorRestoredSeeds: mofluxMetrics.filter((metrics) => metrics.floorRestored === true).length,
             controllerFloorRestoredSeeds: mofluxMetrics.filter((metrics) => metrics.controllerFloorRestored === true).length,
             dataPlaneFloorRestoredSeeds: mofluxMetrics.filter((metrics) => metrics.dataPlaneFloorRestored === true).length,
@@ -707,6 +765,14 @@ export function buildSweepSummary({ mode, fault, seeds, records }) {
             safeHandoffSeeds: mofluxMetrics.filter((metrics) => metrics.handoffSafeEventOrder === true).length,
             commitBeforeAdmissionSeeds: mofluxMetrics.filter(
               (metrics) => metrics.handoffCommitBeforeBatchAdmission === true,
+            ).length,
+            exactAdmissionProofSeeds: mofluxMetrics.filter(
+              (metrics) =>
+                metrics.handoffAdmissionOrderingStatus === "proven_after_commit_by_successor_grant" &&
+                metrics.handoffExactAdmissionProvenanceComplete === true,
+            ).length,
+            exactAdmissionProvenanceCompleteSeeds: mofluxMetrics.filter(
+              (metrics) => metrics.handoffExactAdmissionProvenanceComplete === true,
             ).length,
             handoffWithinSafetyDeadlineSeeds: mofluxMetrics.filter(
               (metrics) => metrics.handoffCommittedBeforeSafetyDeadline === true,

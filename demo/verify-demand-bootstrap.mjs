@@ -33,6 +33,36 @@ assert.equal(bootstrap.demandPolicy.enabled, false);
 assert.equal(bootstrap.demandPolicy.idleAfterMs, 3_000);
 assert.equal(live.demandPolicy.enabled, true, "bootstrap must not mutate the measured policy");
 
+const liveHeadroom = Object.freeze({
+  ...live,
+  members: Object.freeze([
+    Object.freeze({
+      ...live.members[0],
+      headroomLending: Object.freeze({ minConcurrentHeadroom: 4, minTokenHeadroom: 4_000 }),
+    }),
+    live.members[1],
+  ]),
+});
+const bootstrapHeadroom = bootstrapCapacityGroup(liveHeadroom);
+assert.equal(bootstrapHeadroom.demandPolicy.enabled, false);
+assert.equal(
+  bootstrapHeadroom.members[0].headroomLending,
+  undefined,
+  "bootstrap must not send headroomLending while demandPolicy is disabled",
+);
+assert.equal(bootstrapHeadroom.members[0].guaranteedMaxConcurrent, 28);
+assert.equal(bootstrapHeadroom.members[0].guaranteedTokenBudget, 24_000);
+assert.equal(
+  bootstrapHeadroom.members[1],
+  liveHeadroom.members[1],
+  "members without headroom lending should remain unchanged",
+);
+assert.deepEqual(
+  liveHeadroom.members[0].headroomLending,
+  { minConcurrentHeadroom: 4, minTokenHeadroom: 4_000 },
+  "bootstrap must not mutate the measured headroom policy",
+);
+
 const startedAt = Date.parse("2026-08-10T22:00:00.000Z");
 const reports = [
   { pool: "sim-interactive", hasDemand: true, receivedAt: "2026-08-10T21:59:59.999Z" },

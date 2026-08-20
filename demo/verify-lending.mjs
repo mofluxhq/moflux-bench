@@ -308,6 +308,33 @@ const starvedBatch = { success: 0, firstAttemptAtMs: 15_100, firstResponseHeader
   check("batch retains a four-slot protected floor", group.members[1].guaranteedMaxConcurrent === 4);
   check("demand-aware allocation is explicitly enabled", group.demandPolicy.enabled === true);
 
+  const headroomGroup = buildDemandAwareCapacityGroup({
+    envelope: 32,
+    tokenBudget: 64_000,
+    reportStaleAfterMs: 6000,
+    idleAfterMs: 3000,
+    maxStarvationMs: 5000,
+    interactive: {
+      pool: "sim-interactive",
+      priority: 100,
+      guaranteedMaxConcurrent: 28,
+      guaranteedTokenBudget: 24_000,
+      headroomLending: { minConcurrentHeadroom: 4, minTokenHeadroom: 4000 },
+    },
+    batch: {
+      pool: "sim-batch",
+      priority: 10,
+      guaranteedMaxConcurrent: 4,
+      guaranteedTokenBudget: 40_000,
+    },
+  });
+  check(
+    "headroom-aware group preserves the explicit interactive lending policy",
+    headroomGroup.members[0].headroomLending?.minConcurrentHeadroom === 4 &&
+      headroomGroup.members[0].headroomLending?.minTokenHeadroom === 4000,
+  );
+  check("batch remains non-headroom-lending by default", headroomGroup.members[1].headroomLending === undefined);
+
   let rejected = false;
   try {
     buildDemandAwareCapacityGroup({
@@ -402,6 +429,17 @@ const starvedBatch = { success: 0, firstAttemptAtMs: 15_100, firstResponseHeader
       payload: {},
     },
     {
+      id: 21,
+      type: "capacity_group.lending_observed",
+      entityType: "capacity_group",
+      entityId: "sim-workloads",
+      createdAt: "2026-08-01T20:00:26.900Z",
+      payload: {
+        lenders: [{ pool: "sim-interactive", released: { maxConcurrent: 4, tokenBudget: 10000 } }],
+        borrowers: [{ pool: "sim-batch", borrowed: { maxConcurrent: 1, tokenBudget: 10000 } }],
+      },
+    },
+    {
       id: 30,
       type: "capacity_group.handoff_prepared",
       entityType: "capacity_group",
@@ -465,6 +503,46 @@ const starvedBatch = { success: 0, firstAttemptAtMs: 15_100, firstResponseHeader
       createdAt: "2026-08-01T20:00:27.900Z",
       payload: { handoffId: "restore-1", grants: [] },
     },
+    {
+      id: 35,
+      type: "capacity_group.handoff_prepared",
+      entityType: "capacity_group",
+      entityId: "sim-workloads",
+      createdAt: "2026-08-01T20:00:40.000Z",
+      payload: {
+        handoffId: "post-workload-restore",
+        grants: [
+          {
+            grantId: "late-interactive-drain",
+            instanceId: "tyr-r4",
+            pool: "sim-interactive",
+            role: "drain",
+            fromGrantId: "late-interactive-source",
+            limits: { maxConcurrent: 7, tokenBudget: { budget: 6000 } },
+          },
+          {
+            grantId: "late-batch-expand",
+            instanceId: "tyr-r4",
+            pool: "sim-batch",
+            role: "staged",
+            fromGrantId: "late-batch-source",
+            limits: { maxConcurrent: 4, tokenBudget: { budget: 40000 } },
+          },
+        ],
+      },
+    },
+    {
+      id: 36,
+      type: "capacity_group.floor_restore_pending",
+      entityType: "capacity_group",
+      entityId: "sim-workloads",
+      createdAt: "2026-08-01T20:00:40.001Z",
+      payload: {
+        handoffId: "post-workload-restore",
+        pools: ["sim-batch"],
+        floorRestorationDeadline: "2026-08-01T20:00:45.000Z",
+      },
+    },
   ];
   const handoffProof = summarizeControllerLending({
     events: handoffEvents,
@@ -473,6 +551,10 @@ const starvedBatch = { success: 0, firstAttemptAtMs: 15_100, firstResponseHeader
       { grantId: "batch-source", expiresAt: "2026-08-01T20:00:27.700Z", lifecycle: "expired" },
       { grantId: "interactive-drain", expiresAt: "2026-08-01T20:01:27.200Z", lifecycle: "active" },
       { grantId: "batch-expand", expiresAt: "2026-08-01T20:01:27.200Z", lifecycle: "active" },
+      { grantId: "late-interactive-source", expiresAt: "2026-08-01T20:01:40.000Z", lifecycle: "active" },
+      { grantId: "late-batch-source", expiresAt: "2026-08-01T20:01:40.000Z", lifecycle: "active" },
+      { grantId: "late-interactive-drain", expiresAt: "2026-08-01T20:02:40.000Z", lifecycle: "active" },
+      { grantId: "late-batch-expand", expiresAt: "2026-08-01T20:02:40.000Z", lifecycle: "active" },
     ],
     demand: [{
       pool: "sim-batch",
@@ -533,6 +615,43 @@ const starvedBatch = { success: 0, firstAttemptAtMs: 15_100, firstResponseHeader
           }],
         },
       ],
+      admissionProvenance: {
+        batch: {
+          source: "tyr.stats.tyr.admissionProvenance",
+          schema: "tyr.admission-provenance.v1",
+          pool: "batch",
+          complete: true,
+          reason: null,
+          droppedDelta: 0,
+          captureFailuresDelta: 0,
+          firstEventsByReplica: [{
+            schema: "tyr.admission-provenance.v1",
+            sequence: 1,
+            admittedAt: "2026-08-01T20:00:27.930Z",
+            admissionId: "batch-admission-1",
+            pool: "sim-batch",
+            priority: "normal",
+            limitRevision: 7,
+            reservedTokens: 9942,
+            limits: {
+              revision: 7,
+              maxConcurrent: 4,
+              maxQueue: 0,
+              tokenBudget: { budget: 40000, highPriorityReserve: 0 },
+            },
+            grant: {
+              source: "latchflo",
+              grantId: "batch-expand",
+              controllerEpoch: 4,
+              revision: 7,
+              expiresAt: "2026-08-01T20:01:27.200Z",
+            },
+            port: 8104,
+          }],
+          events: [],
+          replicas: [],
+        },
+      },
       admissionObservation: {
         source: "tyr.stats.llm.admitted",
         sampleIntervalMs: 500,
@@ -543,7 +662,8 @@ const starvedBatch = { success: 0, firstAttemptAtMs: 15_100, firstResponseHeader
       },
     },
   });
-  check("0.11.6 handoff is identified as the floor-restoration handoff", handoffProof.handoff.observed === true);
+  check("0.12.2 handoff is identified as the floor-restoration handoff", handoffProof.handoff.observed === true);
+  check("post-restoration handoff is not retroactively selected for earlier batch admissions", handoffProof.handoff.handoffId === "restore-1");
   check("every drain grant was acknowledged before commit", handoffProof.handoff.safeEventOrder === true);
   check("capacity acknowledgement uses the first unique ACK barrier", handoffProof.handoff.capacityAcknowledgedAt === "2026-08-01T20:00:27.450Z");
   check("duplicate drain ACKs remain diagnostic only", handoffProof.handoff.duplicateDrainAckEvents === 1);
@@ -551,7 +671,9 @@ const starvedBatch = { success: 0, firstAttemptAtMs: 15_100, firstResponseHeader
   check("data-plane restoration time comes from the first restored Tyr sample", handoffProof.floorRestoredAt === "2026-08-01T20:00:28.050Z");
   check("per-drain readiness records the first locally safe sample", handoffProof.handoff.drainReadiness[0]?.firstObservedOccupancyReadyAt === "2026-08-01T20:00:27.960Z");
   check("handoff commit precedes the bounded first batch admission", handoffProof.handoff.commitBeforeBatchAdmission === true);
-  check("admission ordering is explicitly proven", handoffProof.handoff.admissionOrderingStatus === "proven_after_commit");
+  check("admission ordering is explicitly proven from the successor grant", handoffProof.handoff.admissionOrderingStatus === "proven_after_commit_by_successor_grant");
+  check("exact Tyr provenance is the ordering proof source", handoffProof.handoff.admissionOrderingProofSource === "tyr.stats.tyr.admissionProvenance");
+  check("headroom direction is identified separately from idle batch lending", handoffProof.headroomLendingObserved === true);
   check("first admission window is bounded to 60ms", handoffProof.handoff.firstBatchAdmissionWindow.widthMs === 60);
   check("commit-to-admission upper bound excludes provider prefill", handoffProof.handoff.commitToFirstBatchAdmissionMaxMs === 110);
   check("handoff may commit after predecessor expiry", handoffProof.handoff.committedBeforeLeaseExpiry === false);
@@ -565,7 +687,7 @@ const starvedBatch = { success: 0, firstAttemptAtMs: 15_100, firstResponseHeader
   check("data-plane applied-capacity proof is preserved", handoffProof.handoff.appliedCapacity.noAppliedOverallocation === true);
 
   const staleDemandTiming = summarizeControllerLending({
-    events: handoffEvents,
+    events: handoffEvents.filter((event) => event?.payload?.handoffId !== "post-workload-restore"),
     grants: [
       { grantId: "interactive-source", expiresAt: "2026-08-01T20:00:27.700Z" },
       { grantId: "batch-source", expiresAt: "2026-08-01T20:00:27.700Z" },

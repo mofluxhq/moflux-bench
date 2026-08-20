@@ -105,8 +105,8 @@ if (lock.packages?.[""]?.version !== pkg.version || lock.version !== pkg.version
 }
 const example = readFileSync(path.join(ROOT, "demo/moflux/.env.example"), "utf8");
 for (const expected of [
-  "MOFLUX_TYR_IMAGE=tyr-admission-controller:0.25.1",
-  "MOFLUX_LATCHFLO_IMAGE=latchflo-control-plane:0.11.6",
+  "MOFLUX_TYR_IMAGE=tyr-admission-controller:0.26.0",
+  "MOFLUX_LATCHFLO_IMAGE=latchflo-control-plane:0.12.2",
 ]) {
   if (!example.includes(expected)) {
     findings.push(`demo/moflux/.env.example: missing pinned runtime ${expected}`);
@@ -126,8 +126,8 @@ if (!compose.includes("TYR_ROUTING_SECRET: ${TYR_ROUTING_SECRET:?Set TYR_ROUTING
 for (let replica = 1; replica <= 4; replica += 1) {
   const rel = `demo/moflux/tyr-r${replica}.yaml`;
   const yaml = readFileSync(path.join(ROOT, rel), "utf8");
-  if (!/^    version: 0\.25\.1$/m.test(yaml)) {
-    findings.push(`${rel}: control-plane metadata must identify Tyr 0.25.1`);
+  if (!/^    version: 0\.26\.0$/m.test(yaml)) {
+    findings.push(`${rel}: control-plane metadata must identify Tyr 0.26.0`);
   }
   if (!/^  anthropic:\n    baseUrl: http:\/\/host\.docker\.internal:9000$/m.test(yaml)) {
     findings.push(`${rel}: Anthropic simulator upstream is missing`);
@@ -166,7 +166,7 @@ for (let replica = 1; replica <= 4; replica += 1) {
     "defaultClass: noisy",
     "tenantIds: [tenant-premium]",
     "pools: [sim-shared, sim-ceilings, sim-protected, sim-adaptive]",
-    "version: 0.25.1",
+    "version: 0.26.0",
   ]) {
     if (!yaml.includes(required)) findings.push(`${rel}: missing ${required}`);
   }
@@ -263,10 +263,41 @@ for (const required of [
   "commitToFirstBatchAdmissionMinMs",
   "commitToFirstBatchAdmissionMaxMs",
   "admissionOrderingStatus",
+  "admissionOrderingProofSource",
+  "exactAdmissionProvenance",
+  "exactAdmissionProof",
   "firstBatchResponseHeadersAt",
 ]) {
   if (!lendingEvidence.includes(required)) {
     findings.push(`demo/lending-evidence-lib.mjs: missing corrected admission evidence ${required}`);
+  }
+}
+
+
+const admissionProvenance = readFileSync(path.join(ROOT, "demo/admission-provenance-lib.mjs"), "utf8");
+for (const required of [
+  "tyr.admission-provenance.v1",
+  "nextSequence",
+  "captureFailures",
+  "dropped",
+  "proven_after_commit_by_successor_grant",
+  "proven_before_commit_by_predecessor_grant",
+]) {
+  if (!admissionProvenance.includes(required)) {
+    findings.push(`demo/admission-provenance-lib.mjs: missing exact provenance evidence ${required}`);
+  }
+}
+const presenter023 = readFileSync(path.join(ROOT, "demo/present.mjs"), "utf8");
+for (const required of [
+  "adaptive-headroom-28-4",
+  "headroomLending",
+  "minConcurrentHeadroom",
+  "minTokenHeadroom",
+  "summarizeAdmissionProvenance",
+  "observedHeadroomTransfer",
+]) {
+  if (!presenter023.includes(required)) {
+    findings.push(`demo/present.mjs: missing 0.23.0 headroom/provenance feature ${required}`);
   }
 }
 
@@ -282,8 +313,8 @@ if (!pkg.scripts?.["demo:progressive"]?.includes("--provider-api=anthropic") ||
     !pkg.scripts?.["demo:openai"]?.includes("--provider-api=openai")) {
   findings.push("package.json: progressive and OpenAI compatibility demo commands are required");
 }
-if (pkg.version !== "0.22.0") {
-  findings.push("package.json: the current benchmark release must be version 0.22.0");
+if (pkg.version !== "0.23.0") {
+  findings.push("package.json: the current benchmark release must be version 0.23.0");
 }
 const classesScript = pkg.scripts?.["demo:classes"] ?? "";
 for (const required of ["demo/tenant-fairness.mjs", "--seeds=1-5", "--require-proof"]) {
@@ -309,6 +340,25 @@ for (const [name, honorsRetryHints] of adaptiveScripts) {
   if (blind === honorsRetryHints) {
     findings.push(`package.json: ${name} has the wrong retry-hint mode`);
   }
+}
+
+
+const headroomScript = pkg.scripts?.["demo:hetero:headroom"] ?? "";
+for (const required of [
+  "--size-distribution=lognormal",
+  "--capacity-profile=adaptive-headroom-28-4",
+  "--control-arms=all",
+  "--require-adaptive-proof",
+]) {
+  if (!headroomScript.includes(required)) findings.push(`package.json: demo:hetero:headroom is missing ${required}`);
+}
+const headroomCompareScript = pkg.scripts?.["demo:headroom:compare"] ?? "";
+for (const required of ["demo/headroom-compare.mjs", "--seeds=1-5"]) {
+  if (!headroomCompareScript.includes(required)) findings.push(`package.json: demo:headroom:compare is missing ${required}`);
+}
+const verifyRunner = readFileSync(path.join(ROOT, "scripts/verify.mjs"), "utf8");
+for (const required of ["demo/verify-admission-provenance.mjs", "demo/verify-headroom-compare.mjs"]) {
+  if (!verifyRunner.includes(required)) findings.push(`scripts/verify.mjs: missing ${required}`);
 }
 
 

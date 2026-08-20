@@ -20,7 +20,7 @@ function run(...args) {
 try {
   const unknown = run("--capacity-profile=unknown");
   assert.notEqual(unknown.status, 0);
-  assert.match(unknown.stderr, /--capacity-profile must be historical-31-1 or adaptive-28-4/);
+  assert.match(unknown.stderr, /--capacity-profile must be historical-31-1, adaptive-28-4, or adaptive-headroom-28-4/);
 
   const conflict = run(
     "--capacity-profile=adaptive-28-4",
@@ -30,6 +30,21 @@ try {
   assert.match(conflict.stderr, /fixes the protected 28\/4, 24k\/40k policy/);
   assert.match(conflict.stderr, /--batch-concurrency-slots \(must be 4\)/);
 
+  const headroomConflict = run(
+    "--capacity-profile=adaptive-headroom-28-4",
+    "--headroom-min-concurrent=3",
+  );
+  assert.notEqual(headroomConflict.status, 0);
+  assert.match(headroomConflict.stderr, /plus 4-slot\/4000-token retained interactive headroom/);
+  assert.match(headroomConflict.stderr, /--headroom-min-concurrent \(must be 4\)/);
+
+  const headroomFlagWithoutProfile = run(
+    "--capacity-profile=adaptive-28-4",
+    "--headroom-min-tokens=4000",
+  );
+  assert.notEqual(headroomFlagWithoutProfile.status, 0);
+  assert.match(headroomFlagWithoutProfile.stderr, /headroom flags require --capacity-profile=adaptive-headroom-28-4/);
+
   const shortLease = run(
     "--capacity-profile=adaptive-28-4",
     "--grant-ttl-ms=11000",
@@ -37,15 +52,36 @@ try {
   assert.notEqual(shortLease.status, 0);
   assert.match(shortLease.stderr, /--grant-ttl-ms must be at least 60000 for a 45000ms MoFlux phase/);
 
-  const accepted = run(
+  const baselineProfile = run(
     "--capacity-profile=adaptive-28-4",
     "--mode=baseline",
   );
-  assert.notEqual(accepted.status, 0);
-  assert.match(accepted.stderr, /--lending requires --mode=compare/);
-  assert.doesNotMatch(accepted.stderr, /capacity-profile must be/);
+  assert.notEqual(baselineProfile.status, 0);
+  assert.match(baselineProfile.stderr, /requires a MoFlux arm; use --mode=moflux or --mode=compare/);
+  assert.doesNotMatch(baselineProfile.stderr, /--lending requires --mode=compare/);
 
-  console.log("PASS  adaptive 28/4 profile validation");
+  // Regression for demo:headroom:compare: adaptive profiles are valid in a
+  // MoFlux-only seed sweep. Use an intentionally short TTL so validation stops
+  // before any Docker/runtime work while proving we got past the old mode guard.
+  const mofluxAdaptive = run(
+    "--capacity-profile=adaptive-28-4",
+    "--mode=moflux",
+    "--grant-ttl-ms=11000",
+  );
+  assert.notEqual(mofluxAdaptive.status, 0);
+  assert.match(mofluxAdaptive.stderr, /--grant-ttl-ms must be at least 60000/);
+  assert.doesNotMatch(mofluxAdaptive.stderr, /--lending requires --mode=compare/);
+
+  const mofluxHeadroom = run(
+    "--capacity-profile=adaptive-headroom-28-4",
+    "--mode=moflux",
+    "--grant-ttl-ms=11000",
+  );
+  assert.notEqual(mofluxHeadroom.status, 0);
+  assert.match(mofluxHeadroom.stderr, /--grant-ttl-ms must be at least 60000/);
+  assert.doesNotMatch(mofluxHeadroom.stderr, /--lending requires --mode=compare/);
+
+  console.log("PASS  adaptive and headroom-aware 28/4 profile validation");
 } finally {
   rmSync(temp, { recursive: true, force: true });
 }

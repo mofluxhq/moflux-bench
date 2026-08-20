@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.23.0 - 2026-08-19
+
+### Added
+
+- Add exact Tyr 0.26.0 admission-provenance evidence to demand-aware handoff runs. The benchmark establishes a pre-load per-replica provenance sequence baseline, preserves measured-run admissions once, and attributes each successful batch admission to the exact applied Latchflo grant and Tyr limit revision that authorized it.
+- Add the fixed `adaptive-headroom-28-4` capacity profile for Latchflo 0.12.2. It keeps the existing 28/4 concurrency and 24,000/40,000-token entitlements while allowing only `sim-interactive` to expose bounded headroom when fresh telemetry is protected/no-current-demand; demanding or starved interactive traffic keeps its full guarantee.
+- Add `npm run demo:hetero:headroom` and `npm run demo:headroom:compare`. The paired comparison replays the same seeds and immutable trace hashes through `adaptive-28-4` and `adaptive-headroom-28-4`, reports batch-success deltas together with interactive success, p95, TTFT, local-reject, and upstream-429 changes, and now gates the actual product question: whether headroom-aware lending produces materially more batch completions without giving back interactive protection.
+- Record controller-side interactive-to-batch headroom lending and data-plane-observed headroom transfer separately from the existing idle batch-to-interactive lending evidence.
+
+### Changed
+
+- Pin new licensed runs to Tyr 0.26.0 and Latchflo 0.12.2. async-bulkhead-llm 3.15.1 and async-bulkhead-ts 1.0.1 remain unchanged.
+- Make exact successor-grant provenance the strict commit-before-admission truth gate. The older sampled admitted-counter/provider-dispatch window remains as a latency diagnostic, but it no longer decides handoff ordering when exact Tyr provenance is available. A measured admission under a predecessor grant is a proved violation; dropped provenance or capture failures make the result explicitly inconclusive.
+- Avoid duplicating Tyr's cumulative provenance ring into every 500 ms applied-capacity sample. Exact events are retained once per run while the timeline keeps only bounded provenance counters.
+- Bump paired seed-sweep output to `schemaVersion` 5 and extend it with exact-provenance coverage, exact successor-grant proof counts, headroom-controller/data-plane evidence, and additive per-seed MoFlux metrics used by paired policy comparisons.
+- Make `demo:headroom:compare` a release-level outcome gate. Defaults require median headroom batch completions >=8, a median gain of >=4 completions over the control policy, joint controller/data-plane headroom evidence on >=60% of seeds, exact admission proof on every seed, zero upstream 429s, no more than a 2 percentage-point median interactive-success regression, and no more than a 10% median interactive-p95 regression. Thresholds are explicit CLI options rather than hidden constants in the report.
+- Bump headroom-policy comparison output to `schemaVersion` 2 and preserve absolute control/headroom batch successes and rates alongside paired deltas and the acceptance verdict.
+
+### Fixed
+
+- Bind exact admission-order proof to the restoration handoff that actually precedes the first data-plane-observed batch-floor restoration, rather than the last later handoff whose target happens to include the same floor. Admission provenance is now scoped to that handoff's predecessor/successor grant lineage and to admissions at or after `handoff_prepared`, so a post-workload handoff cannot retroactively turn earlier valid batch admissions into a false `proven_before_commit_by_predecessor_grant` violation.
+- Validate `adaptive-headroom-28-4` against the authoritative `capacityGroup.members[].headroomLending` policy instead of the derived `capacity.pools[]` projection, which intentionally omits member-level headroom configuration. This fixes valid Latchflo headroom runs being mislabeled `policyMatches=false`.
+- Let `demo:headroom:compare` consume a completed child sweep's preserved `summary.json` even when that sweep exits nonzero because `--require-adaptive-proof` rejected the policy outcome. Missing summaries and signal-terminated children still fail immediately, so an acceptance failure becomes paired evidence rather than a harness crash.
+- Pin the licensed stack to Latchflo 0.12.2 so the headroom comparison exercises demand-safe, non-stranding headroom lending: demanding/starved members retain their guarantees, protected no-current-demand members may expose bounded headroom, and unconsumed source-owned headroom remains usable by its lender.
+- Make the bootstrap form of `adaptive-headroom-28-4` valid for Latchflo 0.12.2: while measured demand-aware lending is intentionally disabled during fleet enrollment, temporarily omit member-level `headroomLending`, then restore the unchanged live headroom policy when fresh measured demand arms lending. This fixes the HTTP 400 `headroomLending requires capacityGroup.demandPolicy.enabled=true` failure at the start of the headroom sweep.
+- Allow the explicit `adaptive-28-4` and `adaptive-headroom-28-4` capacity profiles to run in `--mode=moflux`, which is required by the paired `demo:headroom:compare` experiment. The legacy standalone `--lending` flag remains compare-only.
+- Preserve `controllerFloorRestored` and `dataPlaneFloorRestored` in per-arm seed metrics before aggregation. This fixes `aggregate.lending.controllerFloorRestoredSeeds` and `aggregate.lending.dataPlaneFloorRestoredSeeds` incorrectly reporting zero even when every seed proved restoration.
+
 ## 0.22.0 - 2026-08-18
 
 ### Added

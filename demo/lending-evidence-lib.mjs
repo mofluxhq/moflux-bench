@@ -1,5 +1,7 @@
+import { proveAdmissionUsesSuccessorGrant } from "./admission-provenance-lib.mjs";
+
 /**
- * Pure helpers for configuring and interpreting Latchflo 0.10 demand-aware
+ * Pure helpers for configuring and interpreting Latchflo 0.12 demand-aware
  * capacity groups. Kept separate from presenter orchestration so the safety
  * and evidence contract can be tested without Docker or licensed images.
  */
@@ -34,11 +36,24 @@ export function buildDemandAwareCapacityGroup({
     finiteInteger(member.priority, `${member.pool}.priority`, 0);
     finiteInteger(member.guaranteedMaxConcurrent, `${member.pool}.guaranteedMaxConcurrent`, 1);
     finiteInteger(member.guaranteedTokenBudget, `${member.pool}.guaranteedTokenBudget`, 1);
+    const headroom = member.headroomLending;
+    if (headroom !== undefined) {
+      finiteInteger(headroom.minConcurrentHeadroom, `${member.pool}.headroomLending.minConcurrentHeadroom`, 0);
+      finiteInteger(headroom.minTokenHeadroom, `${member.pool}.headroomLending.minTokenHeadroom`, 0);
+    }
     return {
       pool: member.pool,
       priority: member.priority,
       guaranteedMaxConcurrent: member.guaranteedMaxConcurrent,
       guaranteedTokenBudget: member.guaranteedTokenBudget,
+      ...(headroom === undefined
+        ? {}
+        : {
+            headroomLending: {
+              minConcurrentHeadroom: headroom.minConcurrentHeadroom,
+              minTokenHeadroom: headroom.minTokenHeadroom,
+            },
+          }),
     };
   });
 
@@ -117,13 +132,21 @@ export function summarizeControllerLending({
       event?.payload?.capacityGroup === groupName,
   );
   const lending = relevant.filter((event) => event.type === "capacity_group.lending_observed");
+  const headroomLending = lending.filter((event) => {
+    const lenders = Array.isArray(event?.payload?.lenders) ? event.payload.lenders : [];
+    const borrowers = Array.isArray(event?.payload?.borrowers) ? event.payload.borrowers : [];
+    return lenders.some((member) => member?.pool === "sim-interactive") &&
+      borrowers.some((member) => member?.pool === batchPool);
+  });
   const pending = relevant.filter((event) => event.type === "capacity_group.floor_restore_pending");
   const rebalanced = relevant.filter((event) => event.type === "capacity_group.rebalanced");
 
-  // A 0.10 controller may prepare two handoffs in one run: one to lend an idle
-  // batch floor and one to restore it. Select the handoff whose target batch
-  // grant restores the configured protected floor.
-  const restorationPrepared = relevant
+  // A controller may prepare more than one handoff whose target happens to
+  // include the protected batch floor. Bind proof to the restoration episode
+  // that actually produced the first data-plane floor restoration, rather than
+  // blindly taking the last matching handoff in the run. This prevents a later
+  // post-workload handoff from retroactively reclassifying earlier admissions.
+  const restorationPreparedCandidates = relevant
     .filter((event) => event.type === "capacity_group.handoff_prepared")
     .filter((event) => {
       const grants = Array.isArray(event?.payload?.grants) ? event.payload.grants : [];
@@ -136,8 +159,28 @@ export function summarizeControllerLending({
           tokens >= batchGuaranteedTokenBudget
         );
       });
-    })
-    .at(-1) ?? null;
+    });
+  const restorationObservedAtHint = Date.parse(
+    appliedCapacity?.restorationObservation?.firstObservedAt ?? "",
+  );
+  const candidatesBeforeObservedRestoration = Number.isFinite(restorationObservedAtHint)
+    ? restorationPreparedCandidates.filter((event) => {
+        const preparedAt = eventTime(event);
+        return preparedAt !== null && preparedAt <= restorationObservedAtHint;
+      })
+    : restorationPreparedCandidates;
+  const candidatePool = candidatesBeforeObservedRestoration.length > 0
+    ? candidatesBeforeObservedRestoration
+    : restorationPreparedCandidates;
+  const pendingHandoffIds = new Set(
+    pending.map((event) => event?.payload?.handoffId).filter(Boolean),
+  );
+  const pendingCandidates = candidatePool.filter((event) =>
+    pendingHandoffIds.has(event?.payload?.handoffId),
+  );
+  const restorationPrepared = (pendingCandidates.length > 0
+    ? pendingCandidates
+    : candidatePool).at(-1) ?? null;
   const handoffId = restorationPrepared?.payload?.handoffId ?? null;
   const handoffEvents = handoffId === null
     ? []
@@ -337,7 +380,7 @@ export function summarizeControllerLending({
     allDrainsAcknowledgedAt <= commitAt &&
     aborted === null &&
     everyDrainApplied;
-  const commitBeforeBatchAdmission =
+  const intervalCommitBeforeBatchAdmission =
     commitAt === null
       ? null
       : firstBatchAdmissionNotBeforeAt !== null && commitAt <= firstBatchAdmissionNotBeforeAt
@@ -345,15 +388,41 @@ export function summarizeControllerLending({
         : firstBatchAdmissionNotAfterAt !== null && commitAt > firstBatchAdmissionNotAfterAt
           ? false
           : null;
-  const admissionOrderingStatus =
-    commitBeforeBatchAdmission === true
+  const intervalAdmissionOrderingStatus =
+    intervalCommitBeforeBatchAdmission === true
       ? "proven_after_commit"
-      : commitBeforeBatchAdmission === false
+      : intervalCommitBeforeBatchAdmission === false
         ? "proven_before_commit"
         : firstBatchAdmissionNotAfterAt !== null
           ? "inconclusive"
           : "unobserved";
-  // Latchflo 0.11.6 transfers physical handoff safety authority after the ACK
+
+  const stagedBatchEntries = preparedEntries.filter(
+    (entry) => entry?.pool === batchPool && entry?.role === "staged",
+  );
+  const successorBatchGrantIds = stagedBatchEntries.map((entry) => entry?.grantId).filter(Boolean);
+  const predecessorBatchGrantIds = stagedBatchEntries.map((entry) => entry?.fromGrantId).filter(Boolean);
+  const exactAdmissionProof = proveAdmissionUsesSuccessorGrant({
+    provenance: appliedCapacity?.admissionProvenance?.batch ?? null,
+    successorGrantIds: successorBatchGrantIds,
+    predecessorGrantIds: predecessorBatchGrantIds,
+    notBeforeAt: preparedAt,
+  });
+  const exactAdmissionAvailable = appliedCapacity?.admissionProvenance?.batch !== undefined;
+  const commitBeforeBatchAdmission = exactAdmissionAvailable
+    ? exactAdmissionProof.proven === true
+      ? true
+      : exactAdmissionProof.violated === true
+        ? false
+        : null
+    : intervalCommitBeforeBatchAdmission;
+  const admissionOrderingStatus = exactAdmissionAvailable
+    ? exactAdmissionProof.status
+    : intervalAdmissionOrderingStatus;
+  const admissionOrderingProofSource = exactAdmissionAvailable
+    ? exactAdmissionProof.source
+    : "tyr.stats.llm.admitted+provider.request_received";
+  // Latchflo 0.12.2 transfers physical handoff safety authority after the ACK
   // barrier. Before every restrictive drain is applied, the predecessor lease
   // is the fallback. Afterwards the prepared successor envelope is already
   // authoritative at Tyr, so natural predecessor expiry is not a failure; the
@@ -372,7 +441,7 @@ export function summarizeControllerLending({
     commitAt !== null && safetyDeadline !== null
       ? commitAt < safetyDeadline
       : null;
-  // Retain the predecessor comparison as a diagnostic so 0.11.6 runs can show
+  // Retain the predecessor comparison as a diagnostic so 0.12.0 runs can show
   // that a safe handoff legitimately committed after old source expiry.
   const committedBeforeLeaseExpiry =
     commitAt !== null && predecessorLeaseDeadline !== null
@@ -436,6 +505,13 @@ export function summarizeControllerLending({
       lenders: event?.payload?.lenders ?? [],
       borrowers: event?.payload?.borrowers ?? [],
     })),
+    headroomLendingObserved: headroomLending.length > 0,
+    headroomLendingEvents: headroomLending.map((event) => ({
+      id: event.id,
+      createdAt: event.createdAt,
+      lenders: event?.payload?.lenders ?? [],
+      borrowers: event?.payload?.borrowers ?? [],
+    })),
     floorRestorePendingObserved: pending.length > 0,
     floorRestorationDeadline: matchingPending?.payload?.floorRestorationDeadline ??
       finalRebalance?.floorRestorationDeadline ?? null,
@@ -467,6 +543,9 @@ export function summarizeControllerLending({
       capacityAcknowledgedAt: iso(allDrainsAcknowledgedAt),
       lastDrainAckAt: iso(lastDrainAckAt),
       committedAt: iso(commitAt),
+      exactAdmissionProvenance: appliedCapacity?.admissionProvenance?.batch ?? null,
+      exactAdmissionProof,
+      admissionOrderingProofSource,
       firstBatchAdmissionWindow: {
         source: "tyr.stats.llm.admitted+provider.request_received",
         sampleIntervalMs: admissionObservation?.sampleIntervalMs ?? null,
@@ -538,6 +617,8 @@ export function summarizeControllerLending({
       drainReadiness,
       commitBeforeBatchAdmission,
       admissionOrderingStatus,
+      intervalCommitBeforeBatchAdmission,
+      intervalAdmissionOrderingStatus,
       committedBeforeSafetyDeadline,
       committedBeforeLeaseExpiry,
       appliedCapacity,

@@ -172,7 +172,32 @@ const adaptiveRecords = records.map((record) => {
     batchTokenPercent: 62.5,
     envelope: 32,
     tokenBudget: 64000,
-    capacityGroup: "sim-workloads",
+    capacityGroup: {
+      name: "sim-workloads",
+      globalMaxConcurrent: 32,
+      globalTokenBudget: 64000,
+      safetyReservePercent: 0,
+      demandPolicy: {
+        enabled: true,
+        reportStaleAfterMs: 6000,
+        idleAfterMs: 3000,
+        maxStarvationMs: 5000,
+      },
+      members: [
+        {
+          pool: "sim-interactive",
+          priority: 100,
+          guaranteedMaxConcurrent: 28,
+          guaranteedTokenBudget: 24000,
+        },
+        {
+          pool: "sim-batch",
+          priority: 10,
+          guaranteedMaxConcurrent: 4,
+          guaranteedTokenBudget: 40000,
+        },
+      ],
+    },
     demandPolicy: {
       enabled: true,
       reportStaleAfterMs: 6000,
@@ -220,7 +245,13 @@ const adaptiveRecords = records.map((record) => {
         abortReason: null,
         safeEventOrder: true,
         commitBeforeBatchAdmission: true,
-        admissionOrderingStatus: "proven_after_commit",
+        admissionOrderingStatus: "proven_after_commit_by_successor_grant",
+        admissionOrderingProofSource: "tyr.stats.tyr.admissionProvenance",
+        exactAdmissionProvenance: {
+          complete: true,
+          droppedDelta: 0,
+          captureFailuresDelta: 0,
+        },
         committedBeforeSafetyDeadline: true,
         committedBeforeLeaseExpiry: false,
         handoffDurationMs: 450,
@@ -259,6 +290,9 @@ assert.equal(adaptive.adaptiveProof.controllerObservedSeeds, 2);
 assert.equal(adaptive.adaptiveProof.floorRestoredSeeds, 2);
 assert.equal(adaptive.adaptiveProof.controllerFloorRestoredSeeds, 2);
 assert.equal(adaptive.adaptiveProof.dataPlaneFloorRestoredSeeds, 2);
+assert.equal(adaptive.aggregate.lending.floorRestoredSeeds, 2);
+assert.equal(adaptive.aggregate.lending.controllerFloorRestoredSeeds, 2);
+assert.equal(adaptive.aggregate.lending.dataPlaneFloorRestoredSeeds, 2);
 assert.equal(adaptive.adaptiveProof.handoffObservedSeeds, 2);
 assert.equal(adaptive.adaptiveProof.handoffCommittedSeeds, 2);
 assert.equal(adaptive.adaptiveProof.safeHandoffSeeds, 2);
@@ -276,7 +310,9 @@ assert.equal(adaptiveProofFailureMessage(adaptive.adaptiveProof), null);
 
 const inconclusiveAdmissionRecords = structuredClone(adaptiveRecords);
 inconclusiveAdmissionRecords[1].moflux.lending.controlPlane.handoff.commitBeforeBatchAdmission = null;
-inconclusiveAdmissionRecords[1].moflux.lending.controlPlane.handoff.admissionOrderingStatus = "inconclusive";
+inconclusiveAdmissionRecords[1].moflux.lending.controlPlane.handoff.admissionOrderingStatus = "inconclusive_provenance_loss";
+inconclusiveAdmissionRecords[1].moflux.lending.controlPlane.handoff.exactAdmissionProvenance.complete = false;
+inconclusiveAdmissionRecords[1].moflux.lending.controlPlane.handoff.exactAdmissionProvenance.droppedDelta = 1;
 const inconclusiveAdmission = buildSweepSummary({
   mode: "compare",
   fault: false,
@@ -289,12 +325,12 @@ assert.equal(inconclusiveAdmission.adaptiveProof.admissionOrderInconclusiveSeeds
 assert.equal(inconclusiveAdmission.adaptiveProof.admissionOrderViolationSeeds, 0);
 assert.match(
   adaptiveProofFailureMessage(inconclusiveAdmission.adaptiveProof),
-  /commit-before-batch-admission ordering inconclusive/,
+  /exact Tyr admission provenance incomplete/,
 );
 
 const violatedAdmissionRecords = structuredClone(adaptiveRecords);
 violatedAdmissionRecords[1].moflux.lending.controlPlane.handoff.commitBeforeBatchAdmission = false;
-violatedAdmissionRecords[1].moflux.lending.controlPlane.handoff.admissionOrderingStatus = "proven_before_commit";
+violatedAdmissionRecords[1].moflux.lending.controlPlane.handoff.admissionOrderingStatus = "proven_before_commit_by_predecessor_grant";
 const violatedAdmission = buildSweepSummary({
   mode: "compare",
   fault: false,
@@ -303,7 +339,7 @@ const violatedAdmission = buildSweepSummary({
 });
 assert.equal(violatedAdmission.adaptiveProof.passed, false);
 assert.equal(violatedAdmission.adaptiveProof.admissionOrderViolationSeeds, 1);
-assert.match(adaptiveProofFailureMessage(violatedAdmission.adaptiveProof), /batch admission proven before handoff commit/);
+assert.match(adaptiveProofFailureMessage(violatedAdmission.adaptiveProof), /batch admission proven under predecessor authority/);
 
 const partialOccupancyRecords = structuredClone(adaptiveRecords);
 partialOccupancyRecords[1].moflux.lending.idleWindow.borrowed = false;
@@ -350,7 +386,66 @@ assert.match(
   adaptiveProofFailureMessage(noOccupancy.adaptiveProof),
   /no seed showed idle occupancy above the static 28-slot floor/,
 );
-assert.equal(adaptiveProofFailureMessage(null), "the run did not use --capacity-profile=adaptive-28-4");
+assert.equal(adaptiveProofFailureMessage(null), "the run did not use an adaptive 28/4 capacity profile");
+
+const headroomRecords = structuredClone(adaptiveRecords);
+for (const record of headroomRecords) {
+  record.moflux.capacity.profile = "adaptive-headroom-28-4";
+  record.moflux.capacity.policy = "interactive-first-headroom-aware";
+  // headroomLending belongs to the authoritative capacity-group member, not
+  // the derived pool projection. Keep the pool intentionally free of this field
+  // to catch the real summary(6) regression.
+  record.moflux.capacity.capacityGroup.members
+    .find((member) => member.pool === "sim-interactive").headroomLending = {
+      minConcurrentHeadroom: 4,
+      minTokenHeadroom: 4000,
+    };
+  assert.equal(
+    record.moflux.capacity.pools.find((pool) => pool.name === "sim-interactive").headroomLending,
+    undefined,
+  );
+  record.moflux.lending.controlPlane.headroomLendingObserved = true;
+  record.moflux.lending.controlPlane.handoff.appliedCapacity.observedHeadroomTransfer = true;
+}
+const headroom = buildSweepSummary({
+  mode: "compare",
+  fault: false,
+  seeds: [1, 2],
+  records: headroomRecords,
+});
+assert.equal(headroom.capacityPolicy.profile, "adaptive-headroom-28-4");
+assert.equal(headroom.adaptiveProof.passed, true);
+assert.equal(headroom.adaptiveProof.headroomObservedSeeds, 2);
+assert.equal(headroom.adaptiveProof.dataPlaneHeadroomObservedSeeds, 2);
+
+const partialHeadroomEvidenceRecords = structuredClone(headroomRecords);
+partialHeadroomEvidenceRecords[1].moflux.lending.controlPlane.headroomLendingObserved = false;
+partialHeadroomEvidenceRecords[1].moflux.lending.controlPlane.handoff.appliedCapacity.observedHeadroomTransfer = false;
+const partialHeadroomEvidence = buildSweepSummary({
+  mode: "compare",
+  fault: false,
+  seeds: [1, 2],
+  records: partialHeadroomEvidenceRecords,
+});
+assert.equal(partialHeadroomEvidence.adaptiveProof.passed, true);
+assert.equal(partialHeadroomEvidence.adaptiveProof.headroomEvidenceSeeds, 1);
+
+const noHeadroomEvidenceRecords = structuredClone(headroomRecords);
+for (const record of noHeadroomEvidenceRecords) {
+  record.moflux.lending.controlPlane.headroomLendingObserved = false;
+  record.moflux.lending.controlPlane.handoff.appliedCapacity.observedHeadroomTransfer = false;
+}
+const noHeadroomEvidence = buildSweepSummary({
+  mode: "compare",
+  fault: false,
+  seeds: [1, 2],
+  records: noHeadroomEvidenceRecords,
+});
+assert.equal(noHeadroomEvidence.adaptiveProof.passed, false);
+assert.match(
+  adaptiveProofFailureMessage(noHeadroomEvidence.adaptiveProof),
+  /no seed proved interactive-to-batch headroom lending/,
+);
 
 const mismatchedRecords = structuredClone(records);
 mismatchedRecords[1].moflux.capacity.batchTokenPercent = 30;

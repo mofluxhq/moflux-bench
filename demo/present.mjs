@@ -32,6 +32,7 @@ import path from "node:path";
 import { RedisClient } from "../arms/redis-client.mjs";
 import { lendingComparison, lendingMetrics } from "./lending-lib.mjs";
 import { bootstrapCapacityGroup, findFreshDemandReport } from "./demand-bootstrap-lib.mjs";
+import { summarizeAdmissionProvenance } from "./admission-provenance-lib.mjs";
 import {
   DEFAULT_CAPACITY_GROUP_NAME,
   buildDemandAwareCapacityGroup,
@@ -112,16 +113,23 @@ const str = (name, fallback) => rawArgs.get(name) ?? fallback;
 
 const legacyLendingRequested = str("lending", "false") !== "false";
 const requestedCapacityProfile = str("capacity-profile", "").trim();
-const CAPACITY_PROFILE_NAMES = new Set(["", "historical-31-1", "adaptive-28-4"]);
+const CAPACITY_PROFILE_NAMES = new Set([
+  "",
+  "historical-31-1",
+  "adaptive-28-4",
+  "adaptive-headroom-28-4",
+]);
 if (!CAPACITY_PROFILE_NAMES.has(requestedCapacityProfile)) {
   throw new Error(
-    `--capacity-profile must be historical-31-1 or adaptive-28-4, got "${requestedCapacityProfile}"`,
+    `--capacity-profile must be historical-31-1, adaptive-28-4, or adaptive-headroom-28-4, got "${requestedCapacityProfile}"`,
   );
 }
 if (requestedCapacityProfile === "historical-31-1" && legacyLendingRequested) {
   throw new Error("--capacity-profile=historical-31-1 cannot be combined with --lending");
 }
-const adaptiveProfileRequested = requestedCapacityProfile === "adaptive-28-4";
+const baselineAdaptiveProfileRequested = requestedCapacityProfile === "adaptive-28-4";
+const headroomAdaptiveProfileRequested = requestedCapacityProfile === "adaptive-headroom-28-4";
+const adaptiveProfileRequested = baselineAdaptiveProfileRequested || headroomAdaptiveProfileRequested;
 const lendingRequested = adaptiveProfileRequested || legacyLendingRequested;
 const hasLegacyBatchFloor = rawArgs.has("batch-floor-percent");
 const hasBatchConcurrencyPercent = rawArgs.has("batch-concurrency-percent");
@@ -170,9 +178,20 @@ if (adaptiveProfileRequested) {
   if (rawArgs.has("batch-token-percent") && configuredBatchTokenPercent !== 62.5) {
     conflicts.push("--batch-token-percent (must be 62.5)");
   }
+  if (headroomAdaptiveProfileRequested) {
+    if (rawArgs.has("headroom-min-concurrent") && num("headroom-min-concurrent", 4) !== 4) {
+      conflicts.push("--headroom-min-concurrent (must be 4)");
+    }
+    if (rawArgs.has("headroom-min-tokens") && num("headroom-min-tokens", 4000) !== 4000) {
+      conflicts.push("--headroom-min-tokens (must be 4000)");
+    }
+  } else if (rawArgs.has("headroom-min-concurrent") || rawArgs.has("headroom-min-tokens")) {
+    conflicts.push("headroom flags require --capacity-profile=adaptive-headroom-28-4");
+  }
   if (conflicts.length > 0) {
     throw new Error(
-      `--capacity-profile=adaptive-28-4 fixes the protected 28/4, 24k/40k policy; ` +
+      `--capacity-profile=${requestedCapacityProfile} fixes the protected 28/4, 24k/40k policy` +
+        `${headroomAdaptiveProfileRequested ? " plus 4-slot/4000-token retained interactive headroom" : ""}; ` +
         `remove conflicting ${conflicts.join(", ")}`,
     );
   }
@@ -209,11 +228,15 @@ const OPT = Object.freeze({
    * cannot, which is what makes the two distinguishable.
    */
   lending: lendingRequested,
-  capacityProfile: adaptiveProfileRequested
-    ? "adaptive-28-4"
-    : legacyLendingRequested
-      ? "custom-demand-aware"
-      : requestedCapacityProfile || "historical-31-1",
+  capacityProfile: headroomAdaptiveProfileRequested
+    ? "adaptive-headroom-28-4"
+    : baselineAdaptiveProfileRequested
+      ? "adaptive-28-4"
+      : legacyLendingRequested
+        ? "custom-demand-aware"
+        : requestedCapacityProfile || "historical-31-1",
+  headroomMinConcurrent: headroomAdaptiveProfileRequested ? 4 : null,
+  headroomMinTokens: headroomAdaptiveProfileRequested ? 4000 : null,
   lendingReportStaleAfterMs: num("lending-report-stale-after-ms", 6000),
   lendingIdleAfterMs: num("lending-idle-after-ms", 3000),
   lendingMaxStarvationMs: num("lending-max-starvation-ms", 5000),
@@ -379,8 +402,11 @@ if (SIZE_DISTRIBUTION === "uniform" && (OPT.interactiveSizeSigma !== 0.75 || OPT
   // look heterogeneous in the command line and not in the data.
   throw new Error("size sigmas have no effect with --size-distribution=uniform; set --size-distribution=lognormal");
 }
-if (OPT.lending && OPT.mode !== "compare") {
+if (legacyLendingRequested && OPT.mode !== "compare") {
   throw new Error("--lending requires --mode=compare; the idle window is only meaningful against a control arm");
+}
+if (adaptiveProfileRequested && OPT.mode === "baseline") {
+  throw new Error(`--capacity-profile=${requestedCapacityProfile} requires a MoFlux arm; use --mode=moflux or --mode=compare`);
 }
 if (OPT.lending && OPT.phaseMs < 30000) {
   // Below this the idle window is too short for occupancy to settle, and a
@@ -487,7 +513,11 @@ const CAPACITY = (() => {
   const ceilingTokens = OPT.lending ? OPT.tokenBudget : null;
   return Object.freeze({
     profile: OPT.capacityProfile,
-    policy: OPT.lending ? "interactive-first-demand-aware" : "interactive-first-static",
+    policy: headroomAdaptiveProfileRequested
+      ? "interactive-first-headroom-aware"
+      : OPT.lending
+        ? "interactive-first-demand-aware"
+        : "interactive-first-static",
     capacityGroup: OPT.lending ? DEFAULT_CAPACITY_GROUP_NAME : null,
     batchFloorPercent:
       OPT.batchFloorPercent !== null &&
@@ -513,6 +543,14 @@ const CAPACITY = (() => {
         tokenBudget: ceilingTokens ?? interactiveTokens,
         guaranteedMaxConcurrent: interactiveConcurrent,
         guaranteedTokenBudget: interactiveTokens,
+        ...(headroomAdaptiveProfileRequested
+          ? {
+              headroomLending: Object.freeze({
+                minConcurrentHeadroom: OPT.headroomMinConcurrent,
+                minTokenHeadroom: OPT.headroomMinTokens,
+              }),
+            }
+          : {}),
         priority: 100,
         agentCount: POOL_AGENT_COUNTS["sim-interactive"],
       }),
@@ -588,6 +626,14 @@ const CAPACITY_GROUP = OPT.lending
         priority: 100,
         guaranteedMaxConcurrent: CAPACITY.interactiveConcurrencySlots,
         guaranteedTokenBudget: CAPACITY.pools.find((pool) => pool.name === "sim-interactive").guaranteedTokenBudget,
+        ...(headroomAdaptiveProfileRequested
+          ? {
+              headroomLending: {
+                minConcurrentHeadroom: OPT.headroomMinConcurrent,
+                minTokenHeadroom: OPT.headroomMinTokens,
+              },
+            }
+          : {}),
       },
       batch: {
         pool: "sim-batch",
@@ -1494,9 +1540,13 @@ function appliedCapacitySample(
   const rowPoolCapacity = (row, poolName) => {
     const pool = row?.[poolName];
     if (!pool) {
-      return { maxConcurrent: 0, tokenBudget: 0, inFlight: 0, inFlightTokens: 0, admitted: 0, grants: [] };
+      return {
+        maxConcurrent: 0, tokenBudget: 0, inFlight: 0, inFlightTokens: 0, admitted: 0,
+        grants: [], admissionProvenance: null,
+      };
     }
     const provenance = pool?.tyr?.provenance?.current;
+    const admissionProvenance = pool?.tyr?.admissionProvenance;
     return {
       maxConcurrent: Number(pool?.limits?.maxConcurrent ?? 0),
       tokenBudget: Number(pool?.tokenBudget?.budget ?? pool?.limits?.tokenBudget?.budget ?? 0),
@@ -1506,6 +1556,18 @@ function appliedCapacitySample(
       grants: provenance?.grantId
         ? [{ grantId: provenance.grantId, revision: provenance.revision, expiresAt: provenance.expiresAt }]
         : [],
+      admissionProvenance: admissionProvenance
+        ? {
+            capacity: Number(admissionProvenance.capacity ?? 0),
+            retained: Number(admissionProvenance.retained ?? 0),
+            dropped: Number(admissionProvenance.dropped ?? 0),
+            captureFailures: Number(admissionProvenance.captureFailures ?? 0),
+            nextSequence: Number(admissionProvenance.nextSequence ?? 0),
+            events: Array.isArray(admissionProvenance.events)
+              ? admissionProvenance.events.map((event) => ({ ...event }))
+              : [],
+          }
+        : null,
     };
   };
   const replicas = statsRows.map((row, index) => ({
@@ -1544,6 +1606,14 @@ function appliedCapacitySample(
   };
 }
 
+function compactAdmissionProvenancePool(pool) {
+  if (!pool || typeof pool !== "object") return pool;
+  const provenance = pool.admissionProvenance;
+  if (!provenance || typeof provenance !== "object") return pool;
+  const { events: _events, ...counters } = provenance;
+  return { ...pool, admissionProvenance: counters };
+}
+
 function summarizeAppliedCapacity(samples, errors = []) {
   const overConcurrent = samples.filter(
     (sample) => sample.total.maxConcurrent > OPT.envelope,
@@ -1571,6 +1641,16 @@ function summarizeAppliedCapacity(samples, errors = []) {
           sample.batch.tokenBudget >= Number(batchFloor?.guaranteedTokenBudget ?? 0),
       );
   const firstRestoredSample = restoredIndex >= 0 ? samples[restoredIndex] : null;
+  const headroomTransferIndex = samples.findIndex((sample) => {
+    const batchExpanded =
+      sample.batch.maxConcurrent > Number(batchFloor?.guaranteedMaxConcurrent ?? 0) ||
+      sample.batch.tokenBudget > Number(batchFloor?.guaranteedTokenBudget ?? 0);
+    const interactiveReleased =
+      sample.interactive.maxConcurrent < Number(interactiveFloor?.guaranteedMaxConcurrent ?? 0) ||
+      sample.interactive.tokenBudget < Number(interactiveFloor?.guaranteedTokenBudget ?? 0);
+    return batchExpanded && interactiveReleased;
+  });
+  const firstHeadroomTransferSample = headroomTransferIndex >= 0 ? samples[headroomTransferIndex] : null;
   const batchAdmissionBaseline = samples[0]?.batch?.admitted ?? null;
   const firstBatchAdmissionSample = batchAdmissionBaseline === null
     ? null
@@ -1581,6 +1661,22 @@ function summarizeAppliedCapacity(samples, errors = []) {
   const previousBatchAdmissionSample = firstBatchAdmissionIndex > 0
     ? samples[firstBatchAdmissionIndex - 1]
     : null;
+  const admissionProvenance = {
+    batch: summarizeAdmissionProvenance(samples, { pool: "batch" }),
+    interactive: summarizeAdmissionProvenance(samples, { pool: "interactive" }),
+  };
+  // Provenance events are cumulative ring snapshots, so persisting the complete
+  // event array in every 500ms timeline sample would duplicate the same records
+  // dozens of times. Keep exact events once above and retain only bounded ring
+  // counters in the diagnostic timeline.
+  const compactTimeline = samples.map((sample) => ({
+    ...sample,
+    replicas: sample.replicas.map((replica) => ({
+      ...replica,
+      interactive: compactAdmissionProvenancePool(replica.interactive),
+      batch: compactAdmissionProvenancePool(replica.batch),
+    })),
+  }));
   return {
     sampleIntervalMs: OPT.handoffSampleIntervalMs,
     samples: samples.length,
@@ -1598,7 +1694,17 @@ function summarizeAppliedCapacity(samples, errors = []) {
       0,
     ),
     observedLentPartition: lentIndex >= 0,
+    observedHeadroomTransfer: headroomTransferIndex >= 0,
+    headroomTransferObservation: firstHeadroomTransferSample
+      ? {
+          source: "tyr.stats.applied_limits",
+          firstObservedAt: firstHeadroomTransferSample.observedAt,
+          interactive: firstHeadroomTransferSample.interactive,
+          batch: firstHeadroomTransferSample.batch,
+        }
+      : null,
     observedRestoredPartition: restoredIndex >= 0,
+    admissionProvenance,
     restorationObservation: {
       source: "tyr.stats.applied_limits",
       sampleIntervalMs: OPT.handoffSampleIntervalMs,
@@ -1633,7 +1739,7 @@ function summarizeAppliedCapacity(samples, errors = []) {
         envelope: OPT.tokenBudget,
       })),
     ],
-    timeline: samples,
+    timeline: compactTimeline,
   };
 }
 

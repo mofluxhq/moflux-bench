@@ -19,7 +19,7 @@ request characteristics.
 
 ## Runtime compatibility and setup
 
-The presenter is pinned to Tyr 0.25.1, Latchflo 0.11.6,
+The presenter is pinned to Tyr 0.26.0, Latchflo 0.12.2,
 async-bulkhead-llm 3.15.1, and async-bulkhead-ts 1.0.1. `npm run demo` uses
 Anthropic-shaped streams and enables progressive reconciliation with a
 256-token update step and a 256-token future-output safety margin. Input usage
@@ -50,7 +50,7 @@ Latchflo/Tyr state, then the verified single-pair presenter:
 
 1. validates Docker, Compose, licensed images, and configuration;
 2. starts Latchflo, the telemetry relay, Prometheus, and Grafana;
-3. creates or updates `sim-interactive` and `sim-batch` with a short enrollment lease, an exact 31/1 concurrency split, 30,000/10,000 token budgets, and Latchflo 0.11.6 minimum-grant floors (1 slot; 755 interactive tokens; 9,942 batch tokens);
+3. creates or updates `sim-interactive` and `sim-batch` with a short enrollment lease, an exact 31/1 concurrency split, 30,000/10,000 token budgets, and Latchflo 0.12.2 minimum-grant floors (1 slot; 755 interactive tokens; 9,942 batch tokens);
 4. runs the no-control arm;
 5. replaces passthrough replicas with Tyr, waits for all four registrations,
    promotes the pools to the steady-state lease, and waits for one simultaneous
@@ -82,6 +82,24 @@ operator explicitly promotes a run with `npm run evidence:publish`.
 
 The canonical command runs without prompts. Use `npm run demo:record` when you
 want to pause before each seed and each presenter scene.
+
+## Compare headroom-aware lending
+
+```bash
+npm run demo:hetero:headroom
+npm run demo:headroom:compare
+```
+
+The first command runs the fixed `adaptive-headroom-28-4` profile. The paired
+`demo:headroom:compare` command is also an outcome gate: its defaults require
+median batch completions >=8 and a median gain >=4 while preserving interactive
+success/p95 within the documented tolerances, proving headroom transfer on a
+majority of seeds, retaining exact admission provenance, and producing zero
+upstream 429s. The paired
+command runs classic `adaptive-28-4` and headroom-aware 28/4 over the same seeds,
+requires identical same-seed trace hashes, and reports batch-success gains
+alongside interactive success, p95 latency, TTFT p95, rejects, and exact
+successor-grant proof coverage.
 
 ## Choose a different sweep
 
@@ -138,7 +156,7 @@ npm run demo:hetero:adaptive:blind
 ```
 
 `demo:lending` is the focused static-partition comparison. `demo:handoff` is
-the five-seed release proof for the acknowledged Latchflo 0.11.6 / Tyr 0.25.1
+the five-seed release proof for the acknowledged Latchflo 0.12.2 / Tyr 0.26.0
 handoff without the extra control arms. The adaptive heterogeneous commands are
 the recommended mixed-workload scenes: they add all control arms while keeping
 the same lognormal request sizes and acceptance gate. The blind variant
@@ -147,13 +165,13 @@ policy.
 
 This is a separate five-seed comparison because it changes the control-plane
 policy and lease cadence. The reference arm is an exact static 28/4 partition
-with interactive caps of 7/7/7/7. The MoFlux arm creates a Latchflo 0.11.6 demand-aware capacity group and
-receives live demand snapshots from Tyr 0.25.1. When batch demand returns,
+with interactive caps of 7/7/7/7. The MoFlux arm creates a Latchflo 0.12.2 demand-aware capacity group and
+receives live demand snapshots from Tyr 0.26.0. When batch demand returns,
 Latchflo prepares drain grants for borrowed capacity; Tyr applies the lower
 limit by attrition, acknowledges it, and publishes fresh occupancy evidence.
 Latchflo can then commit the restored batch floor. Before every restrictive
 drain ACK arrives, the predecessor lease is the safety fallback. After the ACK
-barrier, Latchflo 0.11.6 transfers authority to the prepared successor grants,
+barrier, Latchflo 0.12.2 transfers authority to the prepared successor grants,
 so their earliest expiry becomes the handoff safety deadline and natural
 predecessor expiry no longer aborts restoration.
 The harness uses a 120-second steady-state grant TTL and waits for at least 55
@@ -173,12 +191,16 @@ idle-window occupancy above the static 28-slot ceiling provides independent
 corroboration somewhere in the sweep. Floor restoration requires a restoration handoff plus a post-lending Tyr `/stats` sample that restores both the protected concurrency and token floor; batch completions remain a separate service gate. The ACK barrier uses the first ACK for each unique drain grant, while repeated ACKs are retained only as diagnostics.
 Every adaptive seed must prove the drain ACKs precede commit, commit remains
 inside the applicable handoff safety deadline, and 500 ms Tyr `/stats` samples never show more applied
-capacity than the physical envelope. Admission ordering is measured separately:
-Tyr's admitted counter and the provider's first batch request receipt bound the
-first admission. The strict proof gate requires that interval to prove admission
-after commit: a proven pre-commit admission fails as a violation, while an interval
-that straddles commit fails explicitly as inconclusive evidence rather than being
-inferred from a later client 2xx.
+capacity than the physical envelope. Admission ordering is measured separately. Tyr 0.26.0 exact admission provenance
+is scoped to the restoration handoff that precedes the first data-plane-observed
+batch-floor restoration. Only admissions at or after that handoff's
+`handoff_prepared` event and within its predecessor/successor grant lineage are
+considered. The strict proof gate requires the first relevant admission to use a
+staged successor grant. A lineage-matched predecessor admission is a proved
+violation; earlier or unrelated admissions are ignored, while dropped or
+capture-failed provenance is explicitly inconclusive. The
+older sampled admission interval remains a latency diagnostic and is not used to
+infer safety from a later client 2xx.
 The commands also require at least 90% interactive success, at least four
 completed batch requests, a matching controller lending event, restored batch
 capacity, and zero upstream 429s. Idle-window occupancy above 28 is required
