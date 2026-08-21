@@ -90,8 +90,9 @@ npm run demo:hetero:headroom
 npm run demo:headroom:compare
 ```
 
-The first command runs the fixed `adaptive-headroom-28-4` profile on the ordinary
-6-RPS heterogeneous workload. The paired `demo:headroom:compare` command is also an
+Both `demo:hetero:adaptive` and the compatibility alias `demo:hetero:headroom`
+run the fixed `adaptive-headroom-28-4` profile on the ordinary 6-RPS heterogeneous
+workload. The paired `demo:headroom:compare` command is also an
 outcome gate and deliberately replays a controlled 3 interactive RPS, uniform-size
 trace through both policies while batch still begins at 60% of the phase. This keeps
 interactive demand active but leaves sustained safe slack for longer than Latchflo's
@@ -171,9 +172,9 @@ npm run demo:hetero:adaptive:blind
 
 `demo:lending` is the focused static-partition comparison. `demo:handoff` is
 the five-seed release proof for the acknowledged Latchflo 0.12.4 / Tyr 0.26.0
-handoff without the extra control arms. The adaptive heterogeneous commands are
-the recommended mixed-workload scenes: they add all control arms while keeping
-the same lognormal request sizes and acceptance gate. The blind variant
+handoff without the extra control arms. The adaptive heterogeneous commands are the recommended mixed-workload scenes:
+they add all control arms, select the headroom-aware 28/4 policy, and keep the same
+lognormal request sizes and acceptance gate. The blind variant
 disables retry-hint handling while replaying the same trace shape and capacity
 policy.
 

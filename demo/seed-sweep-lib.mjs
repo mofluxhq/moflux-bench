@@ -244,6 +244,46 @@ function aggregateMetricObjects(objects) {
 }
 
 
+function headroomPolicyEvidence(capacity, records) {
+  if (!capacity) return null;
+  const members = Array.isArray(capacity.capacityGroup?.members)
+    ? capacity.capacityGroup.members
+    : [];
+  const lender = members.find((member) => member?.headroomLending);
+  const policy = lender?.headroomLending ?? null;
+  const perSeed = records.map((record) => ({
+    controller:
+      record.moflux?.lending?.controlPlane?.headroomLendingObserved === true,
+    dataPlane:
+      record.moflux?.lending?.controlPlane?.handoff?.appliedCapacity?.observedHeadroomTransfer === true,
+  }));
+  const controllerObservedSeeds = perSeed.filter((seed) => seed.controller).length;
+  const dataPlaneObservedSeeds = perSeed.filter((seed) => seed.dataPlane).length;
+  const jointlyObservedSeeds = perSeed.filter((seed) => seed.controller && seed.dataPlane).length;
+
+  return {
+    enabled: Boolean(policy),
+    lenderPool: policy ? lender.pool ?? null : null,
+    config: policy
+      ? {
+          minConcurrentHeadroom: policy.minConcurrentHeadroom ?? null,
+          minTokenHeadroom: policy.minTokenHeadroom ?? null,
+          demandingSustainMs: policy.demandingSustainMs ?? null,
+          maxDemandingConcurrentLend: policy.maxDemandingConcurrentLend ?? null,
+          maxDemandingTokenLend: policy.maxDemandingTokenLend ?? null,
+        }
+      : null,
+    evidence: {
+      seeds: records.length,
+      controllerObservedSeeds,
+      dataPlaneObservedSeeds,
+      jointlyObservedSeeds,
+      exercised: jointlyObservedSeeds > 0,
+      exercisedOnEverySeed: records.length > 0 && jointlyObservedSeeds === records.length,
+    },
+  };
+}
+
 function capacityPolicy(summary) {
   const capacity = summary?.capacity;
   if (!capacity) return null;
@@ -692,7 +732,7 @@ export function buildSweepSummary({ mode, fault, seeds, records, adaptiveProofCo
   const numericTokenMetrics = tokenMetrics.map(({ progressiveConfiguration: _configuration, ...metrics }) => metrics);
 
   return {
-    schemaVersion: 7,
+    schemaVersion: 8,
     generatedAt: new Date().toISOString(),
     kind: mode === "compare" ? "paired-seed-sweep" : "seed-sweep",
     mode,
@@ -706,6 +746,7 @@ export function buildSweepSummary({ mode, fault, seeds, records, adaptiveProofCo
         }
       : null,
     capacityPolicy: firstCapacityPolicy,
+    headroomPolicy: headroomPolicyEvidence(firstCapacityPolicy, records),
     adaptiveProof: adaptiveProof(records, firstCapacityPolicy, { context: adaptiveProofContext }),
     runs: records.map((record) => ({
       seed: record.seed,

@@ -300,7 +300,7 @@ for (const required of [
   "observedHeadroomTransfer",
 ]) {
   if (!presenter023.includes(required)) {
-    findings.push(`demo/present.mjs: missing 0.24.0 headroom/provenance feature ${required}`);
+    findings.push(`demo/present.mjs: missing 0.25.0 headroom/provenance feature ${required}`);
   }
 }
 
@@ -316,8 +316,8 @@ if (!pkg.scripts?.["demo:progressive"]?.includes("--provider-api=anthropic") ||
     !pkg.scripts?.["demo:openai"]?.includes("--provider-api=openai")) {
   findings.push("package.json: progressive and OpenAI compatibility demo commands are required");
 }
-if (pkg.version !== "0.24.0") {
-  findings.push("package.json: the current benchmark release must be version 0.24.0");
+if (pkg.version !== "0.25.0") {
+  findings.push("package.json: the current benchmark release must be version 0.25.0");
 }
 const classesScript = pkg.scripts?.["demo:classes"] ?? "";
 for (const required of ["demo/tenant-fairness.mjs", "--seeds=1-5", "--require-proof"]) {
@@ -333,7 +333,7 @@ for (const [name, honorsRetryHints] of adaptiveScripts) {
   const script = pkg.scripts?.[name] ?? "";
   for (const required of [
     "--size-distribution=lognormal",
-    "--capacity-profile=adaptive-28-4",
+    "--capacity-profile=adaptive-headroom-28-4",
     "--control-arms=all",
     "--require-adaptive-proof",
   ]) {
@@ -379,15 +379,28 @@ for (const required of [
   "schemaVersion: 4",
 ]) {
   if (!headroomCompareLib.includes(required)) {
-    findings.push(`demo/headroom-compare-lib.mjs: missing 0.24.0 capacity-aware payoff evidence ${required}`);
+    findings.push(`demo/headroom-compare-lib.mjs: missing 0.25.0 capacity-aware payoff evidence ${required}`);
   }
 }
-const seedSweepLib024 = readFileSync(path.join(ROOT, "demo/seed-sweep-lib.mjs"), "utf8");
-if (!seedSweepLib024.includes("schemaVersion: 7")) {
-  findings.push("demo/seed-sweep-lib.mjs: 0.24.0 strict in-window headroom evidence requires schemaVersion 7");
+const seedSweepLib025 = readFileSync(path.join(ROOT, "demo/seed-sweep-lib.mjs"), "utf8");
+if (!seedSweepLib025.includes("schemaVersion: 8")) {
+  findings.push("demo/seed-sweep-lib.mjs: 0.25.0 headroom-policy evidence requires schemaVersion 8");
+}
+for (const required of [
+  "headroomPolicyEvidence",
+  "minConcurrentHeadroom",
+  "minTokenHeadroom",
+  "demandingSustainMs",
+  "maxDemandingConcurrentLend",
+  "maxDemandingTokenLend",
+  "jointlyObservedSeeds",
+]) {
+  if (!seedSweepLib025.includes(required)) {
+    findings.push(`demo/seed-sweep-lib.mjs: missing 0.25.0 headroom policy summary evidence ${required}`);
+  }
 }
 for (const required of ["proofContext: context", "idleOccupancyRequired", 'context !== "headroom-compare"']) {
-  if (!seedSweepLib024.includes(required)) {
+  if (!seedSweepLib025.includes(required)) {
     findings.push(`demo/seed-sweep-lib.mjs: missing headroom-comparison adaptive proof context ${required}`);
   }
 }

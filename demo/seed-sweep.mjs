@@ -527,6 +527,24 @@ function printAggregate(summary) {
     }
   }
 
+  const headroomPolicy = summary.headroomPolicy;
+  if (headroomPolicy?.enabled) {
+    const config = headroomPolicy.config ?? {};
+    const evidence = headroomPolicy.evidence ?? {};
+    console.log(`${BOLD}   Active-demand headroom policy${OFF}`);
+    console.table([{
+      lender: headroomPolicy.lenderPool ?? "unknown",
+      "min concurrency headroom": config.minConcurrentHeadroom,
+      "min token headroom": config.minTokenHeadroom,
+      "sustain window": `${config.demandingSustainMs}ms`,
+      "max concurrency lend": config.maxDemandingConcurrentLend,
+      "max token lend": config.maxDemandingTokenLend,
+      "controller exercised": `${evidence.controllerObservedSeeds}/${evidence.seeds} seeds`,
+      "data-plane exercised": `${evidence.dataPlaneObservedSeeds}/${evidence.seeds} seeds`,
+      "joint proof": `${evidence.jointlyObservedSeeds}/${evidence.seeds} seeds`,
+    }]);
+  }
+
   const lending = summary.aggregate.lending;
   if (lending) {
     console.log(`${BOLD}   Demand-aware lending proof${OFF}`);

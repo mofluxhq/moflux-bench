@@ -121,10 +121,10 @@ if (REANALYZE && RESUME) {
  * The capacity policy each rung runs under.
  *
  * The ladder's own default is the historical 31/1 profile it shipped with, so
- * an existing ladder stays comparable with itself. Every published sweep uses
- * `adaptive-28-4`, so a ladder meant to be read alongside those results should
- * pass `--capacity-profile=adaptive-28-4` — the ladder will not silently change
- * what it measures, but it says which policy it used.
+ * an existing ladder stays comparable with itself. The coordinator ladder intentionally keeps
+ * `adaptive-28-4` as its focused adaptive profile even though the canonical
+ * heterogeneous adaptive benchmark now uses `adaptive-headroom-28-4`. The ladder
+ * will not silently change what it measures, and every result records the policy.
  */
 const CAPACITY_PROFILE = str("capacity-profile", "");
 
@@ -133,8 +133,8 @@ const CAPACITY_PROFILE = str("capacity-profile", "");
  * coordinator ladder by default.
  *
  * `--require-adaptive-proof` proves batch-floor restoration, handoff commit,
- * batch success and other policy outcomes. Those are important for
- * `demo:hetero:adaptive`, but they are not prerequisites for measuring how
+ * batch success and other policy outcomes. Those are important for heterogeneous adaptive policy validation, but they are
+ * not prerequisites for measuring how
  * TTFT responds to coordinator distance. Making them prerequisites censors a
  * rung for an unrelated handoff outcome and can bias the ladder toward seeds
  * that happened to restore the floor.

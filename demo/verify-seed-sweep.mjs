@@ -382,6 +382,19 @@ const noOccupancy = buildSweepSummary({
   records: noOccupancyRecords,
 });
 assert.equal(noOccupancy.adaptiveProof.passed, false);
+assert.deepEqual(noOccupancy.headroomPolicy, {
+  enabled: false,
+  lenderPool: null,
+  config: null,
+  evidence: {
+    seeds: 2,
+    controllerObservedSeeds: 0,
+    dataPlaneObservedSeeds: 0,
+    jointlyObservedSeeds: 0,
+    exercised: false,
+    exercisedOnEverySeed: false,
+  },
+});
 assert.equal(noOccupancy.adaptiveProof.proofContext, "default");
 assert.equal(noOccupancy.adaptiveProof.idleOccupancyRequired, true);
 assert.match(
@@ -443,6 +456,26 @@ const headroom = buildSweepSummary({
   records: headroomRecords,
 });
 assert.equal(headroom.capacityPolicy.profile, "adaptive-headroom-28-4");
+assert.equal(headroom.schemaVersion, 8);
+assert.deepEqual(headroom.headroomPolicy, {
+  enabled: true,
+  lenderPool: "sim-interactive",
+  config: {
+    minConcurrentHeadroom: 4,
+    minTokenHeadroom: 4000,
+    demandingSustainMs: 3000,
+    maxDemandingConcurrentLend: 2,
+    maxDemandingTokenLend: 10_000,
+  },
+  evidence: {
+    seeds: 2,
+    controllerObservedSeeds: 2,
+    dataPlaneObservedSeeds: 2,
+    jointlyObservedSeeds: 2,
+    exercised: true,
+    exercisedOnEverySeed: true,
+  },
+});
 assert.equal(headroom.adaptiveProof.passed, true);
 assert.equal(headroom.adaptiveProof.headroomObservedSeeds, 2);
 assert.equal(headroom.adaptiveProof.dataPlaneHeadroomObservedSeeds, 2);

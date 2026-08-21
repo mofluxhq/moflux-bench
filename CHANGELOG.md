@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.25.0 - 2026-08-20
+
+### Changed
+
+- Make `demo:hetero:adaptive` the canonical heterogeneous headroom-aware adaptive benchmark by selecting `adaptive-headroom-28-4`, matching the Latchflo 0.12.4 sustained active-demand lending policy already proven by `demo:headroom:compare`. The blind retry-hint variant now uses the same capacity policy so it continues to isolate only retry-hint handling.
+- Bump seed-sweep output to `schemaVersion` 8 and add a top-level `headroomPolicy` proof object. It records whether headroom lending was enabled, the lender pool, the exact configured thresholds/caps (`minConcurrentHeadroom`, `minTokenHeadroom`, `demandingSustainMs`, `maxDemandingConcurrentLend`, `maxDemandingTokenLend`), and controller/data-plane/joint exercised-seed counts.
+- Keep `demo:hetero:headroom` as a compatibility alias for the same heterogeneous headroom-aware profile; `demo:handoff` and `demo:coordinator:adaptive` remain on classic `adaptive-28-4` so those focused correctness/distance experiments do not silently change policy.
+
+### Fixed
+
+- Close an experimental-coverage gap where `demo:hetero:adaptive` could be interpreted as validating Latchflo 0.12.4 sustained headroom lending even though it still ran the classic adaptive profile and therefore could report zero headroom evidence by construction.
+
 ## 0.24.0 - 2026-08-20
 
 ### Added

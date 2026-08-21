@@ -158,7 +158,7 @@ pair of runs isolates the hint's contribution:
 ```bash
 npm run demo:hetero                 # historical 31/1 policy; hints honored
 npm run demo:hetero:blind           # historical 31/1 policy; blind backoff
-npm run demo:hetero:adaptive        # demand-aware 28/4 control policy
+npm run demo:hetero:adaptive        # headroom-aware 28/4 current adaptive policy
 npm run demo:hetero:headroom        # headroom-aware 28/4 policy
 npm run demo:headroom:compare       # paired old-vs-headroom policy experiment
 npm run demo:hetero:adaptive:blind  # same adaptive traces, blind backoff
@@ -210,8 +210,9 @@ paired command deliberately uses a controlled 3 interactive RPS, uniform-size tr
 while batch still begins at 60% of the 45-second phase. That keeps interactive demand
 continuously active but leaves deterministic room below the protected 28-slot /
 24,000-token entitlement for longer than the 3,000 ms demanding-state sustain window.
-The ordinary `demo:hetero:adaptive` and `demo:hetero:headroom` commands remain the
-6-RPS lognormal workload and retain the idle-occupancy-above-28 proof requirement.
+The canonical `demo:hetero:adaptive` command now selects that same headroom-aware
+profile on the ordinary 6-RPS lognormal workload; `demo:hetero:headroom` remains a
+compatibility alias. Both retain the idle-occupancy-above-28 proof requirement.
 Only the paired headroom exercise marks that older occupancy proof diagnostic, because
 its relevant lending evidence is the stricter in-window demanding-headroom correlation.
 The paired experiment then answers one explicit question:
@@ -525,13 +526,13 @@ hit 32 together". Both policies produce the same headline number.
 ```bash
 npm run demo:lending           # focused demand-aware vs static 28/4 proof
 npm run demo:handoff           # five-seed exact handoff proof
-npm run demo:hetero:adaptive   # mixed-size, all-arm control policy
-npm run demo:hetero:headroom   # same workload with headroom-aware lending
+npm run demo:hetero:adaptive   # mixed-size, all-arm headroom-aware adaptive policy
+npm run demo:hetero:headroom   # compatibility alias for the same headroom-aware workload
 npm run demo:headroom:compare  # paired 28/4 policy comparison
 ```
 
 `demo:handoff` is the shortest release-level proof for the Latchflo 0.12.4 /
-Tyr 0.26.0 physical-capacity handoff: five lognormal seeds, the exact `adaptive-28-4` profile,
+Tyr 0.26.0 physical-capacity handoff: five lognormal seeds, the exact classic `adaptive-28-4` profile,
 and the full adaptive safety gate without spending time on the extra control
 arms. Demand-aware runs use a 120-second steady-state grant TTL and do not start
 load until the fleet has at least 55 seconds of grant runway remaining for the
@@ -542,9 +543,11 @@ uses the prepared successor-grant expiry as the safety deadline. Natural source
 lease expiry after the ACK barrier no longer invalidates restoration. This
 removes the old 11-second lease-cycle timing dependency without weakening the
 no-double-allocation proof.
-`demo:hetero:adaptive` uses the same profile and proof gate while adding
-all control arms. Conflicting envelope, concurrency, or token settings are
-rejected. `demo:lending` remains the focused static-partition scene.
+`demo:hetero:adaptive` uses the headroom-aware `adaptive-headroom-28-4` variant
+with the same 28/4 protected entitlements and proof gate while adding all control arms.
+Its summary carries a top-level `headroomPolicy` object with the exact configured
+thresholds/caps and exercised-seed evidence. Conflicting envelope, concurrency, or
+token settings are rejected. `demo:lending` remains the focused static-partition scene.
 
 `--lending` widens the idle window from 35% to 60% of the phase so Tyr 0.26.0
 can report an idle batch pool and Latchflo 0.12.4 can safely lend its protected
@@ -652,7 +655,7 @@ length, retrieved documents, and conversation history vary per call.
 
 ```bash
 npm run demo:hetero             # lognormal sizes with historical 31/1 policy
-npm run demo:hetero:adaptive    # lognormal sizes with demand-aware 28/4 policy
+npm run demo:hetero:adaptive    # lognormal sizes with headroom-aware adaptive 28/4 policy
 ```
 
 Use the historical command to reproduce the reviewed 31/1 corpus. Use the
@@ -756,10 +759,10 @@ earlier arm — each before a measured phase is spent rather than after.
 Each rung writes its own run directory under
 `results/runs/video-seed-sweep/<ladder-id>-coord-<rung>ms/` and is read back from
 it, so a rung is attributable to the sweep that produced it. Every arm records
-the rung it ran at; only the Redis arm records having *paid* it. The ladder's own
-default capacity policy is the historical 31/1 profile — pass
-`--capacity-profile=adaptive-28-4` to produce a ladder comparable with the
-published sweeps.
+the rung it ran at; only the Redis arm records having *paid* it. The ladder's own default capacity policy is the historical 31/1 profile. The
+`demo:coordinator:adaptive` command explicitly selects classic
+`adaptive-28-4` to isolate coordinator-distance behavior; it intentionally does
+not inherit the heterogeneous benchmark's headroom-aware policy.
 
 On Node 24, the arm proxy also treats caller disconnects from the response side.
 After the request body has been consumed, `IncomingMessage.close` may represent a
@@ -933,7 +936,7 @@ hours.
 The normal adaptive ladder does **not** require the full
 `--require-adaptive-proof` gate. That gate asserts batch-floor restoration,
 handoff commit, batch completions and other policy outcomes that are important
-for `demo:hetero:adaptive` but orthogonal to the ladder's coordinator-latency
+for the heterogeneous adaptive benchmark, but orthogonal to the ladder's coordinator-latency
 question. Conditioning each rung on those outcomes can censor an otherwise
 valid measurement and bias the fitted sample. Every rung still records its
 `adaptiveProof` status and failures in `coordinator-ladder.json`. Use
