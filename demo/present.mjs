@@ -44,6 +44,12 @@ import {
   resolveControlArmNames,
 } from "./control-arm-lib.mjs";
 import { armHealth, assertArmProducedWork } from "./arm-health-lib.mjs";
+import {
+  ADMISSION_TIMING_FRAMING,
+  measureAdmissionClockOverhead,
+  prometheusSamples,
+  summarizeTyrAdmissionTiming,
+} from "./admission-timing-lib.mjs";
 import { buildTrace } from "../load/trace-lib.mjs";
 import { reservationBounds, validateCapacityPlan } from "./capacity-lib.mjs";
 import {
@@ -2009,26 +2015,30 @@ function subtractAccounting(after, before) {
 }
 
 function prometheusMetric(text, name) {
-  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = new RegExp(`^${escaped}\\{[^}]*\\}\\s+([-+0-9.eE]+)$`, "m").exec(text);
-  if (!match) return null;
-  const value = Number(match[1]);
-  return Number.isFinite(value) ? value : null;
+  const samples = prometheusSamples(text, name);
+  return samples.length > 0 ? samples[0].value : null;
+}
+
+function localOutcomeMetric(text, metricName, outcome) {
+  const row = prometheusSamples(text, metricName).find((sample) => sample.labels.outcome === outcome);
+  return row?.value ?? 0;
 }
 
 /**
- * Direct measurement of the local control arm's admission decision cost.
+ * Direct measurement of the local Redis arm's admission decision cost.
  *
- * End-to-end TTFT contains provider latency, queueing and retries. Redis is the
- * only control arm whose admission decision includes the injected coordinator
- * delay, so the cumulative decision-time counters provide the causal
- * measurement the ladder is manipulating. Sum/count are aggregated across
- * replicas before taking the average; averaging replica averages would weight
- * an idle replica the same as a busy one.
+ * Redis has no queue-wait split: the atomic Lua reserve grants or refuses in
+ * one coordinator round trip, so that entire timed round trip is decision
+ * cost. Results are kept per outcome; a pooled mean would mix different
+ * admitted/rejected populations and is not a headline metric.
  */
 async function readLocalAdmissionDecision(ports) {
   let totalMs = 0;
   let decisions = 0;
+  const outcomes = {
+    admitted: { decisionSecondsSum: 0, decisions: 0 },
+    rejected: { decisionSecondsSum: 0, decisions: 0 },
+  };
   const perReplica = [];
   for (const port of ports) {
     const response = await fetchWithTimeout(`http://127.0.0.1:${port}/metrics`, {}, 2000);
@@ -2041,14 +2051,75 @@ async function readLocalAdmissionDecision(ports) {
     }
     totalMs += sumMs;
     decisions += count;
-    perReplica.push({ port, sumMs, decisions: count });
+
+    const admittedCount = localOutcomeMetric(text, "replica_admission_decision_seconds_count", "admitted");
+    const rejectedCount = localOutcomeMetric(text, "replica_admission_decision_seconds_count", "rejected");
+    const admittedSum = localOutcomeMetric(text, "replica_admission_decision_seconds_sum", "admitted");
+    const rejectedSum = localOutcomeMetric(text, "replica_admission_decision_seconds_sum", "rejected");
+    const locallyAdmitted = prometheusMetric(text, "replica_admitted_total") ?? 0;
+    const locallyRejected =
+      (prometheusMetric(text, "replica_rejected_concurrency_total") ?? 0) +
+      (prometheusMetric(text, "replica_rejected_budget_total") ?? 0) +
+      (prometheusMetric(text, "replica_rejected_queue_timeout_total") ?? 0);
+    if (count > 0 && (admittedCount !== locallyAdmitted || rejectedCount !== locallyRejected)) {
+      throw new Error(
+        `replica ${port} Redis decision population mismatch: ` +
+          `timed admitted/rejected=${admittedCount}/${rejectedCount}, counters=${locallyAdmitted}/${locallyRejected}`,
+      );
+    }
+    outcomes.admitted.decisionSecondsSum += admittedSum;
+    outcomes.admitted.decisions += admittedCount;
+    outcomes.rejected.decisionSecondsSum += rejectedSum;
+    outcomes.rejected.decisions += rejectedCount;
+    perReplica.push({ port, sumMs, decisions: count, admitted: admittedCount, rejected: rejectedCount });
   }
+  const finish = (entry) => ({
+    decisions: entry.decisions,
+    decisionSecondsSum: +entry.decisionSecondsSum.toFixed(9),
+    decisionMsAvg:
+      entry.decisions > 0 ? +((entry.decisionSecondsSum * 1000) / entry.decisions).toFixed(6) : null,
+    queueWaitCount: null,
+    queueWaitSecondsSum: null,
+    queueWaitMsAvg: null,
+  });
   return {
+    status: decisions > 0 ? "measured" : "no-coordinator-calls",
+    source: "redis-atomic-lua-reserve-round-trip",
+    framing: ADMISSION_TIMING_FRAMING,
+    outcomes: { admitted: finish(outcomes.admitted), rejected: finish(outcomes.rejected) },
+    totalDecisions: decisions,
+    // Legacy fields retained so historical tooling can still read this arm.
     overheadMsAvg: decisions > 0 ? +(totalMs / decisions).toFixed(4) : null,
     totalMs: +totalMs.toFixed(4),
     decisions,
     perReplica,
   };
+}
+
+async function readTyrMetricsTexts() {
+  return Promise.all(TYR_PORTS.map(async (port) => {
+    const response = await fetchWithTimeout(`http://127.0.0.1:${port}/metrics`, {}, 2000);
+    if (!response.ok) throw new Error(`Tyr ${port} metrics returned HTTP ${response.status}`);
+    return response.text();
+  }));
+}
+
+function assertTyrEnforceMode(statsRows) {
+  let pools = 0;
+  for (const [index, row] of statsRows.entries()) {
+    for (const partition of CAPACITY.pools) {
+      const stats = row?.[partition.name];
+      if (!stats) continue;
+      pools += 1;
+      if (stats?.tyr?.admissionMode !== "enforce") {
+        throw new Error(
+          `Tyr ${TYR_PORTS[index]} pool ${partition.name} ran admissionMode=${stats?.tyr?.admissionMode ?? "unknown"}; ` +
+            `admission-decision comparison requires enforce mode`,
+        );
+      }
+    }
+  }
+  if (pools === 0) throw new Error("could not verify enforce mode for any Tyr benchmark pool");
 }
 
 /**
@@ -2218,7 +2289,11 @@ async function runMoflux(env) {
   await assertProviderIdentity(ready.line);
 
   const liveGrants = await startTyr(env);
-  const before = aggregateTokenAccounting(await readTyrStats());
+  const beforeStats = await readTyrStats();
+  assertTyrEnforceMode(beforeStats);
+  const before = aggregateTokenAccounting(beforeStats);
+  const admissionTimingBefore = await readTyrMetricsTexts();
+  const admissionTimingOverhead = measureAdmissionClockOverhead();
   const outFile = path.join(RESULTS, OPT.fault ? "moflux-enforce-fault.json" : "moflux-enforce.json");
   rmSync(outFile, { force: true });
 
@@ -2253,6 +2328,16 @@ async function runMoflux(env) {
     appliedCapacity = await capacityObserver.stop();
   }
   const simCounters = await readProviderCounters();
+  let admissionDecision = null;
+  if (!OPT.fault) {
+    const admissionTimingAfter = await readTyrMetricsTexts();
+    admissionDecision = summarizeTyrAdmissionTiming({
+      beforeTexts: admissionTimingBefore,
+      afterTexts: admissionTimingAfter,
+      tyrVersion: TYR_VERSION,
+    });
+    admissionDecision.instrumentationOverhead = admissionTimingOverhead;
+  }
 
   // In a fault run r4 may be gone. Aggregate all remaining stats and preserve
   // the pre-run fleet baseline so deltas remain honest.
@@ -2282,6 +2367,7 @@ async function runMoflux(env) {
     tokenAccounting.totalReserved > 0 ? netRecovered / tokenAccounting.totalReserved : 0;
 
   summary.simCounters = simCounters;
+  summary.admissionDecision = admissionDecision;
   // MoFlux holds a grant and decides locally, so it never consults a
   // coordinator while admitting however far away Latchflo is.
   attachScenario(summary, { consultsCoordinator: false });

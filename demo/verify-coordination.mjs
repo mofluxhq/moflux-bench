@@ -567,9 +567,9 @@ function leaseArm({ base = 936, p95Base = 4730, jitter = 0 } = {}) {
   check("a non-numeric sample count does not pass as measured",
     admissionDecisionStatus(Number.NaN) === ADMISSION_DECISION_STATES.notInstrumented);
 
-  // The MoFlux arm admits inside Tyr rather than the replica proxy, so it is
-  // permanently in the not-instrumented state until Tyr exports an equivalent
-  // counter. Its label must not read like a zero.
+  // Historical MoFlux evidence can legitimately predate Tyr's direct timing
+  // metric. It must remain not-instrumented rather than silently becoming zero;
+  // Tyr >= 0.27.0 missing/zero metrics fail during presentation instead.
   check("the not-instrumented label does not read as a measurement",
     admissionDecisionLabel(ADMISSION_DECISION_STATES.notInstrumented) === "not measured");
   check("a measured zero is labelled distinctly from a missing one",

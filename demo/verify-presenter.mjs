@@ -220,6 +220,9 @@ function tyr(port) {
         progressiveUpdates: 0,
         progressiveCoalesced: 0,
         progressiveEarlyReleasedTokens: 0,
+        admissionDecisions: { admitted: 0, rejected: 0 },
+        admissionDecisionSeconds: { admitted: 0, rejected: 0 },
+        admissionQueueWaitSeconds: { admitted: 0, rejected: 0 },
       },
     ]),
   );
@@ -262,6 +265,7 @@ function tyr(port) {
         totalOverrun: counters.totalOverrun,
       },
       tyr: {
+        admissionMode: "enforce",
         progressiveReconciliation: {
           enabled: true,
           updateStepTokens: 256,
@@ -324,6 +328,16 @@ function tyr(port) {
           `tyr_pool_progressive_updates_total{pool="${pool}"} ${counters.progressiveUpdates}`,
           `tyr_pool_progressive_coalesced_total{pool="${pool}"} ${counters.progressiveCoalesced}`,
           `tyr_pool_progressive_tokens_released_total{pool="${pool}"} ${counters.progressiveEarlyReleasedTokens}`,
+          `tyr_admission_decision_seconds_sum{admission_class="none",outcome="admitted",pool="${pool}"} ${counters.admissionDecisionSeconds.admitted}`,
+          `tyr_admission_decision_seconds_count{admission_class="none",outcome="admitted",pool="${pool}"} ${counters.admissionDecisions.admitted}`,
+          `tyr_admission_queue_wait_seconds_sum{admission_class="none",outcome="admitted",pool="${pool}"} ${counters.admissionQueueWaitSeconds.admitted}`,
+          `tyr_admission_queue_wait_seconds_count{admission_class="none",outcome="admitted",pool="${pool}"} ${counters.admissionDecisions.admitted}`,
+          `tyr_admission_decisions_total{admission_class="none",outcome="admitted",pool="${pool}",priority="high"} ${counters.admissionDecisions.admitted}`,
+          `tyr_admission_decision_seconds_sum{admission_class="none",outcome="rejected",pool="${pool}"} ${counters.admissionDecisionSeconds.rejected}`,
+          `tyr_admission_decision_seconds_count{admission_class="none",outcome="rejected",pool="${pool}"} ${counters.admissionDecisions.rejected}`,
+          `tyr_admission_queue_wait_seconds_sum{admission_class="none",outcome="rejected",pool="${pool}"} ${counters.admissionQueueWaitSeconds.rejected}`,
+          `tyr_admission_queue_wait_seconds_count{admission_class="none",outcome="rejected",pool="${pool}"} ${counters.admissionDecisions.rejected}`,
+          `tyr_admission_decisions_total{admission_class="none",outcome="rejected",pool="${pool}",priority="high"} ${counters.admissionDecisions.rejected}`,
         );
       }
       lines.push("");
@@ -345,6 +359,8 @@ function tyr(port) {
         if (!counters) {
           return json(res, 500, { error: `pool ${pool} is not configured on Tyr ${port}` });
         }
+        counters.admissionDecisions.admitted += 1;
+        counters.admissionDecisionSeconds.admitted += 0.00004;
         const maxTokens = Number(body?.max_tokens ?? 400);
         const reserved = Math.max(1, maxTokens + 300);
         const refunded = Math.round(reserved * 0.26);
@@ -394,7 +410,7 @@ try {
   writeFileSync(
     ENV_FILE,
     [
-      "MOFLUX_TYR_IMAGE=test-tyr:0.26.0",
+      "MOFLUX_TYR_IMAGE=test-tyr:0.27.0",
       "MOFLUX_LATCHFLO_IMAGE=test-latchflo:0.12.4",
       "LATCHFLO_ADMIN_TOKEN=test-admin",
       "LATCHFLO_AGENT_BOOTSTRAP_TOKEN=test-bootstrap",
@@ -565,13 +581,23 @@ ${run.stderr}`);
       result.capacity?.batchConcurrencySlots !== 1) {
     throw new Error("presenter did not record the historical 31/1 capacity profile");
   }
-  if (result.runtime?.tyr?.version !== "0.26.0" || result.runtime?.latchflo?.version !== "0.12.4") {
-    throw new Error("result did not record the Tyr 0.26.0 / Latchflo 0.12.4 runtime");
+  if (result.runtime?.tyr?.version !== "0.27.0" || result.runtime?.latchflo?.version !== "0.12.4") {
+    throw new Error("result did not record the Tyr 0.27.0 / Latchflo 0.12.4 runtime");
   }
-  if (result.runtime?.asyncBulkheadLlm?.version !== "3.15.1" ||
+  if (result.runtime?.asyncBulkheadLlm?.version !== "3.16.0" ||
       result.runtime?.asyncBulkheadTs?.version !== "1.0.1") {
     throw new Error("result did not record the progressive bulkhead dependency versions");
   }
+  if (result.admissionDecision?.status !== "measured" ||
+      !(result.admissionDecision?.outcomes?.admitted?.decisions > 0) ||
+      !(result.admissionDecision?.outcomes?.admitted?.decisionMsAvg > 0) ||
+      result.admissionDecision?.instrumentationOverhead?.subtractedFromDecisionMetric !== false) {
+    throw new Error("result did not preserve direct per-outcome Tyr admission timing and measurement overhead");
+  }
+  if (result.admissionDecision?.outcomes?.rejected?.decisionMsAvg !== null) {
+    throw new Error("presenter fabricated a rejected-decision mean when this fixture had no rejections");
+  }
+
   if (!(result.tokenAccounting?.progressiveEarlyReleasedTokens > 0) ||
       !(result.tokenAccounting?.progressiveEarlyReleaseRate > 0)) {
     throw new Error("result did not record capacity released before request completion");

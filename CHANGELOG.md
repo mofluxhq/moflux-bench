@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.26.0 - 2026-08-25
+
+- Pin new licensed runs to Tyr 0.27.0, Latchflo 0.12.4, async-bulkhead-llm 3.16.0, and async-bulkhead-ts 1.0.1.
+- Measure MoFlux synchronous admission-decision cost directly from Tyr 0.27.0 histogram `_sum`/`_count`, with queue wait kept separate.
+- Report admitted and rejected decision means separately for both Redis and MoFlux; no pooled headline mean is produced.
+- Baseline Tyr counters before each measured run and fail closed on missing/zero 0.27.0 instrumentation or any timing/admission population mismatch. Historical pre-0.27.0 evidence remains `not-instrumented`.
+- Assert the managed benchmark pools are actually in `admissionMode: enforce` at runtime before measuring.
+- Record the four-clock instrumentation-overhead diagnostic alongside MoFlux decision timing without subtracting it from the result.
+- Bump seed-sweep evidence schema to 9 and coordinator-ladder schema to 7 for per-outcome admission timing.
+
 ## 0.25.0 - 2026-08-20
 
 ### Changed

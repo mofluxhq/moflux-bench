@@ -1,5 +1,5 @@
 /**
- * Pure helpers for turning Tyr 0.26.0's bounded admission-provenance rings
+ * Pure helpers for turning Tyr's stable admission-provenance.v1 rings
  * into benchmark evidence. A synchronous pre-load sample establishes the
  * per-replica next-sequence baseline, so later records are attributable to the
  * measured run without relying on wall-clock ordering across processes.

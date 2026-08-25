@@ -150,8 +150,20 @@ export function armMetrics(summary) {
     coordinatorLatencyMs: summary.coordinatorLatencyMs ?? 0,
     coordinatorOnAdmissionPath: summary.coordinatorOnAdmissionPath ?? null,
     coordinatorLadderRungMs: summary.coordinatorLadderRungMs ?? null,
+    // 0.26.0 direct admission timing. Headline values are per outcome; a pooled
+    // mean would compare different admitted/rejected mixtures across arms.
+    admissionDecisionAdmittedMs: summary.admissionDecision?.outcomes?.admitted?.decisionMsAvg ?? null,
+    admissionDecisionRejectedMs: summary.admissionDecision?.outcomes?.rejected?.decisionMsAvg ?? null,
+    admissionDecisionAdmittedSamples: summary.admissionDecision?.outcomes?.admitted?.decisions ?? null,
+    admissionDecisionRejectedSamples: summary.admissionDecision?.outcomes?.rejected?.decisions ?? null,
+    admissionQueueWaitAdmittedMs: summary.admissionDecision?.outcomes?.admitted?.queueWaitMsAvg ?? null,
+    admissionQueueWaitRejectedMs: summary.admissionDecision?.outcomes?.rejected?.queueWaitMsAvg ?? null,
+    admissionDecisionStatus: summary.admissionDecision?.status ?? null,
+    instrumentationRuntimeTaxNs: summary.admissionDecision?.instrumentationOverhead?.runtimeTaxNsPerDecision ?? null,
+    instrumentationTimerFloorNs: summary.admissionDecision?.instrumentationOverhead?.reportedTimerFloorNs ?? null,
+    // Legacy pooled fields remain readable for pre-0.26 evidence only.
     admissionOverheadMs: summary.admissionDecision?.overheadMsAvg ?? null,
-    admissionDecisionSamples: summary.admissionDecision?.decisions ?? null,
+    admissionDecisionSamples: summary.admissionDecision?.decisions ?? summary.admissionDecision?.totalDecisions ?? null,
     unattributedFailures: summary.health?.unattributed ?? null,
     // Which limit actually refused work. Without these in the aggregate, a
     // reader has to open five per-seed files to learn whether the token budget
@@ -732,7 +744,7 @@ export function buildSweepSummary({ mode, fault, seeds, records, adaptiveProofCo
   const numericTokenMetrics = tokenMetrics.map(({ progressiveConfiguration: _configuration, ...metrics }) => metrics);
 
   return {
-    schemaVersion: 8,
+    schemaVersion: 9,
     generatedAt: new Date().toISOString(),
     kind: mode === "compare" ? "paired-seed-sweep" : "seed-sweep",
     mode,

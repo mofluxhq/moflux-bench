@@ -255,9 +255,10 @@ function readRung(latencyMs) {
       ttftP50Ms: metrics.interactiveTtftP50Ms?.median ?? null,
       ttftP95Ms: metrics.interactiveTtftP95Ms?.median ?? null,
       successRate: metrics.interactiveSuccessRate?.median ?? null,
-      admissionOverheadMs: metrics.admissionOverheadMs?.median ?? null,
-      // Carried so a null average can be told apart from a measured zero and
-      // from an arm nothing timed at all.
+      admissionDecisionAdmittedMs: metrics.admissionDecisionAdmittedMs?.median ?? null,
+      admissionDecisionRejectedMs: metrics.admissionDecisionRejectedMs?.median ?? null,
+      admissionDecisionAdmittedSamples: metrics.admissionDecisionAdmittedSamples?.median ?? null,
+      admissionDecisionRejectedSamples: metrics.admissionDecisionRejectedSamples?.median ?? null,
       admissionDecisionSamples: metrics.admissionDecisionSamples?.median ?? null,
       /** False for every arm but redis; recorded so the report can say so. */
       coordinatorOnAdmissionPath: metrics.coordinatorOnAdmissionPath?.median ?? null,
@@ -292,8 +293,11 @@ function readRung(latencyMs) {
         ttftP50Ms: interactive.ttftMs?.p50 ?? null,
         ttftP95Ms: interactive.ttftMs?.p95 ?? null,
         successRate: interactive.successRate ?? null,
-        admissionOverheadMs: arm.admissionDecision?.overheadMsAvg ?? null,
-        admissionDecisionSamples: arm.admissionDecision?.decisions ?? null,
+        admissionDecisionAdmittedMs: arm.admissionDecision?.outcomes?.admitted?.decisionMsAvg ?? null,
+        admissionDecisionRejectedMs: arm.admissionDecision?.outcomes?.rejected?.decisionMsAvg ?? null,
+        admissionDecisionAdmittedSamples: arm.admissionDecision?.outcomes?.admitted?.decisions ?? null,
+        admissionDecisionRejectedSamples: arm.admissionDecision?.outcomes?.rejected?.decisions ?? null,
+        admissionDecisionSamples: arm.admissionDecision?.totalDecisions ?? arm.admissionDecision?.decisions ?? null,
       });
     }
   }
@@ -425,14 +429,16 @@ function buildReport() {
       /**
        * Whether this arm's admission decision was timed at all, kept separate
        * from what the timing said. `not-instrumented` is not a measurement of
-       * zero: the MoFlux arm admits inside Tyr rather than the local replica
-       * proxy, so no counter exists for it.
+       * zero. Historical evidence can predate direct Tyr timing; Tyr >= 0.27.0
+       * missing/zero metrics are rejected during presentation.
        */
       admissionDecision: {
         status: admissionDecisionStatus(rungs[0]?.admissionDecisionSamples),
+        framing: "Redis atomic reserve total decision cost vs MoFlux synchronous decisionDuration excluding queue wait; admitted and rejected are reported separately.",
         samplesPerRung: rungs.map((r) => ({
           coordinatorLatencyMs: r.coordinatorLatencyMs,
-          decisions: r.admissionDecisionSamples ?? null,
+          admitted: r.admissionDecisionAdmittedSamples ?? null,
+          rejected: r.admissionDecisionRejectedSamples ?? null,
         })),
       },
       rungDetail: rungs.map(({ perSeed, ...rest }) => rest),
@@ -442,7 +448,7 @@ function buildReport() {
   const redis = ladder.get("redis");
   const moflux = ladder.get("moflux");
   return {
-    schemaVersion: 6,
+    schemaVersion: 7,
     generatedAt: new Date().toISOString(),
     ladderId: LADDER_ID,
     reanalyzed: REANALYZE ? true : undefined,
@@ -534,8 +540,11 @@ console.table(
       // Never a bare dash: "not measured" and "measured zero" are different
       // claims, and printing both as "—" next to MoFlux invites a reader to
       // treat an absent counter as evidence of no admission overhead.
-      "admission slope": s.paired?.admissionOverhead
-        ? `${s.paired.admissionOverhead.medianSlope} ms/ms`
+      "admit decision slope": s.paired?.admissionDecisionAdmitted
+        ? `${s.paired.admissionDecisionAdmitted.medianSlope} ms/ms`
+        : admissionDecisionLabel(s.admissionDecision?.status),
+      "reject decision slope": s.paired?.admissionDecisionRejected
+        ? `${s.paired.admissionDecisionRejected.medianSlope} ms/ms`
         : admissionDecisionLabel(s.admissionDecision?.status),
       verdict: s.paired?.verdict ?? "—",
     };
@@ -561,10 +570,13 @@ const notMeasured = Object.entries(report.sensitivity)
   .map(([arm]) => arm);
 if (notMeasured.length > 0) {
   console.log(
-    `   admission decision not timed for: ${notMeasured.join(", ")} — no counter exists for these arms, ` +
-      `which is not a measurement of zero overhead.`,
+    `   admission decision not timed for: ${notMeasured.join(", ")} — absence is not a measurement of zero overhead.`,
   );
 }
+console.log(
+  "   admission-cost framing: Redis's atomic Lua reserve round trip is the complete Redis decision cost; " +
+    "MoFlux decisionDuration is synchronous local Tyr/ABL work and excludes queue wait. Outcomes are never pooled.",
+);
 
 const cross = report.pairedCrossover?.ttftP50;
 if (cross) {

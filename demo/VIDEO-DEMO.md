@@ -19,8 +19,8 @@ request characteristics.
 
 ## Runtime compatibility and setup
 
-The presenter is pinned to Tyr 0.26.0, Latchflo 0.12.4,
-async-bulkhead-llm 3.15.1, and async-bulkhead-ts 1.0.1. `npm run demo` uses
+The presenter is pinned to Tyr 0.27.0, Latchflo 0.12.4,
+async-bulkhead-llm 3.16.0, and async-bulkhead-ts 1.0.1. `npm run demo` uses
 Anthropic-shaped streams and enables progressive reconciliation with a
 256-token update step and a 256-token future-output safety margin. Input usage
 is available at stream start and cumulative output usage is reported while the
@@ -171,7 +171,7 @@ npm run demo:hetero:adaptive:blind
 ```
 
 `demo:lending` is the focused static-partition comparison. `demo:handoff` is
-the five-seed release proof for the acknowledged Latchflo 0.12.4 / Tyr 0.26.0
+the five-seed release proof for the acknowledged Latchflo 0.12.4 / Tyr 0.27.0
 handoff without the extra control arms. The adaptive heterogeneous commands are the recommended mixed-workload scenes:
 they add all control arms, select the headroom-aware 28/4 policy, and keep the same
 lognormal request sizes and acceptance gate. The blind variant
@@ -181,7 +181,7 @@ policy.
 This is a separate five-seed comparison because it changes the control-plane
 policy and lease cadence. The reference arm is an exact static 28/4 partition
 with interactive caps of 7/7/7/7. The MoFlux arm creates a Latchflo 0.12.4 demand-aware capacity group and
-receives live demand snapshots from Tyr 0.26.0. When batch demand returns,
+receives live demand snapshots from Tyr 0.27.0. When batch demand returns,
 Latchflo prepares drain grants for borrowed capacity; Tyr applies the lower
 limit by attrition, acknowledges it, and publishes fresh occupancy evidence.
 Latchflo can then commit the restored batch floor. Before every restrictive
@@ -206,7 +206,7 @@ idle-window occupancy above the static 28-slot ceiling provides independent
 corroboration somewhere in the sweep. Floor restoration requires a restoration handoff plus a post-lending Tyr `/stats` sample that restores both the protected concurrency and token floor; batch completions remain a separate service gate. The ACK barrier uses the first ACK for each unique drain grant, while repeated ACKs are retained only as diagnostics.
 Every adaptive seed must prove the drain ACKs precede commit, commit remains
 inside the applicable handoff safety deadline, and 500 ms Tyr `/stats` samples never show more applied
-capacity than the physical envelope. Admission ordering is measured separately. Tyr 0.26.0 exact admission provenance
+capacity than the physical envelope. Admission ordering is measured separately. Tyr 0.27.0 exact admission provenance
 is scoped to the restoration handoff that precedes the first data-plane-observed
 batch-floor restoration. Only admissions at or after that handoff's
 `handoff_prepared` event and within its predecessor/successor grant lineage are

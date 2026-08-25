@@ -456,7 +456,7 @@ const headroom = buildSweepSummary({
   records: headroomRecords,
 });
 assert.equal(headroom.capacityPolicy.profile, "adaptive-headroom-28-4");
-assert.equal(headroom.schemaVersion, 8);
+assert.equal(headroom.schemaVersion, 9);
 assert.deepEqual(headroom.headroomPolicy, {
   enabled: true,
   lenderPool: "sim-interactive",

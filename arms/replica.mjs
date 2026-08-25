@@ -122,6 +122,10 @@ const counters = {
   admissionWaitMsSum: 0,
   admissionOverheadMsSum: 0,
   admissionOverheadCount: 0,
+  admissionOverheadByOutcome: {
+    admitted: { sumMs: 0, count: 0 },
+    rejected: { sumMs: 0, count: 0 },
+  },
 };
 let inFlight = 0;
 let queueDepth = 0;
@@ -274,10 +278,14 @@ async function createRedisPolicy() {
         leaseId,
       ]);
       // Every admission pays this round trip. Arms 1-3 do not.
-      counters.admissionOverheadMsSum += performance.now() - started;
+      const decisionMs = performance.now() - started;
+      counters.admissionOverheadMsSum += decisionMs;
       counters.admissionOverheadCount += 1;
 
       const admitted = Number(reply[0]) === 1;
+      const outcome = admitted ? "admitted" : "rejected";
+      counters.admissionOverheadByOutcome[outcome].sumMs += decisionMs;
+      counters.admissionOverheadByOutcome[outcome].count += 1;
       if (!admitted) {
         return { ok: false, reason: String(reply[1]) };
       }
@@ -377,6 +385,16 @@ function renderMetrics() {
     "Admission decisions included in the overhead measurement.",
     counters.admissionOverheadCount,
   );
+  if (CONFIG.arm === "redis") {
+    for (const outcome of ["admitted", "rejected"]) {
+      const measured = counters.admissionOverheadByOutcome[outcome];
+      const labels = `{arm="${CONFIG.arm}",replica="${CONFIG.id}",outcome="${outcome}"}`;
+      lines.push(
+        `replica_admission_decision_seconds_sum${labels} ${(measured.sumMs / 1000).toFixed(9)}`,
+        `replica_admission_decision_seconds_count${labels} ${measured.count}`,
+      );
+    }
+  }
 
   c("replica_received_total", "Requests received from clients.", counters.received);
   c("replica_admitted_total", "Requests admitted locally.", counters.admitted);

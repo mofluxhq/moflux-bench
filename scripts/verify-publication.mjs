@@ -105,7 +105,7 @@ if (lock.packages?.[""]?.version !== pkg.version || lock.version !== pkg.version
 }
 const example = readFileSync(path.join(ROOT, "demo/moflux/.env.example"), "utf8");
 for (const expected of [
-  "MOFLUX_TYR_IMAGE=tyr-admission-controller:0.26.0",
+  "MOFLUX_TYR_IMAGE=tyr-admission-controller:0.27.0",
   "MOFLUX_LATCHFLO_IMAGE=latchflo-control-plane:0.12.4",
 ]) {
   if (!example.includes(expected)) {
@@ -126,8 +126,8 @@ if (!compose.includes("TYR_ROUTING_SECRET: ${TYR_ROUTING_SECRET:?Set TYR_ROUTING
 for (let replica = 1; replica <= 4; replica += 1) {
   const rel = `demo/moflux/tyr-r${replica}.yaml`;
   const yaml = readFileSync(path.join(ROOT, rel), "utf8");
-  if (!/^    version: 0\.26\.0$/m.test(yaml)) {
-    findings.push(`${rel}: control-plane metadata must identify Tyr 0.26.0`);
+  if (!/^    version: 0\.27\.0$/m.test(yaml)) {
+    findings.push(`${rel}: control-plane metadata must identify Tyr 0.27.0`);
   }
   if (!/^  anthropic:\n    baseUrl: http:\/\/host\.docker\.internal:9000$/m.test(yaml)) {
     findings.push(`${rel}: Anthropic simulator upstream is missing`);
@@ -166,7 +166,7 @@ for (let replica = 1; replica <= 4; replica += 1) {
     "defaultClass: noisy",
     "tenantIds: [tenant-premium]",
     "pools: [sim-shared, sim-ceilings, sim-protected, sim-adaptive]",
-    "version: 0.26.0",
+    "version: 0.27.0",
   ]) {
     if (!yaml.includes(required)) findings.push(`${rel}: missing ${required}`);
   }
@@ -300,7 +300,7 @@ for (const required of [
   "observedHeadroomTransfer",
 ]) {
   if (!presenter023.includes(required)) {
-    findings.push(`demo/present.mjs: missing 0.25.0 headroom/provenance feature ${required}`);
+    findings.push(`demo/present.mjs: missing retained headroom/provenance feature ${required}`);
   }
 }
 
@@ -316,8 +316,8 @@ if (!pkg.scripts?.["demo:progressive"]?.includes("--provider-api=anthropic") ||
     !pkg.scripts?.["demo:openai"]?.includes("--provider-api=openai")) {
   findings.push("package.json: progressive and OpenAI compatibility demo commands are required");
 }
-if (pkg.version !== "0.25.0") {
-  findings.push("package.json: the current benchmark release must be version 0.25.0");
+if (pkg.version !== "0.26.0") {
+  findings.push("package.json: the current benchmark release must be version 0.26.0");
 }
 const classesScript = pkg.scripts?.["demo:classes"] ?? "";
 for (const required of ["demo/tenant-fairness.mjs", "--seeds=1-5", "--require-proof"]) {
@@ -383,8 +383,8 @@ for (const required of [
   }
 }
 const seedSweepLib025 = readFileSync(path.join(ROOT, "demo/seed-sweep-lib.mjs"), "utf8");
-if (!seedSweepLib025.includes("schemaVersion: 8")) {
-  findings.push("demo/seed-sweep-lib.mjs: 0.25.0 headroom-policy evidence requires schemaVersion 8");
+if (!seedSweepLib025.includes("schemaVersion: 9")) {
+  findings.push("demo/seed-sweep-lib.mjs: 0.26.0 evidence requires schemaVersion 9");
 }
 for (const required of [
   "headroomPolicyEvidence",
@@ -416,8 +416,22 @@ for (const required of [
     findings.push(`demo/lending-evidence-lib.mjs: missing correlated headroom evidence ${required}`);
   }
 }
+const admissionTimingLib = readFileSync(path.join(ROOT, "demo/admission-timing-lib.mjs"), "utf8");
+for (const required of [
+  "tyr_admission_decision_seconds_sum",
+  "tyr_admission_queue_wait_seconds_sum",
+  "population mismatch",
+  "Redis's atomic Lua reserve round trip",
+  "measureAdmissionClockOverhead",
+]) {
+  if (!admissionTimingLib.includes(required)) findings.push(`demo/admission-timing-lib.mjs: missing 0.26.0 timing evidence ${required}`);
+}
+if (!presenter023.includes("assertTyrEnforceMode") || !presenter023.includes("summarizeTyrAdmissionTiming")) {
+  findings.push("demo/present.mjs: 0.26.0 must runtime-assert enforce mode and collect Tyr admission timing");
+}
+
 const verifyRunner = readFileSync(path.join(ROOT, "scripts/verify.mjs"), "utf8");
-for (const required of ["demo/verify-admission-provenance.mjs", "demo/verify-headroom-compare.mjs"]) {
+for (const required of ["demo/verify-admission-provenance.mjs", "demo/verify-admission-timing.mjs", "demo/verify-headroom-compare.mjs"]) {
   if (!verifyRunner.includes(required)) findings.push(`scripts/verify.mjs: missing ${required}`);
 }
 

@@ -489,13 +489,15 @@ export function pairedSensitivity(series, options = {}) {
   const ttftP50 = pairedMetric(series, "ttftP50Ms");
   const ttftP95 = pairedMetric(series, "ttftP95Ms");
   const successRate = pairedMetric(series, "successRate");
-  const admissionOverhead = pairedMetric(series, "admissionOverheadMs");
+  const admissionDecisionAdmitted = pairedMetric(series, "admissionDecisionAdmittedMs");
+  const admissionDecisionRejected = pairedMetric(series, "admissionDecisionRejectedMs");
   const { verdict, basis } = verdictWithBasis(ttftP50, options);
   return {
     ttftP50,
     ttftP95,
     successRate,
-    admissionOverhead,
+    admissionDecisionAdmitted,
+    admissionDecisionRejected,
     verdict,
     verdictBasis: basis,
     /**
@@ -640,10 +642,10 @@ export function orderConfounding(executionOrder) {
  *                          the decision was timed
  *   no-coordinator-calls   the arm was instrumented and made no coordinator
  *                          calls at all — a measured zero, not a missing one
- *   not-instrumented       nothing timed the decision. The MoFlux arm admits
- *                          inside Tyr rather than the local replica proxy, so
- *                          no counter exists for it; runs predating the
- *                          counters are in this state too
+ *   not-instrumented       this evidence artifact predates direct timing support,
+ *                          or the selected runtime does not expose the metric.
+ *                          Tyr >= 0.27.0 treats missing/zero timing as an error
+ *                          before this classifier is reached
  *
  * The distinction matters because "not measured" printed as a dash next to
  * MoFlux reads as "MoFlux has no admission overhead", which is a claim this
