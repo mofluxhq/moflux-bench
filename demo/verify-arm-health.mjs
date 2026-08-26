@@ -78,7 +78,7 @@ const deadUpstream = summary(
   cls({ attempts: 616, success: 0, localReject: 0, upstreamReject: 0, transportError: 616 }),
   cls({ attempts: 152, success: 0, localReject: 0, upstreamReject: 0, transportError: 152 }),
 );
-check("transport failures fail the same gate as non-2xx failures", !armHealth(deadUpstream).ok);
+check("transport failures fail the same gate as unattributed 5xx failures", !armHealth(deadUpstream).ok);
 
 // ── outcomes that are real results ───────────────────────────────────
 check("a healthy mixed arm passes", armHealth(summary(cls())).ok);

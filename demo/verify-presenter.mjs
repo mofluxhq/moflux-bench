@@ -525,6 +525,12 @@ ${run.stderr}`);
       if (body.minimumGrantMaxConcurrent !== 1) {
         throw new Error(`${pool} omitted Latchflo 0.12.4 minimumGrantMaxConcurrent=1`);
       }
+      const expectedMaxQueue = pool === "sim-interactive" ? 1 : 0;
+      if (body.maxQueuePerAgent !== expectedMaxQueue) {
+        throw new Error(
+          `${pool} maxQueuePerAgent was ${body.maxQueuePerAgent}, expected ${expectedMaxQueue}`,
+        );
+      }
       if (body.minimumGrantTokenBudget !== expectedMinimumTokens[pool]) {
         throw new Error(
           `${pool} minimumGrantTokenBudget was ${body.minimumGrantTokenBudget}, ` +

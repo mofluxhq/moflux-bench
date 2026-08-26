@@ -474,110 +474,124 @@ async function issue(entry) {
         s.admissionClassResponses[responseAdmissionClass] =
           (s.admissionClassResponses[responseAdmissionClass] ?? 0) + 1;
         touch("response");
-        if (response.status === 429) {
-          // The distinction that matters: was this refused cheaply at the
-          // admission layer, or earned the hard way after upstream work?
-          const rejectedLocally =
-            response.headers.get("x-bench-local") === "1" ||
-            response.headers.has("x-admission-reason");
-          if (rejectedLocally) {
-            s.localReject += 1;
-            s.lastLocalRejectAtMs = +offsetMs().toFixed(1);
-            const raw = await response.text().catch(() => "");
-            let parsed = null;
-            try {
-              parsed = raw ? JSON.parse(raw) : null;
-            } catch {
-              // Preserve the header reason even when a proxy returns non-JSON.
-            }
-            const reason =
-              response.headers.get("x-admission-reason") ??
-              parsed?.error?.reason ??
-              "unknown";
-            const pool = parsed?.error?.pool ?? "unknown";
-            const rejectionDetail = parsed?.error?.detail ?? null;
-            const rawCapacityConstraint =
-              typeof rejectionDetail?.constraint === "string" && rejectionDetail.constraint.length > 0
-                ? rejectionDetail.constraint
-                : null;
-            const capacityConstraint = rawCapacityConstraint !== null
-              ? (CAPACITY_CONSTRAINTS.has(rawCapacityConstraint) ? rawCapacityConstraint : "other")
-              : (
-                  rejectionDetail?.admissionClass === undefined && CAPACITY_REJECT_REASONS.has(reason)
-                    ? "global"
-                    : "unspecified"
-                );
-            s.localRejectReasons[reason] = (s.localRejectReasons[reason] ?? 0) + 1;
-            s.localRejectPools[pool] = (s.localRejectPools[pool] ?? 0) + 1;
-            s.localRejectConstraints[capacityConstraint] =
-              (s.localRejectConstraints[capacityConstraint] ?? 0) + 1;
+        // Tyr normally uses 429 for local admission rejections, but a bounded
+        // queue that expires is intentionally surfaced as 504 with
+        // x-admission-reason: timeout. That is still an attributable admission
+        // decision, not a broken request path. Keep unmarked 5xx responses in
+        // serverError so provider/proxy/control-plane faults remain visible.
+        const admissionReasonHeader = response.headers.get("x-admission-reason");
+        const rejectedLocally =
+          response.headers.get("x-bench-local") === "1" ||
+          admissionReasonHeader !== null;
+        const localAdmissionResponse =
+          rejectedLocally &&
+          (response.status === 429 ||
+            (response.status === 504 && admissionReasonHeader === "timeout"));
 
-            const numericHeader = (name) => {
-              const value = response.headers.get(name);
-              if (value === null || value.trim() === "") return null;
-              const parsedValue = Number(value);
-              return Number.isFinite(parsedValue) ? parsedValue : null;
-            };
-            const grantId = response.headers.get("x-latchflo-grant-id");
-            const controllerEpoch = numericHeader("x-latchflo-controller-epoch");
-            s.localRejectSnapshots.push({
-              requestId: entry.id,
-              requestClass: cls,
-              attempt: attempt + 1,
-              rejectedAtMs: s.lastLocalRejectAtMs,
-              target,
-              type: parsed?.error?.type ?? null,
-              pool,
-              reason,
-              admissionClass:
-                responseAdmissionClass === "unclassified" ? null : responseAdmissionClass,
-              admissionRevision:
-                numericHeader("x-admission-revision") ??
-                (rejectionDetail?.limitRevision !== null &&
-                rejectionDetail?.limitRevision !== undefined &&
-                Number.isFinite(Number(rejectionDetail.limitRevision))
-                  ? Number(rejectionDetail.limitRevision)
-                  : null),
-              retryAfterMs: numericHeader("x-admission-retry-after-ms"),
-              grant:
-                grantId === null && controllerEpoch === null
-                  ? null
-                  : { id: grantId, controllerEpoch },
-              detail: rejectionDetail,
-            });
-
-            // Keep the historical compact token-range aggregate for dashboards
-            // and existing consumers. The full snapshot above is the evidence
-            // source when the exact admission-time state matters.
-            const tokenDetail = rejectionDetail?.tokenBudget;
-            const key = `${pool}/${reason}`;
-            const aggregate = s.localRejectDetails[key] ?? {
-              pool,
-              reason,
-              count: 0,
-              requestedMin: null,
-              requestedMax: null,
-              availableMin: null,
-              availableMax: null,
-              budgetMin: null,
-              budgetMax: null,
-            };
-            aggregate.count += 1;
-            for (const [field, minKey, maxKey] of [
-              ["requested", "requestedMin", "requestedMax"],
-              ["available", "availableMin", "availableMax"],
-              ["budget", "budgetMin", "budgetMax"],
-            ]) {
-              const value = Number(tokenDetail?.[field]);
-              if (!Number.isFinite(value)) continue;
-              aggregate[minKey] = aggregate[minKey] === null ? value : Math.min(aggregate[minKey], value);
-              aggregate[maxKey] = aggregate[maxKey] === null ? value : Math.max(aggregate[maxKey], value);
-            }
-            s.localRejectDetails[key] = aggregate;
-          } else {
-            s.upstreamReject += 1;
-            await response.arrayBuffer().catch(() => {});
+        if (localAdmissionResponse) {
+          s.localReject += 1;
+          s.lastLocalRejectAtMs = +offsetMs().toFixed(1);
+          const raw = await response.text().catch(() => "");
+          let parsed = null;
+          try {
+            parsed = raw ? JSON.parse(raw) : null;
+          } catch {
+            // Preserve the header reason even when a proxy returns non-JSON.
           }
+          const reason =
+            admissionReasonHeader ??
+            parsed?.error?.reason ??
+            "unknown";
+          const pool = parsed?.error?.pool ?? "unknown";
+          const rejectionDetail = parsed?.error?.detail ?? null;
+          const rawCapacityConstraint =
+            typeof rejectionDetail?.constraint === "string" && rejectionDetail.constraint.length > 0
+              ? rejectionDetail.constraint
+              : null;
+          const capacityConstraint = rawCapacityConstraint !== null
+            ? (CAPACITY_CONSTRAINTS.has(rawCapacityConstraint) ? rawCapacityConstraint : "other")
+            : (
+                rejectionDetail?.admissionClass === undefined && CAPACITY_REJECT_REASONS.has(reason)
+                  ? "global"
+                  : "unspecified"
+              );
+          s.localRejectReasons[reason] = (s.localRejectReasons[reason] ?? 0) + 1;
+          s.localRejectPools[pool] = (s.localRejectPools[pool] ?? 0) + 1;
+          s.localRejectConstraints[capacityConstraint] =
+            (s.localRejectConstraints[capacityConstraint] ?? 0) + 1;
+
+          const numericHeader = (name) => {
+            const value = response.headers.get(name);
+            if (value === null || value.trim() === "") return null;
+            const parsedValue = Number(value);
+            return Number.isFinite(parsedValue) ? parsedValue : null;
+          };
+          const grantId = response.headers.get("x-latchflo-grant-id");
+          const controllerEpoch = numericHeader("x-latchflo-controller-epoch");
+          s.localRejectSnapshots.push({
+            requestId: entry.id,
+            requestClass: cls,
+            attempt: attempt + 1,
+            rejectedAtMs: s.lastLocalRejectAtMs,
+            target,
+            type: parsed?.error?.type ?? null,
+            pool,
+            reason,
+            admissionClass:
+              responseAdmissionClass === "unclassified" ? null : responseAdmissionClass,
+            admissionRevision:
+              numericHeader("x-admission-revision") ??
+              (rejectionDetail?.limitRevision !== null &&
+              rejectionDetail?.limitRevision !== undefined &&
+              Number.isFinite(Number(rejectionDetail.limitRevision))
+                ? Number(rejectionDetail.limitRevision)
+                : null),
+            retryAfterMs: numericHeader("x-admission-retry-after-ms"),
+            grant:
+              grantId === null && controllerEpoch === null
+                ? null
+                : { id: grantId, controllerEpoch },
+            detail: rejectionDetail,
+          });
+
+          // Keep the historical compact token-range aggregate for dashboards
+          // and existing consumers. The full snapshot above is the evidence
+          // source when the exact admission-time state matters.
+          const tokenDetail = rejectionDetail?.tokenBudget;
+          const key = `${pool}/${reason}`;
+          const aggregate = s.localRejectDetails[key] ?? {
+            pool,
+            reason,
+            count: 0,
+            requestedMin: null,
+            requestedMax: null,
+            availableMin: null,
+            availableMax: null,
+            budgetMin: null,
+            budgetMax: null,
+          };
+          aggregate.count += 1;
+          for (const [field, minKey, maxKey] of [
+            ["requested", "requestedMin", "requestedMax"],
+            ["available", "availableMin", "availableMax"],
+            ["budget", "budgetMin", "budgetMax"],
+          ]) {
+            const value = Number(tokenDetail?.[field]);
+            if (!Number.isFinite(value)) continue;
+            aggregate[minKey] = aggregate[minKey] === null ? value : Math.min(aggregate[minKey], value);
+            aggregate[maxKey] = aggregate[maxKey] === null ? value : Math.max(aggregate[maxKey], value);
+          }
+          s.localRejectDetails[key] = aggregate;
+          if (attempt + 1 < CONFIG.maxAttempts) {
+            touch("backoff");
+            await backoff(s, entry, attempt, response);
+          }
+          continue;
+        }
+        if (response.status === 429) {
+          // A 429 without local-admission markers came from the provider.
+          s.upstreamReject += 1;
+          await response.arrayBuffer().catch(() => {});
           if (attempt + 1 < CONFIG.maxAttempts) {
             touch("backoff");
             await backoff(s, entry, attempt, response);
@@ -755,7 +769,7 @@ function renderMetrics() {
     );
   }
   emit("counter", "bench_upstream_rejects_total", "429s earned after upstream work.", rows((s) => s.upstreamReject));
-  emit("counter", "bench_server_errors_total", "5xx responses.", rows((s) => s.serverError));
+  emit("counter", "bench_server_errors_total", "Unattributed 5xx responses.", rows((s) => s.serverError));
   emit("counter", "bench_transport_errors_total", "Connection failures.", rows((s) => s.transportError));
   emit("counter", "bench_exhausted_total", "Logical requests that never succeeded.", rows((s) => s.exhausted));
   emit("counter", "bench_output_tokens_total", "Output tokens delivered to clients.", rows((s) => Math.round(s.outputTokens)));

@@ -25,11 +25,11 @@
  * The load generator already separates outcomes it can attribute to a policy
  * from outcomes it cannot:
  *
- *   localReject     an admission policy refused it        — a real result
- *   upstreamReject  the provider returned 429             — a real result
- *   success         it completed                          — a real result
- *   serverError     non-2xx, non-429 from the hop         — nobody decided this
- *   transportError  connection failed or stream died      — nobody decided this
+ *   localReject     admission refused it (429 or queue-timeout 504) — a real result
+ *   upstreamReject  the provider returned 429                    — a real result
+ *   success         it completed                                 — a real result
+ *   serverError     unattributed 5xx from the hop                 — nobody decided this
+ *   transportError  connection failed or stream died             — nobody decided this
  *
  * The last two are harness faults. Across all 42 arm summaries committed under
  * `results/` — five seeds x four arms x two classes — both are zero on every
@@ -101,12 +101,12 @@ export function armHealth(summary) {
     // model.
     reason =
       `every one of the ${totals.attempts} attempts failed without a single admission decision ` +
-      `(${totals.transportError} transport, ${totals.serverError} non-2xx). ` +
+      `(${totals.transportError} transport, ${totals.serverError} unattributed 5xx). ` +
       "Zero successes and zero rejects is not a policy outcome";
   } else if (unattributedRate > UNATTRIBUTED_FAILURE_TOLERANCE) {
     reason =
       `${totals.unattributed} of ${totals.attempts} attempts (${(unattributedRate * 100).toFixed(1)}%) ` +
-      `failed with no attributable cause (${totals.transportError} transport, ${totals.serverError} non-2xx); ` +
+      `failed with no attributable cause (${totals.transportError} transport, ${totals.serverError} unattributed 5xx); ` +
       `the tolerance is ${(UNATTRIBUTED_FAILURE_TOLERANCE * 100).toFixed(0)}%`;
   }
 

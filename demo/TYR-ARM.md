@@ -25,9 +25,16 @@ below one request's token reservation fails explicitly. Tyr 0.27.0 also polls
 private capacity snapshots from the other three replicas and can forward a
 request once to the peer with the best request-specific headroom. The shared
 routing secret is generated in the ignored local `.env`; Latchflo does not
-distribute topology or secrets. Tyr 0.27.0 also reports per-pool in-flight work,
-recent admissions and rejections, and token headroom on its authenticated
-Latchflo heartbeat. `npm run demo:lending` uses those reports to drive a
+distribute topology or secrets. MoFlux Bench 0.27.0 grants `sim-interactive`
+exactly one local waiter per Tyr replica while keeping `sim-batch` at zero; the
+interactive replica configs bound that wait at 750 ms. Tyr 0.27.0 reports
+per-pool in-flight and pending work, recent admissions and rejections, and token
+headroom on its authenticated Latchflo heartbeat, so sustained queue pressure
+feeds the same headroom-restoration path as rejection pressure. A 750 ms queue
+expiry is an explicit Tyr admission outcome (`504` plus
+`x-admission-reason: timeout`) and the benchmark counts it as a local rejection,
+not as an unattributed server fault. `npm run
+demo:lending` uses those reports to drive a
 Latchflo 0.12.4 demand-aware capacity group with a fully funded 28/4 protected
 split; normal runs retain the static 31/1 policy. All four replicas register for interactive traffic, while replica 4
 also registers for batch. Once all registrations are

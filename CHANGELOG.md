@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.27.0 - 2026-08-26
+
+- Enable bounded interactive queueing for the licensed MoFlux arm: each `sim-interactive` Tyr replica may hold exactly one waiter, with a 750 ms construction-time queue timeout.
+- Keep `sim-batch` fail-fast (`maxQueuePerAgent: 0`) so queueing cannot consume or obscure the protected batch floor.
+- Apply the queue ceiling through Latchflo-managed pool limits rather than static Tyr startup capacity. Tyr still starts at `maxQueue: 0` until the authoritative managed grant arrives.
+- Reuse Tyr's existing pending-demand heartbeat and Latchflo 0.12.4 pressure policy: persistent interactive queue pressure disables active-demand headroom lending and drives the protected interactive guarantee back into eligibility.
+- Add topology, presenter, and publication checks that pin the 1/0 queue split and 750 ms interactive timeout.
+- Treat Tyr's bounded-queue expiry response (`504` with `x-admission-reason: timeout`) as an attributable local admission rejection, preserving rejection snapshots and retry hints instead of misclassifying the decision as a harness `serverError`. Unmarked `504` responses remain harness/server faults.
+
 ## 0.26.0 - 2026-08-25
 
 - Pin new licensed runs to Tyr 0.27.0, Latchflo 0.12.4, async-bulkhead-llm 3.16.0, and async-bulkhead-ts 1.0.1.

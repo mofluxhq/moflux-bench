@@ -316,8 +316,8 @@ if (!pkg.scripts?.["demo:progressive"]?.includes("--provider-api=anthropic") ||
     !pkg.scripts?.["demo:openai"]?.includes("--provider-api=openai")) {
   findings.push("package.json: progressive and OpenAI compatibility demo commands are required");
 }
-if (pkg.version !== "0.26.0") {
-  findings.push("package.json: the current benchmark release must be version 0.26.0");
+if (pkg.version !== "0.27.0") {
+  findings.push("package.json: the current benchmark release must be version 0.27.0");
 }
 const classesScript = pkg.scripts?.["demo:classes"] ?? "";
 for (const required of ["demo/tenant-fairness.mjs", "--seeds=1-5", "--require-proof"]) {
@@ -427,11 +427,30 @@ for (const required of [
   if (!admissionTimingLib.includes(required)) findings.push(`demo/admission-timing-lib.mjs: missing 0.26.0 timing evidence ${required}`);
 }
 if (!presenter023.includes("assertTyrEnforceMode") || !presenter023.includes("summarizeTyrAdmissionTiming")) {
-  findings.push("demo/present.mjs: 0.26.0 must runtime-assert enforce mode and collect Tyr admission timing");
+  findings.push("demo/present.mjs: 0.27.0 must runtime-assert enforce mode and collect Tyr admission timing");
+}
+const queuePolicy = readFileSync(path.join(ROOT, "demo/queue-policy.mjs"), "utf8");
+for (const required of [
+  '"sim-interactive": Object.freeze({ maxQueuePerAgent: 1, queueTimeoutMs: 750 })',
+  '"sim-batch": Object.freeze({ maxQueuePerAgent: 0 })',
+  'maxQueuePerAgentForPool',
+]) {
+  if (!queuePolicy.includes(required)) {
+    findings.push(`demo/queue-policy.mjs: missing 0.27.0 bounded interactive queue policy ${required}`);
+  }
+}
+if (!presenter023.includes('maxQueuePerAgentForPool(partition.name)')) {
+  findings.push("demo/present.mjs: managed pool configuration must apply the shared queue policy");
+}
+for (let replica = 1; replica <= 4; replica += 1) {
+  const config = readFileSync(path.join(ROOT, `demo/moflux/tyr-r${replica}.yaml`), "utf8");
+  if (!/^    queueTimeoutMs: 750$/m.test(config)) {
+    findings.push(`demo/moflux/tyr-r${replica}.yaml: interactive queue timeout must be 750 ms`);
+  }
 }
 
 const verifyRunner = readFileSync(path.join(ROOT, "scripts/verify.mjs"), "utf8");
-for (const required of ["demo/verify-admission-provenance.mjs", "demo/verify-admission-timing.mjs", "demo/verify-headroom-compare.mjs"]) {
+for (const required of ["demo/verify-admission-provenance.mjs", "demo/verify-admission-timing.mjs", "demo/verify-headroom-compare.mjs", "demo/verify-queue-policy.mjs"]) {
   if (!verifyRunner.includes(required)) findings.push(`scripts/verify.mjs: missing ${required}`);
 }
 

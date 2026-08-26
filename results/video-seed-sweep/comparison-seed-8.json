@@ -1,0 +1,72 @@
+{
+  "generatedAt": "2026-08-26T22:59:00.471Z",
+  "scenario": {
+    "id": "f4963bb64ef5",
+    "workload": {
+      "durationMs": 45000,
+      "seed": 8,
+      "interactiveRps": 6,
+      "interactiveInputChars": 1200,
+      "interactiveMaxTokens": 400,
+      "batchStartMs": 27000,
+      "batchDurationMs": 15750,
+      "batchRps": 3,
+      "batchInputChars": 24000,
+      "batchMaxTokens": 3000,
+      "maxAttempts": 4,
+      "backoffBaseMs": 250,
+      "sizeDistribution": "lognormal",
+      "interactiveSizeSigma": 0.75,
+      "batchSizeSigma": 0,
+      "inFlightCeiling": 3000,
+      "windowMs": 30000,
+      "honorRetryHints": true
+    },
+    "provider": {
+      "api": "anthropic",
+      "envelope": 32,
+      "queue": 8,
+      "sigma": 0.25,
+      "kappa": 0,
+      "r1": 400,
+      "inputCharRatio": 3.6,
+      "inputJitter": 0.04,
+      "seed": 8
+    },
+    "trace": {
+      "version": 2,
+      "hash": "b7b32666240e9fb6e7892f9f9bb7846638e411d0326ceb7660542f8227f993d9",
+      "planned": {
+        "interactive": 267,
+        "batch": 44,
+        "total": 311
+      },
+      "evidence": "results/runs/video-seed-sweep/20260826T204430Z-coord-20ms/scratch/scenario-trace.json"
+    },
+    "routing": {
+      "interactiveReplicas": [
+        "http://127.0.0.1:8101",
+        "http://127.0.0.1:8102",
+        "http://127.0.0.1:8103",
+        "http://127.0.0.1:8104"
+      ],
+      "batchReplicas": [
+        "http://127.0.0.1:8104"
+      ]
+    }
+  },
+  "arms": {
+    "baseline": "results/baseline.json",
+    "moflux": "results/moflux-enforce.json"
+  },
+  "metrics": {
+    "interactiveSuccessPercentagePointChange": 14.6,
+    "interactiveGoodputChangePercent": 17.73,
+    "interactiveP95LatencyChangePercent": -21.63,
+    "interactiveTailRatioBaseline": 1.8754,
+    "interactiveTailRatioMoflux": 2.1988,
+    "interactiveTailInflationChangePercent": 17.24,
+    "upstream429Baseline": 346,
+    "upstream429Moflux": 0
+  }
+}

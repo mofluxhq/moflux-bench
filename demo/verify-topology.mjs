@@ -29,6 +29,22 @@ for (let replica = 1; replica <= 4; replica += 1) {
 
   assert.deepEqual(controlled, configured, `${path.basename(file)} config and control-plane pools differ`);
   assert.ok(configured.includes("sim-interactive"), `${path.basename(file)} must carry interactive traffic`);
+  const interactiveBlock = /^  - name: sim-interactive\n(?:(?!^  - name: )[\s\S])*?(?=^  - name: |^routing:)/m.exec(yaml)?.[0] ?? "";
+  assert.match(
+    interactiveBlock,
+    /^    maxQueue: 0$/m,
+    `${path.basename(file)} must start fail-fast until the managed grant is applied`,
+  );
+  assert.match(
+    interactiveBlock,
+    /^    queueTimeoutMs: 750$/m,
+    `${path.basename(file)} must bound interactive queue wait at 750 ms`,
+  );
+  if (replica === 4) {
+    const batchBlock = /^  - name: sim-batch\n(?:(?!^  - name: )[\s\S])*?(?=^routing:)/m.exec(yaml)?.[0] ?? "";
+    assert.match(batchBlock, /^    maxQueue: 0$/m, "batch must remain fail-fast");
+    assert.doesNotMatch(batchBlock, /^    queueTimeoutMs:/m, "batch must not opt into queueing");
+  }
 
   const expected = replica === 4
     ? ["sim-interactive", "sim-batch"]

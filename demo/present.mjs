@@ -61,6 +61,7 @@ import {
   imageMatchesVersion,
 } from "./env-lib.mjs";
 import { assertSafeResultsDir } from "./evidence-paths-lib.mjs";
+import { maxQueuePerAgentForPool } from "./queue-policy.mjs";
 import {
   assertHostPortFree,
   fetchWithTimeout,
@@ -1052,7 +1053,7 @@ async function configurePools(token, grantTtlMs, { allowCreate }) {
     const pool = {
       globalMaxConcurrent: partition.ceilingMaxConcurrent,
       minimumGrantMaxConcurrent: 1,
-      maxQueuePerAgent: 0,
+      maxQueuePerAgent: maxQueuePerAgentForPool(partition.name),
       globalTokenBudget: partition.ceilingTokenBudget,
       minimumGrantTokenBudget: partition.reservation.requiredLocalGrant,
       globalHighPriorityReserve: 0,

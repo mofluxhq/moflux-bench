@@ -183,6 +183,19 @@ may consume it, but if nobody does, it stays usable by interactive instead of
 becoming stranded. Batch itself has no headroom-lending configuration and
 retains its protected 4-slot / 40,000-token entitlement.
 
+MoFlux Bench 0.27.0 also enables one bounded local waiter on every
+`sim-interactive` Tyr replica. Latchflo grants `maxQueuePerAgent: 1` only to
+`sim-interactive`; `sim-batch` remains `maxQueuePerAgent: 0`. Each interactive
+replica pins `queueTimeoutMs: 750`, so the queue converts only short concurrency
+transients into waiting rather than becoming a second backlog. Tyr continues to
+report live `pending` demand on its authenticated Latchflo heartbeat. Sustained
+pressure therefore makes interactive headroom ineligible under Latchflo 0.12.4,
+while a single short wait can complete locally without taking capacity away from
+the four-slot batch floor. If that bounded wait expires, Tyr returns an
+attributable admission rejection as HTTP 504 with `x-admission-reason: timeout`;
+the load generator records it as `localReject` (including its snapshot and retry
+hint), while an unmarked 504 remains a harness/server fault.
+
 Both profiles enable `--require-adaptive-proof`. The command exits unsuccessfully
 if any seed falls below 90% interactive success, completes fewer than four batch
 requests, lacks the required Latchflo lending/restoration evidence, cannot prove
@@ -872,7 +885,7 @@ npm run demo:coordinator:adaptive -- --resume=20260813T201610Z
 
 ### What the admission-decision measurement covers
 
-MoFlux Bench 0.26.0 measures both sides directly. Redis times its atomic Lua
+MoFlux Bench 0.27.0 measures both sides directly. Redis times its atomic Lua
 reserve round trip, which grants or refuses immediately and therefore has no
 separate queue-wait component. Tyr 0.27.0 exports
 `tyr_admission_decision_seconds` and `tyr_admission_queue_wait_seconds`; the

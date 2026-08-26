@@ -50,7 +50,7 @@ Latchflo/Tyr state, then the verified single-pair presenter:
 
 1. validates Docker, Compose, licensed images, and configuration;
 2. starts Latchflo, the telemetry relay, Prometheus, and Grafana;
-3. creates or updates `sim-interactive` and `sim-batch` with a short enrollment lease, an exact 31/1 concurrency split, 30,000/10,000 token budgets, and Latchflo 0.12.4 minimum-grant floors (1 slot; 755 interactive tokens; 9,942 batch tokens);
+3. creates or updates `sim-interactive` and `sim-batch` with a short enrollment lease, an exact 31/1 concurrency split, 30,000/10,000 token budgets, Latchflo 0.12.4 minimum-grant floors (1 slot; 755 interactive tokens; 9,942 batch tokens), and the bounded queue policy: one managed waiter per interactive Tyr replica, zero batch waiters; each interactive Tyr pins a 750 ms queue timeout;
 4. runs the no-control arm;
 5. replaces passthrough replicas with Tyr, waits for all four registrations,
    promotes the pools to the steady-state lease, and waits for one simultaneous
