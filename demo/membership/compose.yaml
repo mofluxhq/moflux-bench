@@ -1,0 +1,31 @@
+services:
+  latchflo:
+    image: ${MOFLUX_LATCHFLO_IMAGE:?Set MOFLUX_LATCHFLO_IMAGE}
+    restart: "no"
+    environment:
+      LATCHFLO_HOST: 0.0.0.0
+      LATCHFLO_PORT: "8080"
+      LATCHFLO_DATABASE_PATH: /app/data/latchflo-control-plane.db
+      LATCHFLO_ADMIN_TOKEN: ${LATCHFLO_ADMIN_TOKEN:?Set LATCHFLO_ADMIN_TOKEN}
+      LATCHFLO_AGENT_BOOTSTRAP_TOKEN: ${LATCHFLO_AGENT_BOOTSTRAP_TOKEN:?Set LATCHFLO_AGENT_BOOTSTRAP_TOKEN}
+      LATCHFLO_HEARTBEAT_INTERVAL_MS: "500"
+      LATCHFLO_POLL_INTERVAL_MS: "250"
+      LATCHFLO_AGENT_TIMEOUT_MS: "1200"
+      LATCHFLO_RECONCILE_INTERVAL_MS: "250"
+    ports:
+      - "127.0.0.1:18081:8080"
+    tmpfs:
+      - /app/data:uid=10001,gid=999,mode=0755
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - >-
+          fetch('http://127.0.0.1:8080/readyz')
+          .then(response => { if (!response.ok) process.exit(1); })
+          .catch(() => process.exit(1))
+      interval: 200ms
+      timeout: 1s
+      start_period: 1s
+      retries: 50

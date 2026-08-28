@@ -45,6 +45,8 @@ export const REVIEWED_EVIDENCE = Object.freeze([
   "results/moflux-seed-sweep/",
   "results/moflux-fault-seed-sweep.json",
   "results/moflux-fault-seed-sweep/",
+  "results/openai-live-compatibility.json",
+  "results/openai-live-compatibility/",
 ]);
 
 /** Directory under the results root that holds generated runs. */
@@ -77,7 +79,9 @@ export function isReviewedEvidence(rel) {
 export function reviewedEvidenceInside(rel) {
   const candidate = normalize(rel);
   if (candidate === "" || candidate === ".") return [...REVIEWED_EVIDENCE];
-  return REVIEWED_EVIDENCE.filter((entry) => normalize(entry).startsWith(`${candidate}/`));
+  return REVIEWED_EVIDENCE.filter((entry) =>
+    normalize(entry).startsWith(`${candidate}/`),
+  );
 }
 
 /**
@@ -137,7 +141,10 @@ export function assertSafeOutputFile(file, root, label = "output file") {
  * disambiguates the pathological case of two runs starting in the same second.
  */
 export function runId(now = new Date(), suffix = "") {
-  const stamp = now.toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
+  const stamp = now
+    .toISOString()
+    .replace(/[-:]/g, "")
+    .replace(/\.\d+Z$/, "Z");
   return suffix ? `${stamp}-${suffix}` : stamp;
 }
 
