@@ -1,0 +1,4581 @@
+{
+  "schemaVersion": 1,
+  "benchmark": "openai-live-overload-sweep",
+  "generatedAt": "2026-08-29T21:24:58.373Z",
+  "mode": "sweep",
+  "purpose": "Sequential matched real-OpenAI overload comparisons aggregated across independently guarded, rate-limit-isolated seeds. Each seed replays one immutable trace through direct OpenAI, an undifferentiated static cap, and Tyr protected admission classes.",
+  "runtime": {
+    "tyr": "0.28.0",
+    "model": "gpt-5.6-luna"
+  },
+  "workload": {
+    "durationMs": 10000,
+    "interactiveRps": 10,
+    "batchRps": 70,
+    "batchStartMs": 2000,
+    "batchDurationMs": 8000,
+    "jitterFraction": 0.05,
+    "interactiveInputChars": 64,
+    "batchInputChars": 64,
+    "interactiveMaxOutputTokens": 8,
+    "batchMaxOutputTokens": 8,
+    "retryPolicy": "none",
+    "seedCount": 8,
+    "seeds": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+    ],
+    "traceFingerprints": [
+      {
+        "seed": 1,
+        "traceFingerprint": "29c7c6f5c407947911f858adc468fa7ca043dff3d5200d7b0436d24f45c8b0dc"
+      },
+      {
+        "seed": 2,
+        "traceFingerprint": "1bb5312f9526af46fe07bfef79ffa3389f1e47a334404c43db35de8ea4c46b1d"
+      },
+      {
+        "seed": 3,
+        "traceFingerprint": "bbf681cd4dfce2516d0d8ffec25dc31c361f38b58c1a274202bc3f20ae635d55"
+      },
+      {
+        "seed": 4,
+        "traceFingerprint": "86e605415863ae276fb331e2dd418e12f152c5048acfa8e03e9075bdfbef8a4b"
+      },
+      {
+        "seed": 5,
+        "traceFingerprint": "ad2511fde679df27cdb224601090672f5def7cf6fcd3ee630edd86b7737342d1"
+      },
+      {
+        "seed": 6,
+        "traceFingerprint": "28e64d1c59ffd38df5b2978f559c2537d5419ab7702677f1225dd9acb294c49e"
+      },
+      {
+        "seed": 7,
+        "traceFingerprint": "336d77d9cb50b98130bfa18e052ab8928f192e34cff9a916ef532b14fabdbc07"
+      },
+      {
+        "seed": 8,
+        "traceFingerprint": "bf55726b3af6d5d3672ea49ff4f157a1276330834d3bbb43054546324b5fb0be"
+      }
+    ]
+  },
+  "policies": {
+    "static": {
+      "maxConcurrent": 36,
+      "maxQueue": 0
+    },
+    "moflux": {
+      "maxConcurrent": 36,
+      "maxQueue": 0,
+      "admissionClasses": {
+        "interactive": {
+          "protectedConcurrent": 8,
+          "maxConcurrent": 36
+        },
+        "batch": {
+          "protectedConcurrent": 4,
+          "maxConcurrent": 36
+        }
+      },
+      "note": "This first live experiment isolates protected concurrency. It does not enable a Tyr in-flight token budget or Latchflo coordination."
+    }
+  },
+  "experimentalDesign": {
+    "armOrdering": {
+      "strategy": "six-permutation-by-seed",
+      "cycleLength": 6,
+      "schedule": [
+        {
+          "seed": 1,
+          "armOrder": [
+            "direct",
+            "static",
+            "moflux"
+          ]
+        },
+        {
+          "seed": 2,
+          "armOrder": [
+            "static",
+            "moflux",
+            "direct"
+          ]
+        },
+        {
+          "seed": 3,
+          "armOrder": [
+            "moflux",
+            "direct",
+            "static"
+          ]
+        },
+        {
+          "seed": 4,
+          "armOrder": [
+            "direct",
+            "moflux",
+            "static"
+          ]
+        },
+        {
+          "seed": 5,
+          "armOrder": [
+            "static",
+            "direct",
+            "moflux"
+          ]
+        },
+        {
+          "seed": 6,
+          "armOrder": [
+            "moflux",
+            "static",
+            "direct"
+          ]
+        },
+        {
+          "seed": 7,
+          "armOrder": [
+            "direct",
+            "static",
+            "moflux"
+          ]
+        },
+        {
+          "seed": 8,
+          "armOrder": [
+            "static",
+            "moflux",
+            "direct"
+          ]
+        }
+      ],
+      "positionCounts": {
+        "direct": [
+          3,
+          2,
+          3
+        ],
+        "static": [
+          3,
+          3,
+          2
+        ],
+        "moflux": [
+          2,
+          3,
+          3
+        ]
+      },
+      "allArmsSeenInEveryPosition": true,
+      "positionCountSpreadWithinOne": true,
+      "counterbalanced": true
+    }
+  },
+  "budget": {
+    "seedCount": 8,
+    "perSeedHardRunCapUsd": 0.18,
+    "totalPlannedRequests": 15984,
+    "totalWorkloadRequests": 15840,
+    "totalRecoveryProbeBudget": 144,
+    "totalWorstCaseUsd": 1.34656,
+    "measuredSuccessfulUsageCostUsd": 0.2093086,
+    "pricingUsdPerMillionTokens": {
+      "input": 0.2,
+      "output": 1.2
+    },
+    "note": "Every seed was admitted through the original per-invocation request and spend guards before execution. Totals here are aggregate reporting, not a replacement for the per-seed guards.",
+    "maxSweepUsd": 1.5,
+    "reservedSweepCapUsd": 1.44
+  },
+  "rateLimitIsolation": {
+    "targetRatio": 0.99,
+    "passed": true,
+    "expectedGates": 24,
+    "gates": [
+      {
+        "seed": 1,
+        "run": 1,
+        "arm": "direct",
+        "label": "compare-run-1-direct",
+        "passed": true,
+        "targetRatio": 0.99,
+        "probes": 1,
+        "waitedMs": 1514.65,
+        "startHeadroom": {
+          "requests": {
+            "limit": 500,
+            "remaining": 499,
+            "ratio": 0.998,
+            "reset": "120ms",
+            "resetMs": 120
+          },
+          "tokens": {
+            "limit": 200000,
+            "remaining": 199976,
+            "ratio": 0.9999,
+            "reset": "7ms",
+            "resetMs": 7
+          }
+        },
+        "measuredSuccessfulUsageCostUsd": 0.0000154,
+        "observations": [
+          {
+            "probe": 1,
+            "status": 200,
+            "provider429": false,
+            "failureOrigin": null,
+            "retryAfter": null,
+            "requests": {
+              "limit": 500,
+              "remaining": 499,
+              "ratio": 0.998,
+              "reset": "120ms",
+              "resetMs": 120
+            },
+            "tokens": {
+              "limit": 200000,
+              "remaining": 199976,
+              "ratio": 0.9999,
+              "reset": "7ms",
+              "resetMs": 7
+            }
+          }
+        ]
+      },
+      {
+        "seed": 1,
+        "run": 1,
+        "arm": "static",
+        "label": "compare-run-1-static",
+        "passed": true,
+        "targetRatio": 0.99,
+        "probes": 2,
+        "waitedMs": 63045.56,
+        "startHeadroom": {
+          "requests": {
+            "limit": 500,
+            "remaining": 499,
+            "ratio": 0.998,
+            "reset": "120ms",
+            "resetMs": 120
+          },
+          "tokens": {
+            "limit": 200000,
+            "remaining": 199976,
+            "ratio": 0.9999,
+            "reset": "7ms",
+            "resetMs": 7
+          }
+        },
+        "measuredSuccessfulUsageCostUsd": 0.0000154,
+        "observations": [
+          {
+            "probe": 1,
+            "status": 429,
+            "provider429": true,
+            "failureOrigin": null,
+            "retryAfter": "1",
+            "requests": {
+              "limit": 500,
+              "remaining": 0,
+              "ratio": 0,
+              "reset": "1m2.153s",
+              "resetMs": 62153
+            },
+            "tokens": {
+              "limit": 200000,
+              "remaining": 199976,
+              "ratio": 0.9999,
+              "reset": "7ms",
+              "resetMs": 7
+            }
+          },
+          {
+            "probe": 2,
+            "status": 200,
+            "provider429": false,
+            "failureOrigin": null,
+            "retryAfter": null,
+            "requests": {
+              "limit": 500,
+              "remaining": 499,
+              "ratio": 0.998,
+              "reset": "120ms",
+              "resetMs": 120
+            },
+            "tokens": {
+              "limit": 200000,
+              "remaining": 199976,
+              "ratio": 0.9999,
+              "reset": "7ms",
+              "resetMs": 7
+            }
+          }
+        ]
+      },
+      {
+        "seed": 1,
+        "run": 1,
+        "arm": "moflux",
+        "label": "compare-run-1-moflux",
+        "passed": true,
+        "targetRatio": 0.99,
+        "probes": 2,
+        "waitedMs": 48217.04,
+        "startHeadroom": {
+          "requests": {
+            "limit": 500,
+            "remaining": 499,
+            "ratio": 0.998,
+            "reset": "120ms",
+            "resetMs": 120
+          },
+          "tokens": {
+            "limit": 200000,
+            "remaining": 199976,
+            "ratio": 0.9999,
+            "reset": "7ms",
+            "resetMs": 7
+          }
+        },
+        "measuredSuccessfulUsageCostUsd": 0.0000316,
+        "observations": [
+          {
+            "probe": 1,
+            "status": 200,
+            "provider429": false,
+            "failureOrigin": null,
+            "retryAfter": null,
+            "requests": {
+              "limit": 500,
+              "remaining": 110,
+              "ratio": 0.22,
+              "reset": "46.714s",
+              "resetMs": 46714
+            },
+            "tokens": {
+              "limit": 200000,
+              "remaining": 199976,
+              "ratio": 0.9999,
+              "reset": "7ms",
+              "resetMs": 7
+            }
+          },
+          {
+            "probe": 2,
+            "status": 200,
+            "provider429": false,
+            "failureOrigin": null,
+            "retryAfter": null,
+            "requests": {
+              "limit": 500,
+              "remaining": 499,
+              "ratio": 0.998,
+              "reset": "120ms",
+              "resetMs": 120
+            },
+            "tokens": {
+              "limit": 200000,
+              "remaining": 199976,
+              "ratio": 0.9999,
+              "reset": "7ms",
+              "resetMs": 7
+            }
+          }
+        ]
+      },
+      {
+        "seed": 2,
+        "run": 1,
+        "arm": "static",
+        "label": "compare-run-1-static",
+        "passed": true,
+        "targetRatio": 0.99,
+        "probes": 2,
+        "waitedMs": 46334.81,
+        "startHeadroom": {
+          "requests": {
+            "limit": 500,
+            "remaining": 499,
+            "ratio": 0.998,
+            "reset": "120ms",
+            "resetMs": 120
+          },
+          "tokens": {
+            "limit": 200000,
+            "remaining": 199976,
+            "ratio": 0.9999,
+            "reset": "7ms",
+            "resetMs": 7
+          }
+        },
+        "measuredSuccessfulUsageCostUsd": 0.0000308,
+        "observations": [
+          {
+            "probe": 1,
+            "status": 200,
+            "provider429": false,
+            "failureOrigin": null,
+            "retryAfter": null,
+            "requests": {
+              "limit": 500,
+              "remaining": 123,
+              "ratio": 0.246,
+              "reset": "45.126s",
+              "resetMs": 45126
+            },
+            "tokens": {
+              "limit": 200000,
+              "remaining": 199976,
+              "ratio": 0.9999,
+              "reset": "7ms",
+              "resetMs": 7
+            }
+          },
+          {
+            "probe": 2,
+            "status": 200,
+            "provider429": false,
+            "failureOrigin": null,
+            "retryAfter": null,
+            "requests": {
+              "limit": 500,
+              "remaining": 499,
+              "ratio": 0.998,
+              "reset": "120ms",
+              "resetMs": 120
+            },
+            "tokens": {
+              "limit": 200000,
+              "remaining": 199976,
+              "ratio": 0.9999,
+              "reset": "7ms",
+              "resetMs": 7
+            }
+          }
+        ]
+      },
+      {
+        "seed": 2,
+        "run": 1,
+        "arm": "moflux",
+        "label": "compare-run-1-moflux",
+        "passed": true,
+        "targetRatio": 0.99,
+        "probes": 2,
+        "waitedMs": 47681.77,
+        "startHeadroom": {
+          "requests": {
+            "limit": 500,
+            "remaining": 499,
+            "ratio": 0.998,
+            "reset": "120ms",
+            "resetMs": 120
+          },
+          "tokens": {
+            "limit": 200000,
+            "remaining": 199976,
+            "ratio": 0.9999,
+            "reset": "7ms",
+            "resetMs": 7
+          }
+        },
+        "measuredSuccessfulUsageCostUsd": 0.0000316,
+        "observations": [
+          {
+            "probe": 1,
+            "status": 200,
+            "provider429": false,
+            "failureOrigin": null,
+            "retryAfter": null,
+            "requests": {
+              "limit": 500,
+              "remaining": 113,
+              "ratio": 0.226,
+              "reset": "46.371s",
+              "resetMs": 46371
+            },
+            "tokens": {
+              "limit": 200000,
+              "remaining": 199976,
+              "ratio": 0.9999,
+              "reset": "7ms",
+              "resetMs": 7
+            }
+          },
+          {
+            "probe": 2,
+            "status": 200,
+            "provider429": false,
+            "failureOrigin": null,
+            "retryAfter": null,
+            "requests": {
+              "limit": 500,
+              "remaining": 499,
+              "ratio": 0.998,
+              "reset": "120ms",
+              "resetMs": 120
+            },
+            "tokens": {
+              "limit": 200000,
+              "remaining": 199976,
+              "ratio": 0.9999,
+              "reset": "7ms",
+              "resetMs": 7
+            }
+          }
+        ]
+      },
+      {
+        "seed": 2,
+        "run": 1,
+        "arm": "direct",
+        "label": "compare-run-1-direct",
+        "passed": true,
+        "targetRatio": 0.99,
+        "probes": 2,
+        "waitedMs": 46970.12,
+        "startHeadroom": {
+          "requests": {
+            "limit": 500,
+            "remaining": 499,
+            "ratio": 0.998,
+            "reset": "120ms",
+            "resetMs": 120
+          },
+          "tokens": {
+            "limit": 200000,
+            "remaining": 199976,
+            "ratio": 0.9999,
+            "reset": "7ms",
+            "resetMs": 7
+          }
+        },
+        "measuredSuccessfulUsageCostUsd": 0.0000308,
+        "observations": [
+          {
+            "probe": 1,
+            "status": 200,
+            "provider429": false,
+            "failureOrigin": null,
+            "retryAfter": null,
+            "requests": {
+              "limit": 500,
+              "remaining": 120,
+              "ratio": 0.24,
+              "reset": "45.496s",
+              "resetMs": 45496
+            },
+            "tokens": {
+              "limit": 200000,
+              "remaining": 199976,
+              "ratio": 0.9999,
+              "reset": "7ms",
+              "resetMs": 7
+            }
+          },
+          {
+            "probe": 2,
+            "status": 200,
+            "provider429": false,
+            "failureOrigin": null,
+            "retryAfter": null,
+            "requests": {
+              "limit": 500,
+              "remaining": 499,
+              "ratio": 0.998,
+              "reset": "120ms",
+              "resetMs": 120
+            },
+            "tokens": {
+              "limit": 200000,
+              "remaining": 199976,
+              "ratio": 0.9999,
+              "reset": "7ms",
+              "resetMs": 7
+            }
+          }
+        ]
+      },
+      {
+        "seed": 3,
+        "run": 1,
+        "arm": "moflux",
+        "label": "compare-run-1-moflux",
+        "passed": true,
+        "targetRatio": 0.99,
+        "probes": 3,
+        "waitedMs": 61774.26,
+        "startHeadroom": {
+          "requests": {
+            "limit": 500,
+            "remaining": 499,
+            "ratio": 0.998,
+            "reset": "120ms",
+            "resetMs": 120
+          },
+          "tokens": {
+            "limit": 200000,
+            "remaining": 199976,
+            "ratio": 0.9999,
+            "reset": "7ms",
+            "resetMs": 7
+          }
+        },
+        "measuredSuccessfulUsageCostUsd": 0.0000474,
+        "observations": [
+          {
+            "probe": 1,
+            "status": 200,
+            "provider429": false,
+            "failureOrigin": null,
+            "retryAfter": null,
+            "requests": {
+              "limit": 500,
+              "remaining": 96,
+              "ratio": 0.192,
+              "reset": "48.389s",
+              "resetMs": 48389
+            },
+            "tokens": {
+              "limit": 200000,
+              "remaining": 199976,
+              "ratio": 0.9999,
+              "reset": "7ms",
+              "resetMs": 7
+            }
+          },
+          {
+            "probe": 2,
+            "status": 200,
+            "provider429": false,
+            "failureOrigin": null,
+            "retryAfter": null,
+            "requests": {
+              "limit": 500,
+              "remaining": 406,
+              "ratio": 0.812,
+              "reset": "11.254s",
+              "resetMs": 11254
+            },
+            "tokens": {
+              "limit": 200000,
+              "remaining": 199976,
+              "ratio": 0.9999,
+              "reset": "7ms",
+              "resetMs": 7
+            }
+          },
+          {
+            "probe": 3,
+            "status": 200,
+            "provider429": false,
+            "failureOrigin": null,
+            "retryAfter": null,
+            "requests": {
+              "limit": 500,
+              "remaining": 499,
+              "ratio": 0.998,
+              "reset": "120ms",
+              "resetMs": 120
+            },
+            "tokens": {
+              "limit": 200000,
+              "remaining": 199976,
+              "ratio": 0.9999,
+              "reset": "7ms",
+              "resetMs": 7
+            }
+          }
+        ]
+      },
+      {
+        "seed": 3,
+        "run": 1,
+        "arm": "direct",
+        "label": "compare-run-1-direct",
+        "passed": true,
+        "targetRatio": 0.99,
+        "probes": 2,
+        "waitedMs": 43700.37,
+        "startHeadroom": {
+          "requests": {
+            "limit": 500,
+            "remaining": 499,
+            "ratio": 0.998,
+            "reset": "120ms",
+            "resetMs": 120
+          },
+          "tokens": {
+            "limit": 200000,
+            "remaining": 199976,
+            "ratio": 0.9999,
+            "reset": "7ms",
+            "resetMs": 7
+          }
+        },
+        "measuredSuccessfulUsageCostUsd": 0.0000308,
+        "observations": [
+          {
+            "probe": 1,
+            "status": 200,
+            "provider429": false,
+            "failureOrigin": null,
+            "retryAfter": null,
+            "requests": {
+              "limit": 500,
+              "remaining": 146,
+              "ratio": 0.292,
+              "reset": "42.451s",
+              "resetMs": 42451
+            },
+            "tokens": {
+              "limit": 200000,
+              "remaining": 199976,
+              "ratio": 0.9999,
+              "reset": "7ms",
+              "resetMs": 7
+            }
+          },
+          {
+            "probe": 2,
+            "status": 200,
+            "provider429": false,
+            "failureOrigin": null,
+            "retryAfter": null,
+            "requests": {
+              "limit": 500,
+              "remaining": 499,
+              "ratio": 0.998,
+              "reset": "120ms",
+              "resetMs": 120
+            },
+            "tokens": {
+              "limit": 200000,
+              "remaining": 199976,
+              "ratio": 0.9999,
+              "reset": "7ms",
+              "resetMs": 7
+            }
+          }
+        ]
+      },
+      {
+        "seed": 3,
+        "run": 1,
+        "arm": "static",
+        "label": "compare-run-1-static",
+        "passed": true,
+        "targetRatio": 0.99,
+        "probes": 2,
+        "waitedMs": 63612.26,
+        "startHeadroom": {
+          "requests": {
+            "limit": 500,
+            "remaining": 499,
+            "ratio": 0.998,
+            "reset": "120ms",
+            "resetMs": 120
+          },
+          "tokens": {
+            "limit": 200000,
+            "remaining": 199976,
+            "ratio": 0.9999,
+            "reset": "7ms",
+            "resetMs": 7
+          }
+        },
+        "measuredSuccessfulUsageCostUsd": 0.0000154,
+        "observations": [
+          {
+            "probe": 1,
+            "status": 429,
+            "provider429": true,
+            "failureOrigin": null,
+            "retryAfter": "1",
+            "requests": {
+              "limit": 500,
+              "remaining": 0,
+              "ratio": 0,
+              "reset": "1m2.693s",
+              "resetMs": 62693
+            },
+            "tokens": {
+              "limit": 200000,
+              "remaining": 199976,
+              "ratio": 0.9999,
+              "reset": "7ms",
+              "resetMs": 7
+            }
+          },
+          {
+            "probe": 2,
+            "status": 200,
+            "provider429": false,
+            "failureOrigin": null,
+            "retryAfter": null,
+            "requests": {
+              "limit": 500,
+              "remaining": 499,
+              "ratio": 0.998,
+              "reset": "120ms",
+              "resetMs": 120
+            },
+            "tokens": {
+              "limit": 200000,
+              "remaining": 199976,
+              "ratio": 0.9999,
+              "reset": "7ms",
+              "resetMs": 7
+            }
+          }
+        ]
+      },
+      {
+        "seed": 4,
+        "run": 1,
+        "arm": "direct",
+        "label": "compare-run-1-direct",
+        "passed": true,
+        "targetRatio": 0.99,
+        "probes": 2,
+        "waitedMs": 47424.18,
+        "startHeadroom": {
+          "requests": {
+            "limit": 500,
+            "remaining": 499,
+            "ratio": 0.998,
+            "reset": "120ms",
+            "resetMs": 120
+          },
+          "tokens": {
+            "limit": 200000,
+            "remaining": 199976,
+            "ratio": 0.9999,
+            "reset": "7ms",
+            "resetMs": 7
+          }
+        },
+        "measuredSuccessfulUsageCostUsd": 0.0000308,
+        "observations": [
+          {
+            "probe": 1,
+            "status": 200,
+            "provider429": false,
+            "failureOrigin": null,
+            "retryAfter": null,
+            "requests": {
+              "limit": 500,
+              "remaining": 116,
+              "ratio": 0.232,
+              "reset": "45.977s",
+              "resetMs": 45977
+            },
+            "tokens": {
+              "limit": 200000,
+              "remaining": 199976,
+              "ratio": 0.9999,
+              "reset": "7ms",
+              "resetMs": 7
+            }
+          },
+          {
+            "probe": 2,
+            "status": 200,
+            "provider429": false,
+            "failureOrigin": null,
+            "retryAfter": null,
+            "requests": {
+              "limit": 500,
+              "remaining": 499,
+              "ratio": 0.998,
+              "reset": "120ms",
+              "resetMs": 120
+            },
+            "tokens": {
+              "limit": 200000,
+              "remaining": 199976,
+              "ratio": 0.9999,
+              "reset": "7ms",
+              "resetMs": 7
+            }
+          }
+        ]
+      },
+      {
+        "seed": 4,
+        "run": 1,
+        "arm": "moflux",
+        "label": "compare-run-1-moflux",
+        "passed": true,
+        "targetRatio": 0.99,
+        "probes": 2,
+        "waitedMs": 64044.95,
+        "startHeadroom": {
+          "requests": {
+            "limit": 500,
+            "remaining": 499,
+            "ratio": 0.998,
+            "reset": "120ms",
+            "resetMs": 120
+          },
+          "tokens": {
+            "limit": 200000,
+            "remaining": 199976,
+            "ratio": 0.9999,
+            "reset": "7ms",
+            "resetMs": 7
+          }
+        },
+        "measuredSuccessfulUsageCostUsd": 0.0000158,
+        "observations": [
+          {
+            "probe": 1,
+            "status": 429,
+            "provider429": true,
+            "failureOrigin": null,
+            "retryAfter": "1",
+            "requests": {
+              "limit": 500,
+              "remaining": 0,
+              "ratio": 0,
+              "reset": "1m3.095s",
+              "resetMs": 63095
+            },
+            "tokens": {
+              "limit": 200000,
+              "remaining": 199976,
+              "ratio": 0.9999,
+              "reset": "7ms",
+              "resetMs": 7
+            }
+          },
+          {
+            "probe": 2,
+            "status": 200,
+            "provider429": false,
+            "failureOrigin": null,
+            "retryAfter": null,
+            "requests": {
+              "limit": 500,
+              "remaining": 499,
+              "ratio": 0.998,
+              "reset": "120ms",
+              "resetMs": 120
+            },
+            "tokens": {
+              "limit": 200000,
+              "remaining": 199976,
+              "ratio": 0.9999,
+              "reset": "7ms",
+              "resetMs": 7
+            }
+          }
+        ]
+      },
+      {
+        "seed": 4,
+        "run": 1,
+        "arm": "static",
+        "label": "compare-run-1-static",
+        "passed": true,
+        "targetRatio": 0.99,
+        "probes": 2,
+        "waitedMs": 41185.09,
+        "startHeadroom": {
+          "requests": {
+            "limit": 500,
+            "remaining": 499,
+            "ratio": 0.998,
+            "reset": "120ms",
+            "resetMs": 120
+          },
+          "tokens": {
+            "limit": 200000,
+            "remaining": 199976,
+            "ratio": 0.9999,
+            "reset": "7ms",
+            "resetMs": 7
+          }
+        },
+        "measuredSuccessfulUsageCostUsd": 0.0000308,
+        "observations": [
+          {
+            "probe": 1,
+            "status": 200,
+            "provider429": false,
+            "failureOrigin": null,
+            "retryAfter": null,
+            "requests": {
+              "limit": 500,
+              "remaining": 167,
+              "ratio": 0.334,
+              "reset": "39.891s",
+              "resetMs": 39891
+            },
+            "tokens": {
+              "limit": 200000,
+              "remaining": 199976,
+              "ratio": 0.9999,
+              "reset": "7ms",
+              "resetMs": 7
+            }
+          },
+          {
+            "probe": 2,
+            "status": 200,
+            "provider429": false,
+            "failureOrigin": null,
+            "retryAfter": null,
+            "requests": {
+              "limit": 500,
+              "remaining": 499,
+              "ratio": 0.998,
+              "reset": "120ms",
+              "resetMs": 120
+            },
+            "tokens": {
+              "limit": 200000,
+              "remaining": 199976,
+              "ratio": 0.9999,
+              "reset": "7ms",
+              "resetMs": 7
+            }
+          }
+        ]
+      },
+      {
+        "seed": 5,
+        "run": 1,
+        "arm": "static",
+        "label": "compare-run-1-static",
+        "passed": true,
+        "targetRatio": 0.99,
+        "probes": 2,
+        "waitedMs": 49201.81,
+        "startHeadroom": {
+          "requests": {
+            "limit": 500,
+            "remaining": 499,
+            "ratio": 0.998,
+            "reset": "120ms",
+            "resetMs": 120
+          },
+          "tokens": {
+            "limit": 200000,
+            "remaining": 199976,
+            "ratio": 0.9999,
+            "reset": "7ms",
+            "resetMs": 7
+          }
+        },
+        "measuredSuccessfulUsageCostUsd": 0.0000308,
+        "observations": [
+          {
+            "probe": 1,
+            "status": 200,
+            "provider429": false,
+            "failureOrigin": null,
+            "retryAfter": null,
+            "requests": {
+              "limit": 500,
+              "remaining": 101,
+              "ratio": 0.202,
+              "reset": "47.768s",
+              "resetMs": 47768
+            },
+            "tokens": {
+              "limit": 200000,
+              "remaining": 199976,
+              "ratio": 0.9999,
+              "reset": "7ms",
+              "resetMs": 7
+            }
+          },
+          {
+            "probe": 2,
+            "status": 200,
+            "provider429": false,
+            "failureOrigin": null,
+            "retryAfter": null,
+            "requests": {
+              "limit": 500,
+              "remaining": 499,
+              "ratio": 0.998,
+              "reset": "120ms",
+              "resetMs": 120
+            },
+            "tokens": {
+              "limit": 200000,
+              "remaining": 199976,
+              "ratio": 0.9999,
+              "reset": "7ms",
+              "resetMs": 7
+            }
+          }
+        ]
+      },
+      {
+        "seed": 5,
+        "run": 1,
+        "arm": "direct",
+        "label": "compare-run-1-direct",
+        "passed": true,
+        "targetRatio": 0.99,
+        "probes": 2,
+        "waitedMs": 49655.5,
+        "startHeadroom": {
+          "requests": {
+            "limit": 500,
+            "remaining": 499,
+            "ratio": 0.998,
+            "reset": "120ms",
+            "resetMs": 120
+          },
+          "tokens": {
+            "limit": 200000,
+            "remaining": 199976,
+            "ratio": 0.9999,
+            "reset": "7ms",
+            "resetMs": 7
+          }
+        },
+        "measuredSuccessfulUsageCostUsd": 0.0000308,
+        "observations": [
+          {
+            "probe": 1,
+            "status": 200,
+            "provider429": false,
+            "failureOrigin": null,
+            "retryAfter": null,
+            "requests": {
+              "limit": 500,
+              "remaining": 96,
+              "ratio": 0.192,
+              "reset": "48.374s",
+              "resetMs": 48374
+            },
+            "tokens": {
+              "limit": 200000,
+              "remaining": 199976,
+              "ratio": 0.9999,
+              "reset": "7ms",
+              "resetMs": 7
+            }
+          },
+          {
+            "probe": 2,
+            "status": 200,
+            "provider429": false,
+            "failureOrigin": null,
+            "retryAfter": null,
+            "requests": {
+              "limit": 500,
+              "remaining": 499,
+              "ratio": 0.998,
+              "reset": "120ms",
+              "resetMs": 120
+            },
+            "tokens": {
+              "limit": 200000,
+              "remaining": 199976,
+              "ratio": 0.9999,
+              "reset": "7ms",
+              "resetMs": 7
+            }
+          }
+        ]
+      },
+      {
+        "seed": 5,
+        "run": 1,
+        "arm": "moflux",
+        "label": "compare-run-1-moflux",
+        "passed": true,
+        "targetRatio": 0.99,
+        "probes": 2,
+        "waitedMs": 63760.51,
+        "startHeadroom": {
+          "requests": {
+            "limit": 500,
+            "remaining": 499,
+            "ratio": 0.998,
+            "reset": "120ms",
+            "resetMs": 120
+          },
+          "tokens": {
+            "limit": 200000,
+            "remaining": 199976,
+            "ratio": 0.9999,
+            "reset": "7ms",
+            "resetMs": 7
+          }
+        },
+        "measuredSuccessfulUsageCostUsd": 0.0000158,
+        "observations": [
+          {
+            "probe": 1,
+            "status": 429,
+            "provider429": true,
+            "failureOrigin": null,
+            "retryAfter": "1",
+            "requests": {
+              "limit": 500,
+              "remaining": 0,
+              "ratio": 0,
+              "reset": "1m2.818s",
+              "resetMs": 62818
+            },
+            "tokens": {
+              "limit": 200000,
+              "remaining": 199976,
+              "ratio": 0.9999,
+              "reset": "7ms",
+              "resetMs": 7
+            }
+          },
+          {
+            "probe": 2,
+            "status": 200,
+            "provider429": false,
+            "failureOrigin": null,
+            "retryAfter": null,
+            "requests": {
+              "limit": 500,
+              "remaining": 499,
+              "ratio": 0.998,
+              "reset": "120ms",
+              "resetMs": 120
+            },
+            "tokens": {
+              "limit": 200000,
+              "remaining": 199976,
+              "ratio": 0.9999,
+              "reset": "7ms",
+              "resetMs": 7
+            }
+          }
+        ]
+      },
+      {
+        "seed": 6,
+        "run": 1,
+        "arm": "moflux",
+        "label": "compare-run-1-moflux",
+        "passed": true,
+        "targetRatio": 0.99,
+        "probes": 2,
+        "waitedMs": 44042.81,
+        "startHeadroom": {
+          "requests": {
+            "limit": 500,
+            "remaining": 499,
+            "ratio": 0.998,
+            "reset": "120ms",
+            "resetMs": 120
+          },
+          "tokens": {
+            "limit": 200000,
+            "remaining": 199976,
+            "ratio": 0.9999,
+            "reset": "7ms",
+            "resetMs": 7
+          }
+        },
+        "measuredSuccessfulUsageCostUsd": 0.0000316,
+        "observations": [
+          {
+            "probe": 1,
+            "status": 200,
+            "provider429": false,
+            "failureOrigin": null,
+            "retryAfter": null,
+            "requests": {
+              "limit": 500,
+              "remaining": 144,
+              "ratio": 0.288,
+              "reset": "42.604s",
+              "resetMs": 42604
+            },
+            "tokens": {
+              "limit": 200000,
+              "remaining": 199976,
+              "ratio": 0.9999,
+              "reset": "7ms",
+              "resetMs": 7
+            }
+          },
+          {
+            "probe": 2,
+            "status": 200,
+            "provider429": false,
+            "failureOrigin": null,
+            "retryAfter": null,
+            "requests": {
+              "limit": 500,
+              "remaining": 499,
+              "ratio": 0.998,
+              "reset": "120ms",
+              "resetMs": 120
+            },
+            "tokens": {
+              "limit": 200000,
+              "remaining": 199976,
+              "ratio": 0.9999,
+              "reset": "7ms",
+              "resetMs": 7
+            }
+          }
+        ]
+      },
+      {
+        "seed": 6,
+        "run": 1,
+        "arm": "static",
+        "label": "compare-run-1-static",
+        "passed": true,
+        "targetRatio": 0.99,
+        "probes": 2,
+        "waitedMs": 45701.1,
+        "startHeadroom": {
+          "requests": {
+            "limit": 500,
+            "remaining": 499,
+            "ratio": 0.998,
+            "reset": "120ms",
+            "resetMs": 120
+          },
+          "tokens": {
+            "limit": 200000,
+            "remaining": 199976,
+            "ratio": 0.9999,
+            "reset": "7ms",
+            "resetMs": 7
+          }
+        },
+        "measuredSuccessfulUsageCostUsd": 0.0000308,
+        "observations": [
+          {
+            "probe": 1,
+            "status": 200,
+            "provider429": false,
+            "failureOrigin": null,
+            "retryAfter": null,
+            "requests": {
+              "limit": 500,
+              "remaining": 133,
+              "ratio": 0.266,
+              "reset": "44.011s",
+              "resetMs": 44011
+            },
+            "tokens": {
+              "limit": 200000,
+              "remaining": 199976,
+              "ratio": 0.9999,
+              "reset": "7ms",
+              "resetMs": 7
+            }
+          },
+          {
+            "probe": 2,
+            "status": 200,
+            "provider429": false,
+            "failureOrigin": null,
+            "retryAfter": null,
+            "requests": {
+              "limit": 500,
+              "remaining": 499,
+              "ratio": 0.998,
+              "reset": "120ms",
+              "resetMs": 120
+            },
+            "tokens": {
+              "limit": 200000,
+              "remaining": 199976,
+              "ratio": 0.9999,
+              "reset": "7ms",
+              "resetMs": 7
+            }
+          }
+        ]
+      },
+      {
+        "seed": 6,
+        "run": 1,
+        "arm": "direct",
+        "label": "compare-run-1-direct",
+        "passed": true,
+        "targetRatio": 0.99,
+        "probes": 3,
+        "waitedMs": 18141.56,
+        "startHeadroom": {
+          "requests": {
+            "limit": 500,
+            "remaining": 499,
+            "ratio": 0.998,
+            "reset": "120ms",
+            "resetMs": 120
+          },
+          "tokens": {
+            "limit": 200000,
+            "remaining": 199976,
+            "ratio": 0.9999,
+            "reset": "7ms",
+            "resetMs": 7
+          }
+        },
+        "measuredSuccessfulUsageCostUsd": 0.0000462,
+        "observations": [
+          {
+            "probe": 1,
+            "status": 200,
+            "provider429": false,
+            "failureOrigin": null,
+            "retryAfter": null,
+            "requests": {
+              "limit": 500,
+              "remaining": 400,
+              "ratio": 0.8,
+              "reset": "11.975s",
+              "resetMs": 11975
+            },
+            "tokens": {
+              "limit": 200000,
+              "remaining": 199976,
+              "ratio": 0.9999,
+              "reset": "7ms",
+              "resetMs": 7
+            }
+          },
+          {
+            "probe": 2,
+            "status": 200,
+            "provider429": false,
+            "failureOrigin": null,
+            "retryAfter": null,
+            "requests": {
+              "limit": 500,
+              "remaining": 467,
+              "ratio": 0.934,
+              "reset": "3.93s",
+              "resetMs": 3930
+            },
+            "tokens": {
+              "limit": 200000,
+              "remaining": 199976,
+              "ratio": 0.9999,
+              "reset": "7ms",
+              "resetMs": 7
+            }
+          },
+          {
+            "probe": 3,
+            "status": 200,
+            "provider429": false,
+            "failureOrigin": null,
+            "retryAfter": null,
+            "requests": {
+              "limit": 500,
+              "remaining": 499,
+              "ratio": 0.998,
+              "reset": "120ms",
+              "resetMs": 120
+            },
+            "tokens": {
+              "limit": 200000,
+              "remaining": 199976,
+              "ratio": 0.9999,
+              "reset": "7ms",
+              "resetMs": 7
+            }
+          }
+        ]
+      },
+      {
+        "seed": 7,
+        "run": 1,
+        "arm": "direct",
+        "label": "compare-run-1-direct",
+        "passed": true,
+        "targetRatio": 0.99,
+        "probes": 2,
+        "waitedMs": 63192.78,
+        "startHeadroom": {
+          "requests": {
+            "limit": 500,
+            "remaining": 499,
+            "ratio": 0.998,
+            "reset": "120ms",
+            "resetMs": 120
+          },
+          "tokens": {
+            "limit": 200000,
+            "remaining": 199976,
+            "ratio": 0.9999,
+            "reset": "7ms",
+            "resetMs": 7
+          }
+        },
+        "measuredSuccessfulUsageCostUsd": 0.0000154,
+        "observations": [
+          {
+            "probe": 1,
+            "status": 429,
+            "provider429": true,
+            "failureOrigin": null,
+            "retryAfter": "1",
+            "requests": {
+              "limit": 500,
+              "remaining": 0,
+              "ratio": 0,
+              "reset": "1m2.351s",
+              "resetMs": 62351
+            },
+            "tokens": {
+              "limit": 200000,
+              "remaining": 199976,
+              "ratio": 0.9999,
+              "reset": "7ms",
+              "resetMs": 7
+            }
+          },
+          {
+            "probe": 2,
+            "status": 200,
+            "provider429": false,
+            "failureOrigin": null,
+            "retryAfter": null,
+            "requests": {
+              "limit": 500,
+              "remaining": 499,
+              "ratio": 0.998,
+              "reset": "120ms",
+              "resetMs": 120
+            },
+            "tokens": {
+              "limit": 200000,
+              "remaining": 199976,
+              "ratio": 0.9999,
+              "reset": "7ms",
+              "resetMs": 7
+            }
+          }
+        ]
+      },
+      {
+        "seed": 7,
+        "run": 1,
+        "arm": "static",
+        "label": "compare-run-1-static",
+        "passed": true,
+        "targetRatio": 0.99,
+        "probes": 3,
+        "waitedMs": 63828.73,
+        "startHeadroom": {
+          "requests": {
+            "limit": 500,
+            "remaining": 499,
+            "ratio": 0.998,
+            "reset": "120ms",
+            "resetMs": 120
+          },
+          "tokens": {
+            "limit": 200000,
+            "remaining": 199976,
+            "ratio": 0.9999,
+            "reset": "7ms",
+            "resetMs": 7
+          }
+        },
+        "measuredSuccessfulUsageCostUsd": 0.0000462,
+        "observations": [
+          {
+            "probe": 1,
+            "status": 200,
+            "provider429": false,
+            "failureOrigin": null,
+            "retryAfter": null,
+            "requests": {
+              "limit": 500,
+              "remaining": 67,
+              "ratio": 0.134,
+              "reset": "51.861s",
+              "resetMs": 51861
+            },
+            "tokens": {
+              "limit": 200000,
+              "remaining": 199976,
+              "ratio": 0.9999,
+              "reset": "7ms",
+              "resetMs": 7
+            }
+          },
+          {
+            "probe": 2,
+            "status": 200,
+            "provider429": false,
+            "failureOrigin": null,
+            "retryAfter": null,
+            "requests": {
+              "limit": 500,
+              "remaining": 416,
+              "ratio": 0.832,
+              "reset": "10.051s",
+              "resetMs": 10051
+            },
+            "tokens": {
+              "limit": 200000,
+              "remaining": 199976,
+              "ratio": 0.9999,
+              "reset": "7ms",
+              "resetMs": 7
+            }
+          },
+          {
+            "probe": 3,
+            "status": 200,
+            "provider429": false,
+            "failureOrigin": null,
+            "retryAfter": null,
+            "requests": {
+              "limit": 500,
+              "remaining": 499,
+              "ratio": 0.998,
+              "reset": "120ms",
+              "resetMs": 120
+            },
+            "tokens": {
+              "limit": 200000,
+              "remaining": 199976,
+              "ratio": 0.9999,
+              "reset": "7ms",
+              "resetMs": 7
+            }
+          }
+        ]
+      },
+      {
+        "seed": 7,
+        "run": 1,
+        "arm": "moflux",
+        "label": "compare-run-1-moflux",
+        "passed": true,
+        "targetRatio": 0.99,
+        "probes": 2,
+        "waitedMs": 48687.03,
+        "startHeadroom": {
+          "requests": {
+            "limit": 500,
+            "remaining": 499,
+            "ratio": 0.998,
+            "reset": "120ms",
+            "resetMs": 120
+          },
+          "tokens": {
+            "limit": 200000,
+            "remaining": 199976,
+            "ratio": 0.9999,
+            "reset": "7ms",
+            "resetMs": 7
+          }
+        },
+        "measuredSuccessfulUsageCostUsd": 0.0000316,
+        "observations": [
+          {
+            "probe": 1,
+            "status": 200,
+            "provider429": false,
+            "failureOrigin": null,
+            "retryAfter": null,
+            "requests": {
+              "limit": 500,
+              "remaining": 105,
+              "ratio": 0.21,
+              "reset": "47.36s",
+              "resetMs": 47360
+            },
+            "tokens": {
+              "limit": 200000,
+              "remaining": 199976,
+              "ratio": 0.9999,
+              "reset": "7ms",
+              "resetMs": 7
+            }
+          },
+          {
+            "probe": 2,
+            "status": 200,
+            "provider429": false,
+            "failureOrigin": null,
+            "retryAfter": null,
+            "requests": {
+              "limit": 500,
+              "remaining": 499,
+              "ratio": 0.998,
+              "reset": "120ms",
+              "resetMs": 120
+            },
+            "tokens": {
+              "limit": 200000,
+              "remaining": 199976,
+              "ratio": 0.9999,
+              "reset": "7ms",
+              "resetMs": 7
+            }
+          }
+        ]
+      },
+      {
+        "seed": 8,
+        "run": 1,
+        "arm": "static",
+        "label": "compare-run-1-static",
+        "passed": true,
+        "targetRatio": 0.99,
+        "probes": 2,
+        "waitedMs": 46501.16,
+        "startHeadroom": {
+          "requests": {
+            "limit": 500,
+            "remaining": 499,
+            "ratio": 0.998,
+            "reset": "120ms",
+            "resetMs": 120
+          },
+          "tokens": {
+            "limit": 200000,
+            "remaining": 199976,
+            "ratio": 0.9999,
+            "reset": "7ms",
+            "resetMs": 7
+          }
+        },
+        "measuredSuccessfulUsageCostUsd": 0.0000308,
+        "observations": [
+          {
+            "probe": 1,
+            "status": 200,
+            "provider429": false,
+            "failureOrigin": null,
+            "retryAfter": null,
+            "requests": {
+              "limit": 500,
+              "remaining": 130,
+              "ratio": 0.26,
+              "reset": "44.331s",
+              "resetMs": 44331
+            },
+            "tokens": {
+              "limit": 200000,
+              "remaining": 199976,
+              "ratio": 0.9999,
+              "reset": "7ms",
+              "resetMs": 7
+            }
+          },
+          {
+            "probe": 2,
+            "status": 200,
+            "provider429": false,
+            "failureOrigin": null,
+            "retryAfter": null,
+            "requests": {
+              "limit": 500,
+              "remaining": 499,
+              "ratio": 0.998,
+              "reset": "120ms",
+              "resetMs": 120
+            },
+            "tokens": {
+              "limit": 200000,
+              "remaining": 199976,
+              "ratio": 0.9999,
+              "reset": "7ms",
+              "resetMs": 7
+            }
+          }
+        ]
+      },
+      {
+        "seed": 8,
+        "run": 1,
+        "arm": "moflux",
+        "label": "compare-run-1-moflux",
+        "passed": true,
+        "targetRatio": 0.99,
+        "probes": 2,
+        "waitedMs": 49108.08,
+        "startHeadroom": {
+          "requests": {
+            "limit": 500,
+            "remaining": 499,
+            "ratio": 0.998,
+            "reset": "120ms",
+            "resetMs": 120
+          },
+          "tokens": {
+            "limit": 200000,
+            "remaining": 199976,
+            "ratio": 0.9999,
+            "reset": "7ms",
+            "resetMs": 7
+          }
+        },
+        "measuredSuccessfulUsageCostUsd": 0.0000316,
+        "observations": [
+          {
+            "probe": 1,
+            "status": 200,
+            "provider429": false,
+            "failureOrigin": null,
+            "retryAfter": null,
+            "requests": {
+              "limit": 500,
+              "remaining": 102,
+              "ratio": 0.204,
+              "reset": "47.679s",
+              "resetMs": 47679
+            },
+            "tokens": {
+              "limit": 200000,
+              "remaining": 199976,
+              "ratio": 0.9999,
+              "reset": "7ms",
+              "resetMs": 7
+            }
+          },
+          {
+            "probe": 2,
+            "status": 200,
+            "provider429": false,
+            "failureOrigin": null,
+            "retryAfter": null,
+            "requests": {
+              "limit": 500,
+              "remaining": 499,
+              "ratio": 0.998,
+              "reset": "120ms",
+              "resetMs": 120
+            },
+            "tokens": {
+              "limit": 200000,
+              "remaining": 199976,
+              "ratio": 0.9999,
+              "reset": "7ms",
+              "resetMs": 7
+            }
+          }
+        ]
+      },
+      {
+        "seed": 8,
+        "run": 1,
+        "arm": "direct",
+        "label": "compare-run-1-direct",
+        "passed": true,
+        "targetRatio": 0.99,
+        "probes": 2,
+        "waitedMs": 45144.98,
+        "startHeadroom": {
+          "requests": {
+            "limit": 500,
+            "remaining": 499,
+            "ratio": 0.998,
+            "reset": "120ms",
+            "resetMs": 120
+          },
+          "tokens": {
+            "limit": 200000,
+            "remaining": 199976,
+            "ratio": 0.9999,
+            "reset": "7ms",
+            "resetMs": 7
+          }
+        },
+        "measuredSuccessfulUsageCostUsd": 0.0000308,
+        "observations": [
+          {
+            "probe": 1,
+            "status": 200,
+            "provider429": false,
+            "failureOrigin": null,
+            "retryAfter": null,
+            "requests": {
+              "limit": 500,
+              "remaining": 133,
+              "ratio": 0.266,
+              "reset": "43.954s",
+              "resetMs": 43954
+            },
+            "tokens": {
+              "limit": 200000,
+              "remaining": 199976,
+              "ratio": 0.9999,
+              "reset": "7ms",
+              "resetMs": 7
+            }
+          },
+          {
+            "probe": 2,
+            "status": 200,
+            "provider429": false,
+            "failureOrigin": null,
+            "retryAfter": null,
+            "requests": {
+              "limit": 500,
+              "remaining": 499,
+              "ratio": 0.998,
+              "reset": "120ms",
+              "resetMs": 120
+            },
+            "tokens": {
+              "limit": 200000,
+              "remaining": 199976,
+              "ratio": 0.9999,
+              "reset": "7ms",
+              "resetMs": 7
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "aggregate": {
+    "direct": {
+      "offered": 5280,
+      "providerAttempts": 5280,
+      "success": 5000,
+      "failures": 280,
+      "successRate": 0.947,
+      "localRejects": 0,
+      "provider429s": 280,
+      "provider5xx": 0,
+      "providerOtherFailures": 0,
+      "gatewayFailures": 0,
+      "transportFailures": 0,
+      "ttftMs": {
+        "p50": 519.93,
+        "p95": 739.6
+      },
+      "latencyMs": {
+        "p50": 577.34,
+        "p95": 802.87
+      },
+      "goodputRps": 56.6616,
+      "promptTokens": 178888,
+      "completionTokens": 40000,
+      "measuredSuccessfulUsageCostUsd": 0.0837776,
+      "classes": {
+        "interactive": {
+          "offered": 800,
+          "providerAttempts": 800,
+          "success": 764,
+          "failures": 36,
+          "successRate": 0.955,
+          "localRejects": 0,
+          "provider429s": 36,
+          "provider5xx": 0,
+          "providerOtherFailures": 0,
+          "gatewayFailures": 0,
+          "transportFailures": 0,
+          "ttftMs": {
+            "p50": 520.68,
+            "p95": 756.63
+          },
+          "latencyMs": {
+            "p50": 578.15,
+            "p95": 819.52
+          },
+          "goodputRps": 8.6579,
+          "promptTokens": 22156,
+          "completionTokens": 6112,
+          "measuredSuccessfulUsageCostUsd": 0.0117656
+        },
+        "batch": {
+          "offered": 4480,
+          "providerAttempts": 4480,
+          "success": 4236,
+          "failures": 244,
+          "successRate": 0.9455,
+          "localRejects": 0,
+          "provider429s": 244,
+          "provider5xx": 0,
+          "providerOtherFailures": 0,
+          "gatewayFailures": 0,
+          "transportFailures": 0,
+          "ttftMs": {
+            "p50": 519.64,
+            "p95": 736.51
+          },
+          "latencyMs": {
+            "p50": 576.61,
+            "p95": 801.42
+          },
+          "goodputRps": 48.0037,
+          "promptTokens": 156732,
+          "completionTokens": 33888,
+          "measuredSuccessfulUsageCostUsd": 0.072012
+        }
+      }
+    },
+    "static": {
+      "offered": 5280,
+      "providerAttempts": 3749,
+      "success": 3730,
+      "failures": 1550,
+      "successRate": 0.7064,
+      "localRejects": 1531,
+      "provider429s": 0,
+      "provider5xx": 0,
+      "providerOtherFailures": 0,
+      "gatewayFailures": 0,
+      "transportFailures": 19,
+      "ttftMs": {
+        "p50": 514.09,
+        "p95": 706.59
+      },
+      "latencyMs": {
+        "p50": 569.13,
+        "p95": 776.77
+      },
+      "goodputRps": 42.2807,
+      "promptTokens": 133410,
+      "completionTokens": 29840,
+      "measuredSuccessfulUsageCostUsd": 0.06249,
+      "classes": {
+        "interactive": {
+          "offered": 800,
+          "providerAttempts": 577,
+          "success": 575,
+          "failures": 225,
+          "successRate": 0.7188,
+          "localRejects": 223,
+          "provider429s": 0,
+          "provider5xx": 0,
+          "providerOtherFailures": 0,
+          "gatewayFailures": 0,
+          "transportFailures": 2,
+          "ttftMs": {
+            "p50": 518.29,
+            "p95": 731
+          },
+          "latencyMs": {
+            "p50": 573.88,
+            "p95": 780.22
+          },
+          "goodputRps": 6.5178,
+          "promptTokens": 16675,
+          "completionTokens": 4600,
+          "measuredSuccessfulUsageCostUsd": 0.008855
+        },
+        "batch": {
+          "offered": 4480,
+          "providerAttempts": 3172,
+          "success": 3155,
+          "failures": 1325,
+          "successRate": 0.7042,
+          "localRejects": 1308,
+          "provider429s": 0,
+          "provider5xx": 0,
+          "providerOtherFailures": 0,
+          "gatewayFailures": 0,
+          "transportFailures": 17,
+          "ttftMs": {
+            "p50": 513.15,
+            "p95": 704.82
+          },
+          "latencyMs": {
+            "p50": 568,
+            "p95": 776.19
+          },
+          "goodputRps": 35.7629,
+          "promptTokens": 116735,
+          "completionTokens": 25240,
+          "measuredSuccessfulUsageCostUsd": 0.053635
+        }
+      }
+    },
+    "moflux": {
+      "offered": 5280,
+      "providerAttempts": 3742,
+      "success": 3742,
+      "failures": 1538,
+      "successRate": 0.7087,
+      "localRejects": 1538,
+      "provider429s": 0,
+      "provider5xx": 0,
+      "providerOtherFailures": 0,
+      "gatewayFailures": 0,
+      "transportFailures": 0,
+      "ttftMs": {
+        "p50": 523.54,
+        "p95": 756.64
+      },
+      "latencyMs": {
+        "p50": 579.82,
+        "p95": 828.07
+      },
+      "goodputRps": 41.931,
+      "promptTokens": 132094,
+      "completionTokens": 29936,
+      "measuredSuccessfulUsageCostUsd": 0.062342,
+      "classes": {
+        "interactive": {
+          "offered": 800,
+          "providerAttempts": 795,
+          "success": 795,
+          "failures": 5,
+          "successRate": 0.9938,
+          "localRejects": 5,
+          "provider429s": 0,
+          "provider5xx": 0,
+          "providerOtherFailures": 0,
+          "gatewayFailures": 0,
+          "transportFailures": 0,
+          "ttftMs": {
+            "p50": 531.35,
+            "p95": 793.98
+          },
+          "latencyMs": {
+            "p50": 585.21,
+            "p95": 854.67
+          },
+          "goodputRps": 8.9084,
+          "promptTokens": 23055,
+          "completionTokens": 6360,
+          "measuredSuccessfulUsageCostUsd": 0.012243
+        },
+        "batch": {
+          "offered": 4480,
+          "providerAttempts": 2947,
+          "success": 2947,
+          "failures": 1533,
+          "successRate": 0.6578,
+          "localRejects": 1533,
+          "provider429s": 0,
+          "provider5xx": 0,
+          "providerOtherFailures": 0,
+          "gatewayFailures": 0,
+          "transportFailures": 0,
+          "ttftMs": {
+            "p50": 521.41,
+            "p95": 745.04
+          },
+          "latencyMs": {
+            "p50": 578.54,
+            "p95": 814.94
+          },
+          "goodputRps": 33.0226,
+          "promptTokens": 109039,
+          "completionTokens": 23576,
+          "measuredSuccessfulUsageCostUsd": 0.050099
+        }
+      }
+    }
+  },
+  "pairedSeedResults": [
+    {
+      "seed": 1,
+      "traceFingerprint": "29c7c6f5c407947911f858adc468fa7ca043dff3d5200d7b0436d24f45c8b0dc",
+      "armOrder": [
+        "direct",
+        "static",
+        "moflux"
+      ],
+      "armPositions": {
+        "direct": 1,
+        "static": 2,
+        "moflux": 3
+      },
+      "conclusive": true,
+      "directProvider429s": 38,
+      "staticProvider429s": 0,
+      "mofluxProvider429s": 0,
+      "directInteractiveSuccessRate": 0.95,
+      "staticInteractiveSuccessRate": 0.75,
+      "mofluxInteractiveSuccessRate": 1,
+      "staticBatchSuccessRate": 0.7375,
+      "mofluxBatchSuccessRate": 0.6696,
+      "interactiveSuccessAdvantagePp": 25,
+      "batchSuccessDeltaPp": -6.79,
+      "overallSuccessDeltaPp": -1.97,
+      "interactiveTtftP95DeltaMs": -29.06,
+      "interactiveLatencyP95DeltaMs": -18.59
+    },
+    {
+      "seed": 2,
+      "traceFingerprint": "1bb5312f9526af46fe07bfef79ffa3389f1e47a334404c43db35de8ea4c46b1d",
+      "armOrder": [
+        "static",
+        "moflux",
+        "direct"
+      ],
+      "armPositions": {
+        "static": 1,
+        "moflux": 2,
+        "direct": 3
+      },
+      "conclusive": true,
+      "directProvider429s": 33,
+      "staticProvider429s": 0,
+      "mofluxProvider429s": 0,
+      "directInteractiveSuccessRate": 0.97,
+      "staticInteractiveSuccessRate": 0.73,
+      "mofluxInteractiveSuccessRate": 1,
+      "staticBatchSuccessRate": 0.7429,
+      "mofluxBatchSuccessRate": 0.6893,
+      "interactiveSuccessAdvantagePp": 27,
+      "batchSuccessDeltaPp": -5.36,
+      "overallSuccessDeltaPp": -0.45,
+      "interactiveTtftP95DeltaMs": 98.48,
+      "interactiveLatencyP95DeltaMs": 88.95
+    },
+    {
+      "seed": 3,
+      "traceFingerprint": "bbf681cd4dfce2516d0d8ffec25dc31c361f38b58c1a274202bc3f20ae635d55",
+      "armOrder": [
+        "moflux",
+        "direct",
+        "static"
+      ],
+      "armPositions": {
+        "moflux": 1,
+        "direct": 2,
+        "static": 3
+      },
+      "conclusive": true,
+      "directProvider429s": 36,
+      "staticProvider429s": 0,
+      "mofluxProvider429s": 0,
+      "directInteractiveSuccessRate": 0.95,
+      "staticInteractiveSuccessRate": 0.74,
+      "mofluxInteractiveSuccessRate": 1,
+      "staticBatchSuccessRate": 0.75,
+      "mofluxBatchSuccessRate": 0.6393,
+      "interactiveSuccessAdvantagePp": 26,
+      "batchSuccessDeltaPp": -11.07,
+      "overallSuccessDeltaPp": -5.46,
+      "interactiveTtftP95DeltaMs": 7.67,
+      "interactiveLatencyP95DeltaMs": 41.02
+    },
+    {
+      "seed": 4,
+      "traceFingerprint": "86e605415863ae276fb331e2dd418e12f152c5048acfa8e03e9075bdfbef8a4b",
+      "armOrder": [
+        "direct",
+        "moflux",
+        "static"
+      ],
+      "armPositions": {
+        "direct": 1,
+        "moflux": 2,
+        "static": 3
+      },
+      "conclusive": true,
+      "directProvider429s": 31,
+      "staticProvider429s": 0,
+      "mofluxProvider429s": 0,
+      "directInteractiveSuccessRate": 0.96,
+      "staticInteractiveSuccessRate": 0.8,
+      "mofluxInteractiveSuccessRate": 0.97,
+      "staticBatchSuccessRate": 0.7554,
+      "mofluxBatchSuccessRate": 0.6232,
+      "interactiveSuccessAdvantagePp": 17,
+      "batchSuccessDeltaPp": -13.22,
+      "overallSuccessDeltaPp": -8.63,
+      "interactiveTtftP95DeltaMs": 249.69,
+      "interactiveLatencyP95DeltaMs": 310.1
+    },
+    {
+      "seed": 5,
+      "traceFingerprint": "ad2511fde679df27cdb224601090672f5def7cf6fcd3ee630edd86b7737342d1",
+      "armOrder": [
+        "static",
+        "direct",
+        "moflux"
+      ],
+      "armPositions": {
+        "static": 1,
+        "direct": 2,
+        "moflux": 3
+      },
+      "conclusive": true,
+      "directProvider429s": 37,
+      "staticProvider429s": 0,
+      "mofluxProvider429s": 0,
+      "directInteractiveSuccessRate": 0.95,
+      "staticInteractiveSuccessRate": 0.79,
+      "mofluxInteractiveSuccessRate": 1,
+      "staticBatchSuccessRate": 0.7607,
+      "mofluxBatchSuccessRate": 0.6375,
+      "interactiveSuccessAdvantagePp": 21,
+      "batchSuccessDeltaPp": -12.32,
+      "overallSuccessDeltaPp": -7.28,
+      "interactiveTtftP95DeltaMs": 43.11,
+      "interactiveLatencyP95DeltaMs": 80.77
+    },
+    {
+      "seed": 6,
+      "traceFingerprint": "28e64d1c59ffd38df5b2978f559c2537d5419ab7702677f1225dd9acb294c49e",
+      "armOrder": [
+        "moflux",
+        "static",
+        "direct"
+      ],
+      "armPositions": {
+        "moflux": 1,
+        "static": 2,
+        "direct": 3
+      },
+      "conclusive": true,
+      "directProvider429s": 33,
+      "staticProvider429s": 0,
+      "mofluxProvider429s": 0,
+      "directInteractiveSuccessRate": 0.96,
+      "staticInteractiveSuccessRate": 0.42,
+      "mofluxInteractiveSuccessRate": 1,
+      "staticBatchSuccessRate": 0.3839,
+      "mofluxBatchSuccessRate": 0.6696,
+      "interactiveSuccessAdvantagePp": 58,
+      "batchSuccessDeltaPp": 28.57,
+      "overallSuccessDeltaPp": 33.03,
+      "interactiveTtftP95DeltaMs": 4.7,
+      "interactiveLatencyP95DeltaMs": 22.72
+    },
+    {
+      "seed": 7,
+      "traceFingerprint": "336d77d9cb50b98130bfa18e052ab8928f192e34cff9a916ef532b14fabdbc07",
+      "armOrder": [
+        "direct",
+        "static",
+        "moflux"
+      ],
+      "armPositions": {
+        "direct": 1,
+        "static": 2,
+        "moflux": 3
+      },
+      "conclusive": true,
+      "directProvider429s": 32,
+      "staticProvider429s": 0,
+      "mofluxProvider429s": 0,
+      "directInteractiveSuccessRate": 0.95,
+      "staticInteractiveSuccessRate": 0.72,
+      "mofluxInteractiveSuccessRate": 1,
+      "staticBatchSuccessRate": 0.7571,
+      "mofluxBatchSuccessRate": 0.675,
+      "interactiveSuccessAdvantagePp": 28,
+      "batchSuccessDeltaPp": -8.21,
+      "overallSuccessDeltaPp": -2.73,
+      "interactiveTtftP95DeltaMs": 34.5,
+      "interactiveLatencyP95DeltaMs": 80.97
+    },
+    {
+      "seed": 8,
+      "traceFingerprint": "bf55726b3af6d5d3672ea49ff4f157a1276330834d3bbb43054546324b5fb0be",
+      "armOrder": [
+        "static",
+        "moflux",
+        "direct"
+      ],
+      "armPositions": {
+        "static": 1,
+        "moflux": 2,
+        "direct": 3
+      },
+      "conclusive": true,
+      "directProvider429s": 40,
+      "staticProvider429s": 0,
+      "mofluxProvider429s": 0,
+      "directInteractiveSuccessRate": 0.95,
+      "staticInteractiveSuccessRate": 0.8,
+      "mofluxInteractiveSuccessRate": 0.98,
+      "staticBatchSuccessRate": 0.7464,
+      "mofluxBatchSuccessRate": 0.6589,
+      "interactiveSuccessAdvantagePp": 18,
+      "batchSuccessDeltaPp": -8.75,
+      "overallSuccessDeltaPp": -4.69,
+      "interactiveTtftP95DeltaMs": 63.86,
+      "interactiveLatencyP95DeltaMs": 76.26
+    }
+  ],
+  "pairedSummary": {
+    "interactiveSuccessAdvantagePp": {
+      "samples": 8,
+      "median": 25.5,
+      "min": 17,
+      "max": 58
+    },
+    "batchSuccessDeltaPp": {
+      "samples": 8,
+      "median": -8.48,
+      "min": -13.22,
+      "max": 28.57
+    },
+    "overallSuccessDeltaPp": {
+      "samples": 8,
+      "median": -3.71,
+      "min": -8.63,
+      "max": 33.03
+    },
+    "interactiveTtftP95DeltaMs": {
+      "samples": 8,
+      "median": 38.805,
+      "min": -29.06,
+      "max": 249.69
+    },
+    "interactiveLatencyP95DeltaMs": {
+      "samples": 8,
+      "median": 78.515,
+      "min": -18.59,
+      "max": 310.1
+    }
+  },
+  "validation": {
+    "allConclusive": true,
+    "allRateLimitIsolationPassed": true,
+    "directPressureEverySeed": true,
+    "localAdmissionContentionEverySeed": true,
+    "mofluxAdmissionClassProofEverySeed": true,
+    "controlledProvider429FreeEverySeed": true,
+    "mofluxInteractiveAdvantageEverySeed": true,
+    "counterbalancedArmOrdering": true,
+    "sameWorkloadRuntimePolicies": true
+  },
+  "interpretation": {
+    "conclusiveProviderOverloadSweep": true,
+    "warning": "Publish workload-priority claims from paired seed behavior and pooled logical outcomes only when the sweep is counterbalanced. The sweep does not exercise Latchflo fleet coordination or Tyr in-flight token-budget admission."
+  },
+  "seeds": [
+    {
+      "seed": 1,
+      "generatedAt": "2026-08-29T21:02:49.001Z",
+      "traceFingerprint": "29c7c6f5c407947911f858adc468fa7ca043dff3d5200d7b0436d24f45c8b0dc",
+      "armOrder": [
+        "direct",
+        "static",
+        "moflux"
+      ],
+      "aggregate": {
+        "direct": {
+          "offered": 660,
+          "providerAttempts": 660,
+          "success": 622,
+          "failures": 38,
+          "successRate": 0.9424,
+          "localRejects": 0,
+          "provider429s": 38,
+          "provider5xx": 0,
+          "providerOtherFailures": 0,
+          "gatewayFailures": 0,
+          "transportFailures": 0,
+          "ttftMs": {
+            "p50": 551.43,
+            "p95": 781.67
+          },
+          "latencyMs": {
+            "p50": 604.72,
+            "p95": 841.63
+          },
+          "goodputRps": 56.3329,
+          "promptTokens": 22254,
+          "completionTokens": 4976,
+          "measuredSuccessfulUsageCostUsd": 0.010422,
+          "classes": {
+            "interactive": {
+              "offered": 100,
+              "providerAttempts": 100,
+              "success": 95,
+              "failures": 5,
+              "successRate": 0.95,
+              "localRejects": 0,
+              "provider429s": 5,
+              "provider5xx": 0,
+              "providerOtherFailures": 0,
+              "gatewayFailures": 0,
+              "transportFailures": 0,
+              "ttftMs": {
+                "p50": 551.32,
+                "p95": 946.27
+              },
+              "latencyMs": {
+                "p50": 601.52,
+                "p95": 1006.41
+              },
+              "goodputRps": 8.6039,
+              "promptTokens": 2755,
+              "completionTokens": 760,
+              "measuredSuccessfulUsageCostUsd": 0.001463
+            },
+            "batch": {
+              "offered": 560,
+              "providerAttempts": 560,
+              "success": 527,
+              "failures": 33,
+              "successRate": 0.9411,
+              "localRejects": 0,
+              "provider429s": 33,
+              "provider5xx": 0,
+              "providerOtherFailures": 0,
+              "gatewayFailures": 0,
+              "transportFailures": 0,
+              "ttftMs": {
+                "p50": 551.46,
+                "p95": 764.94
+              },
+              "latencyMs": {
+                "p50": 605,
+                "p95": 833.29
+              },
+              "goodputRps": 47.729,
+              "promptTokens": 19499,
+              "completionTokens": 4216,
+              "measuredSuccessfulUsageCostUsd": 0.008959
+            }
+          }
+        },
+        "static": {
+          "offered": 660,
+          "providerAttempts": 488,
+          "success": 488,
+          "failures": 172,
+          "successRate": 0.7394,
+          "localRejects": 172,
+          "provider429s": 0,
+          "provider5xx": 0,
+          "providerOtherFailures": 0,
+          "gatewayFailures": 0,
+          "transportFailures": 0,
+          "ttftMs": {
+            "p50": 525.5,
+            "p95": 694.65
+          },
+          "latencyMs": {
+            "p50": 578.08,
+            "p95": 766.59
+          },
+          "goodputRps": 46.4845,
+          "promptTokens": 17456,
+          "completionTokens": 3904,
+          "measuredSuccessfulUsageCostUsd": 0.008176,
+          "classes": {
+            "interactive": {
+              "offered": 100,
+              "providerAttempts": 75,
+              "success": 75,
+              "failures": 25,
+              "successRate": 0.75,
+              "localRejects": 25,
+              "provider429s": 0,
+              "provider5xx": 0,
+              "providerOtherFailures": 0,
+              "gatewayFailures": 0,
+              "transportFailures": 0,
+              "ttftMs": {
+                "p50": 530.84,
+                "p95": 720.5
+              },
+              "latencyMs": {
+                "p50": 583.04,
+                "p95": 769.99
+              },
+              "goodputRps": 7.1441,
+              "promptTokens": 2175,
+              "completionTokens": 600,
+              "measuredSuccessfulUsageCostUsd": 0.001155
+            },
+            "batch": {
+              "offered": 560,
+              "providerAttempts": 413,
+              "success": 413,
+              "failures": 147,
+              "successRate": 0.7375,
+              "localRejects": 147,
+              "provider429s": 0,
+              "provider5xx": 0,
+              "providerOtherFailures": 0,
+              "gatewayFailures": 0,
+              "transportFailures": 0,
+              "ttftMs": {
+                "p50": 524.71,
+                "p95": 684.52
+              },
+              "latencyMs": {
+                "p50": 577.8,
+                "p95": 753.63
+              },
+              "goodputRps": 39.3404,
+              "promptTokens": 15281,
+              "completionTokens": 3304,
+              "measuredSuccessfulUsageCostUsd": 0.007021
+            }
+          }
+        },
+        "moflux": {
+          "offered": 660,
+          "providerAttempts": 475,
+          "success": 475,
+          "failures": 185,
+          "successRate": 0.7197,
+          "localRejects": 185,
+          "provider429s": 0,
+          "provider5xx": 0,
+          "providerOtherFailures": 0,
+          "gatewayFailures": 0,
+          "transportFailures": 0,
+          "ttftMs": {
+            "p50": 515.49,
+            "p95": 711.74
+          },
+          "latencyMs": {
+            "p50": 573.55,
+            "p95": 785.36
+          },
+          "goodputRps": 44.748,
+          "promptTokens": 16775,
+          "completionTokens": 3800,
+          "measuredSuccessfulUsageCostUsd": 0.007915,
+          "classes": {
+            "interactive": {
+              "offered": 100,
+              "providerAttempts": 100,
+              "success": 100,
+              "failures": 0,
+              "successRate": 1,
+              "localRejects": 0,
+              "provider429s": 0,
+              "provider5xx": 0,
+              "providerOtherFailures": 0,
+              "gatewayFailures": 0,
+              "transportFailures": 0,
+              "ttftMs": {
+                "p50": 535.26,
+                "p95": 691.44
+              },
+              "latencyMs": {
+                "p50": 584.58,
+                "p95": 751.4
+              },
+              "goodputRps": 9.4206,
+              "promptTokens": 2900,
+              "completionTokens": 800,
+              "measuredSuccessfulUsageCostUsd": 0.00154
+            },
+            "batch": {
+              "offered": 560,
+              "providerAttempts": 375,
+              "success": 375,
+              "failures": 185,
+              "successRate": 0.6696,
+              "localRejects": 185,
+              "provider429s": 0,
+              "provider5xx": 0,
+              "providerOtherFailures": 0,
+              "gatewayFailures": 0,
+              "transportFailures": 0,
+              "ttftMs": {
+                "p50": 508.97,
+                "p95": 712.78
+              },
+              "latencyMs": {
+                "p50": 565.93,
+                "p95": 785.84
+              },
+              "goodputRps": 35.3273,
+              "promptTokens": 13875,
+              "completionTokens": 3000,
+              "measuredSuccessfulUsageCostUsd": 0.006375
+            }
+          }
+        }
+      },
+      "interpretation": {
+        "directProviderPressureObserved": true,
+        "localAdmissionContentionObserved": true,
+        "mofluxAdmissionClassProof": true,
+        "rateLimitIsolationPassed": true,
+        "conclusiveProviderOverloadComparison": true,
+        "inconclusiveReasons": [],
+        "warning": "Do not claim a provider-overload efficacy result unless conclusiveProviderOverloadComparison is true. A clean run with no direct-provider pressure is compatibility/load evidence, not proof that MoFlux improved behavior under OpenAI overload."
+      },
+      "acceptance": {
+        "executionCompleted": true,
+        "spendGuardPassed": true,
+        "matchedTraceByRun": true,
+        "mofluxAdmissionClassProof": true,
+        "rateLimitIsolationPassed": true
+      }
+    },
+    {
+      "seed": 2,
+      "generatedAt": "2026-08-29T21:05:50.267Z",
+      "traceFingerprint": "1bb5312f9526af46fe07bfef79ffa3389f1e47a334404c43db35de8ea4c46b1d",
+      "armOrder": [
+        "static",
+        "moflux",
+        "direct"
+      ],
+      "aggregate": {
+        "static": {
+          "offered": 660,
+          "providerAttempts": 489,
+          "success": 489,
+          "failures": 171,
+          "successRate": 0.7409,
+          "localRejects": 171,
+          "provider429s": 0,
+          "provider5xx": 0,
+          "providerOtherFailures": 0,
+          "gatewayFailures": 0,
+          "transportFailures": 0,
+          "ttftMs": {
+            "p50": 507.32,
+            "p95": 788.39
+          },
+          "latencyMs": {
+            "p50": 566.6,
+            "p95": 837.25
+          },
+          "goodputRps": 45.9434,
+          "promptTokens": 17509,
+          "completionTokens": 3912,
+          "measuredSuccessfulUsageCostUsd": 0.0081962,
+          "classes": {
+            "interactive": {
+              "offered": 100,
+              "providerAttempts": 73,
+              "success": 73,
+              "failures": 27,
+              "successRate": 0.73,
+              "localRejects": 27,
+              "provider429s": 0,
+              "provider5xx": 0,
+              "providerOtherFailures": 0,
+              "gatewayFailures": 0,
+              "transportFailures": 0,
+              "ttftMs": {
+                "p50": 488.83,
+                "p95": 770.1
+              },
+              "latencyMs": {
+                "p50": 550.3,
+                "p95": 816.53
+              },
+              "goodputRps": 6.8586,
+              "promptTokens": 2117,
+              "completionTokens": 584,
+              "measuredSuccessfulUsageCostUsd": 0.0011242
+            },
+            "batch": {
+              "offered": 560,
+              "providerAttempts": 416,
+              "success": 416,
+              "failures": 144,
+              "successRate": 0.7429,
+              "localRejects": 144,
+              "provider429s": 0,
+              "provider5xx": 0,
+              "providerOtherFailures": 0,
+              "gatewayFailures": 0,
+              "transportFailures": 0,
+              "ttftMs": {
+                "p50": 511.79,
+                "p95": 789.33
+              },
+              "latencyMs": {
+                "p50": 568.51,
+                "p95": 839.98
+              },
+              "goodputRps": 39.0848,
+              "promptTokens": 15392,
+              "completionTokens": 3328,
+              "measuredSuccessfulUsageCostUsd": 0.007072
+            }
+          }
+        },
+        "moflux": {
+          "offered": 660,
+          "providerAttempts": 486,
+          "success": 486,
+          "failures": 174,
+          "successRate": 0.7364,
+          "localRejects": 174,
+          "provider429s": 0,
+          "provider5xx": 0,
+          "providerOtherFailures": 0,
+          "gatewayFailures": 0,
+          "transportFailures": 0,
+          "ttftMs": {
+            "p50": 504.1,
+            "p95": 728.65
+          },
+          "latencyMs": {
+            "p50": 558.99,
+            "p95": 786.29
+          },
+          "goodputRps": 42.088,
+          "promptTokens": 17182,
+          "completionTokens": 3888,
+          "measuredSuccessfulUsageCostUsd": 0.008102,
+          "classes": {
+            "interactive": {
+              "offered": 100,
+              "providerAttempts": 100,
+              "success": 100,
+              "failures": 0,
+              "successRate": 1,
+              "localRejects": 0,
+              "provider429s": 0,
+              "provider5xx": 0,
+              "providerOtherFailures": 0,
+              "gatewayFailures": 0,
+              "transportFailures": 0,
+              "ttftMs": {
+                "p50": 501.43,
+                "p95": 868.58
+              },
+              "latencyMs": {
+                "p50": 548.92,
+                "p95": 905.48
+              },
+              "goodputRps": 8.6601,
+              "promptTokens": 2900,
+              "completionTokens": 800,
+              "measuredSuccessfulUsageCostUsd": 0.00154
+            },
+            "batch": {
+              "offered": 560,
+              "providerAttempts": 386,
+              "success": 386,
+              "failures": 174,
+              "successRate": 0.6893,
+              "localRejects": 174,
+              "provider429s": 0,
+              "provider5xx": 0,
+              "providerOtherFailures": 0,
+              "gatewayFailures": 0,
+              "transportFailures": 0,
+              "ttftMs": {
+                "p50": 504.1,
+                "p95": 721.58
+              },
+              "latencyMs": {
+                "p50": 563.84,
+                "p95": 778.86
+              },
+              "goodputRps": 33.4279,
+              "promptTokens": 14282,
+              "completionTokens": 3088,
+              "measuredSuccessfulUsageCostUsd": 0.006562
+            }
+          }
+        },
+        "direct": {
+          "offered": 660,
+          "providerAttempts": 660,
+          "success": 627,
+          "failures": 33,
+          "successRate": 0.95,
+          "localRejects": 0,
+          "provider429s": 33,
+          "provider5xx": 0,
+          "providerOtherFailures": 0,
+          "gatewayFailures": 0,
+          "transportFailures": 0,
+          "ttftMs": {
+            "p50": 510.06,
+            "p95": 743.2
+          },
+          "latencyMs": {
+            "p50": 563.93,
+            "p95": 790.77
+          },
+          "goodputRps": 53.6311,
+          "promptTokens": 22423,
+          "completionTokens": 5016,
+          "measuredSuccessfulUsageCostUsd": 0.0105038,
+          "classes": {
+            "interactive": {
+              "offered": 100,
+              "providerAttempts": 100,
+              "success": 97,
+              "failures": 3,
+              "successRate": 0.97,
+              "localRejects": 0,
+              "provider429s": 3,
+              "provider5xx": 0,
+              "providerOtherFailures": 0,
+              "gatewayFailures": 0,
+              "transportFailures": 0,
+              "ttftMs": {
+                "p50": 520.68,
+                "p95": 774.84
+              },
+              "latencyMs": {
+                "p50": 570.26,
+                "p95": 819.49
+              },
+              "goodputRps": 8.297,
+              "promptTokens": 2813,
+              "completionTokens": 776,
+              "measuredSuccessfulUsageCostUsd": 0.0014938
+            },
+            "batch": {
+              "offered": 560,
+              "providerAttempts": 560,
+              "success": 530,
+              "failures": 30,
+              "successRate": 0.9464,
+              "localRejects": 0,
+              "provider429s": 30,
+              "provider5xx": 0,
+              "providerOtherFailures": 0,
+              "gatewayFailures": 0,
+              "transportFailures": 0,
+              "ttftMs": {
+                "p50": 509.67,
+                "p95": 731.52
+              },
+              "latencyMs": {
+                "p50": 562.04,
+                "p95": 788.97
+              },
+              "goodputRps": 45.3341,
+              "promptTokens": 19610,
+              "completionTokens": 4240,
+              "measuredSuccessfulUsageCostUsd": 0.00901
+            }
+          }
+        }
+      },
+      "interpretation": {
+        "directProviderPressureObserved": true,
+        "localAdmissionContentionObserved": true,
+        "mofluxAdmissionClassProof": true,
+        "rateLimitIsolationPassed": true,
+        "conclusiveProviderOverloadComparison": true,
+        "inconclusiveReasons": [],
+        "warning": "Do not claim a provider-overload efficacy result unless conclusiveProviderOverloadComparison is true. A clean run with no direct-provider pressure is compatibility/load evidence, not proof that MoFlux improved behavior under OpenAI overload."
+      },
+      "acceptance": {
+        "executionCompleted": true,
+        "spendGuardPassed": true,
+        "matchedTraceByRun": true,
+        "mofluxAdmissionClassProof": true,
+        "rateLimitIsolationPassed": true
+      }
+    },
+    {
+      "seed": 3,
+      "generatedAt": "2026-08-29T21:09:19.992Z",
+      "traceFingerprint": "bbf681cd4dfce2516d0d8ffec25dc31c361f38b58c1a274202bc3f20ae635d55",
+      "armOrder": [
+        "moflux",
+        "direct",
+        "static"
+      ],
+      "aggregate": {
+        "moflux": {
+          "offered": 660,
+          "providerAttempts": 458,
+          "success": 458,
+          "failures": 202,
+          "successRate": 0.6939,
+          "localRejects": 202,
+          "provider429s": 0,
+          "provider5xx": 0,
+          "providerOtherFailures": 0,
+          "gatewayFailures": 0,
+          "transportFailures": 0,
+          "ttftMs": {
+            "p50": 523.63,
+            "p95": 731.5
+          },
+          "latencyMs": {
+            "p50": 580.66,
+            "p95": 807.32
+          },
+          "goodputRps": 40.5148,
+          "promptTokens": 16146,
+          "completionTokens": 3664,
+          "measuredSuccessfulUsageCostUsd": 0.007626,
+          "classes": {
+            "interactive": {
+              "offered": 100,
+              "providerAttempts": 100,
+              "success": 100,
+              "failures": 0,
+              "successRate": 1,
+              "localRejects": 0,
+              "provider429s": 0,
+              "provider5xx": 0,
+              "providerOtherFailures": 0,
+              "gatewayFailures": 0,
+              "transportFailures": 0,
+              "ttftMs": {
+                "p50": 522.69,
+                "p95": 745.73
+              },
+              "latencyMs": {
+                "p50": 584.46,
+                "p95": 821.24
+              },
+              "goodputRps": 8.846,
+              "promptTokens": 2900,
+              "completionTokens": 800,
+              "measuredSuccessfulUsageCostUsd": 0.00154
+            },
+            "batch": {
+              "offered": 560,
+              "providerAttempts": 358,
+              "success": 358,
+              "failures": 202,
+              "successRate": 0.6393,
+              "localRejects": 202,
+              "provider429s": 0,
+              "provider5xx": 0,
+              "providerOtherFailures": 0,
+              "gatewayFailures": 0,
+              "transportFailures": 0,
+              "ttftMs": {
+                "p50": 523.63,
+                "p95": 723.57
+              },
+              "latencyMs": {
+                "p50": 579.59,
+                "p95": 784.02
+              },
+              "goodputRps": 31.6688,
+              "promptTokens": 13246,
+              "completionTokens": 2864,
+              "measuredSuccessfulUsageCostUsd": 0.006086
+            }
+          }
+        },
+        "direct": {
+          "offered": 660,
+          "providerAttempts": 660,
+          "success": 624,
+          "failures": 36,
+          "successRate": 0.9455,
+          "localRejects": 0,
+          "provider429s": 36,
+          "provider5xx": 0,
+          "providerOtherFailures": 0,
+          "gatewayFailures": 0,
+          "transportFailures": 0,
+          "ttftMs": {
+            "p50": 508.52,
+            "p95": 740.28
+          },
+          "latencyMs": {
+            "p50": 564.11,
+            "p95": 831.53
+          },
+          "goodputRps": 58.6619,
+          "promptTokens": 22328,
+          "completionTokens": 4992,
+          "measuredSuccessfulUsageCostUsd": 0.010456,
+          "classes": {
+            "interactive": {
+              "offered": 100,
+              "providerAttempts": 100,
+              "success": 95,
+              "failures": 5,
+              "successRate": 0.95,
+              "localRejects": 0,
+              "provider429s": 5,
+              "provider5xx": 0,
+              "providerOtherFailures": 0,
+              "gatewayFailures": 0,
+              "transportFailures": 0,
+              "ttftMs": {
+                "p50": 515.17,
+                "p95": 785.72
+              },
+              "latencyMs": {
+                "p50": 570.23,
+                "p95": 848.88
+              },
+              "goodputRps": 8.9309,
+              "promptTokens": 2755,
+              "completionTokens": 760,
+              "measuredSuccessfulUsageCostUsd": 0.001463
+            },
+            "batch": {
+              "offered": 560,
+              "providerAttempts": 560,
+              "success": 529,
+              "failures": 31,
+              "successRate": 0.9446,
+              "localRejects": 0,
+              "provider429s": 31,
+              "provider5xx": 0,
+              "providerOtherFailures": 0,
+              "gatewayFailures": 0,
+              "transportFailures": 0,
+              "ttftMs": {
+                "p50": 508.52,
+                "p95": 723.89
+              },
+              "latencyMs": {
+                "p50": 562.18,
+                "p95": 831.53
+              },
+              "goodputRps": 49.731,
+              "promptTokens": 19573,
+              "completionTokens": 4232,
+              "measuredSuccessfulUsageCostUsd": 0.008993
+            }
+          }
+        },
+        "static": {
+          "offered": 660,
+          "providerAttempts": 494,
+          "success": 494,
+          "failures": 166,
+          "successRate": 0.7485,
+          "localRejects": 166,
+          "provider429s": 0,
+          "provider5xx": 0,
+          "providerOtherFailures": 0,
+          "gatewayFailures": 0,
+          "transportFailures": 0,
+          "ttftMs": {
+            "p50": 516.77,
+            "p95": 734.37
+          },
+          "latencyMs": {
+            "p50": 568.85,
+            "p95": 780.22
+          },
+          "goodputRps": 44.7016,
+          "promptTokens": 17686,
+          "completionTokens": 3952,
+          "measuredSuccessfulUsageCostUsd": 0.0082796,
+          "classes": {
+            "interactive": {
+              "offered": 100,
+              "providerAttempts": 74,
+              "success": 74,
+              "failures": 26,
+              "successRate": 0.74,
+              "localRejects": 26,
+              "provider429s": 0,
+              "provider5xx": 0,
+              "providerOtherFailures": 0,
+              "gatewayFailures": 0,
+              "transportFailures": 0,
+              "ttftMs": {
+                "p50": 525.19,
+                "p95": 738.06
+              },
+              "latencyMs": {
+                "p50": 573.56,
+                "p95": 780.22
+              },
+              "goodputRps": 6.6962,
+              "promptTokens": 2146,
+              "completionTokens": 592,
+              "measuredSuccessfulUsageCostUsd": 0.0011396
+            },
+            "batch": {
+              "offered": 560,
+              "providerAttempts": 420,
+              "success": 420,
+              "failures": 140,
+              "successRate": 0.75,
+              "localRejects": 140,
+              "provider429s": 0,
+              "provider5xx": 0,
+              "providerOtherFailures": 0,
+              "gatewayFailures": 0,
+              "transportFailures": 0,
+              "ttftMs": {
+                "p50": 516.04,
+                "p95": 734.27
+              },
+              "latencyMs": {
+                "p50": 567.07,
+                "p95": 776.78
+              },
+              "goodputRps": 38.0054,
+              "promptTokens": 15540,
+              "completionTokens": 3360,
+              "measuredSuccessfulUsageCostUsd": 0.00714
+            }
+          }
+        }
+      },
+      "interpretation": {
+        "directProviderPressureObserved": true,
+        "localAdmissionContentionObserved": true,
+        "mofluxAdmissionClassProof": true,
+        "rateLimitIsolationPassed": true,
+        "conclusiveProviderOverloadComparison": true,
+        "inconclusiveReasons": [],
+        "warning": "Do not claim a provider-overload efficacy result unless conclusiveProviderOverloadComparison is true. A clean run with no direct-provider pressure is compatibility/load evidence, not proof that MoFlux improved behavior under OpenAI overload."
+      },
+      "acceptance": {
+        "executionCompleted": true,
+        "spendGuardPassed": true,
+        "matchedTraceByRun": true,
+        "mofluxAdmissionClassProof": true,
+        "rateLimitIsolationPassed": true
+      }
+    },
+    {
+      "seed": 4,
+      "generatedAt": "2026-08-29T21:12:33.524Z",
+      "traceFingerprint": "86e605415863ae276fb331e2dd418e12f152c5048acfa8e03e9075bdfbef8a4b",
+      "armOrder": [
+        "direct",
+        "moflux",
+        "static"
+      ],
+      "aggregate": {
+        "direct": {
+          "offered": 660,
+          "providerAttempts": 660,
+          "success": 629,
+          "failures": 31,
+          "successRate": 0.953,
+          "localRejects": 0,
+          "provider429s": 31,
+          "provider5xx": 0,
+          "providerOtherFailures": 0,
+          "gatewayFailures": 0,
+          "transportFailures": 0,
+          "ttftMs": {
+            "p50": 513.5,
+            "p95": 709.84
+          },
+          "latencyMs": {
+            "p50": 576.26,
+            "p95": 781.5
+          },
+          "goodputRps": 57.0832,
+          "promptTokens": 22505,
+          "completionTokens": 5032,
+          "measuredSuccessfulUsageCostUsd": 0.0105394,
+          "classes": {
+            "interactive": {
+              "offered": 100,
+              "providerAttempts": 100,
+              "success": 96,
+              "failures": 4,
+              "successRate": 0.96,
+              "localRejects": 0,
+              "provider429s": 4,
+              "provider5xx": 0,
+              "providerOtherFailures": 0,
+              "gatewayFailures": 0,
+              "transportFailures": 0,
+              "ttftMs": {
+                "p50": 494.87,
+                "p95": 688.14
+              },
+              "latencyMs": {
+                "p50": 564.84,
+                "p95": 742.32
+              },
+              "goodputRps": 8.7122,
+              "promptTokens": 2784,
+              "completionTokens": 768,
+              "measuredSuccessfulUsageCostUsd": 0.0014784
+            },
+            "batch": {
+              "offered": 560,
+              "providerAttempts": 560,
+              "success": 533,
+              "failures": 27,
+              "successRate": 0.9518,
+              "localRejects": 0,
+              "provider429s": 27,
+              "provider5xx": 0,
+              "providerOtherFailures": 0,
+              "gatewayFailures": 0,
+              "transportFailures": 0,
+              "ttftMs": {
+                "p50": 515.82,
+                "p95": 710.67
+              },
+              "latencyMs": {
+                "p50": 577.97,
+                "p95": 782.61
+              },
+              "goodputRps": 48.371,
+              "promptTokens": 19721,
+              "completionTokens": 4264,
+              "measuredSuccessfulUsageCostUsd": 0.009061
+            }
+          }
+        },
+        "moflux": {
+          "offered": 660,
+          "providerAttempts": 446,
+          "success": 446,
+          "failures": 214,
+          "successRate": 0.6758,
+          "localRejects": 214,
+          "provider429s": 0,
+          "provider5xx": 0,
+          "providerOtherFailures": 0,
+          "gatewayFailures": 0,
+          "transportFailures": 0,
+          "ttftMs": {
+            "p50": 542.69,
+            "p95": 884.05
+          },
+          "latencyMs": {
+            "p50": 600.85,
+            "p95": 955.99
+          },
+          "goodputRps": 36.5122,
+          "promptTokens": 15726,
+          "completionTokens": 3568,
+          "measuredSuccessfulUsageCostUsd": 0.0074268,
+          "classes": {
+            "interactive": {
+              "offered": 100,
+              "providerAttempts": 97,
+              "success": 97,
+              "failures": 3,
+              "successRate": 0.97,
+              "localRejects": 3,
+              "provider429s": 0,
+              "provider5xx": 0,
+              "providerOtherFailures": 0,
+              "gatewayFailures": 0,
+              "transportFailures": 0,
+              "ttftMs": {
+                "p50": 553.61,
+                "p95": 980.69
+              },
+              "latencyMs": {
+                "p50": 611.4,
+                "p95": 1094.31
+              },
+              "goodputRps": 7.941,
+              "promptTokens": 2813,
+              "completionTokens": 776,
+              "measuredSuccessfulUsageCostUsd": 0.0014938
+            },
+            "batch": {
+              "offered": 560,
+              "providerAttempts": 349,
+              "success": 349,
+              "failures": 211,
+              "successRate": 0.6232,
+              "localRejects": 211,
+              "provider429s": 0,
+              "provider5xx": 0,
+              "providerOtherFailures": 0,
+              "gatewayFailures": 0,
+              "transportFailures": 0,
+              "ttftMs": {
+                "p50": 540.79,
+                "p95": 884.05
+              },
+              "latencyMs": {
+                "p50": 595.62,
+                "p95": 945.81
+              },
+              "goodputRps": 28.5712,
+              "promptTokens": 12913,
+              "completionTokens": 2792,
+              "measuredSuccessfulUsageCostUsd": 0.005933
+            }
+          }
+        },
+        "static": {
+          "offered": 660,
+          "providerAttempts": 503,
+          "success": 503,
+          "failures": 157,
+          "successRate": 0.7621,
+          "localRejects": 157,
+          "provider429s": 0,
+          "provider5xx": 0,
+          "providerOtherFailures": 0,
+          "gatewayFailures": 0,
+          "transportFailures": 0,
+          "ttftMs": {
+            "p50": 494.06,
+            "p95": 695.04
+          },
+          "latencyMs": {
+            "p50": 550.35,
+            "p95": 778.68
+          },
+          "goodputRps": 46.7484,
+          "promptTokens": 17971,
+          "completionTokens": 4024,
+          "measuredSuccessfulUsageCostUsd": 0.008423,
+          "classes": {
+            "interactive": {
+              "offered": 100,
+              "providerAttempts": 80,
+              "success": 80,
+              "failures": 20,
+              "successRate": 0.8,
+              "localRejects": 20,
+              "provider429s": 0,
+              "provider5xx": 0,
+              "providerOtherFailures": 0,
+              "gatewayFailures": 0,
+              "transportFailures": 0,
+              "ttftMs": {
+                "p50": 496.39,
+                "p95": 731
+              },
+              "latencyMs": {
+                "p50": 556.25,
+                "p95": 784.21
+              },
+              "goodputRps": 7.4351,
+              "promptTokens": 2320,
+              "completionTokens": 640,
+              "measuredSuccessfulUsageCostUsd": 0.001232
+            },
+            "batch": {
+              "offered": 560,
+              "providerAttempts": 423,
+              "success": 423,
+              "failures": 137,
+              "successRate": 0.7554,
+              "localRejects": 137,
+              "provider429s": 0,
+              "provider5xx": 0,
+              "providerOtherFailures": 0,
+              "gatewayFailures": 0,
+              "transportFailures": 0,
+              "ttftMs": {
+                "p50": 493.62,
+                "p95": 667.92
+              },
+              "latencyMs": {
+                "p50": 549.82,
+                "p95": 766.07
+              },
+              "goodputRps": 39.3133,
+              "promptTokens": 15651,
+              "completionTokens": 3384,
+              "measuredSuccessfulUsageCostUsd": 0.007191
+            }
+          }
+        }
+      },
+      "interpretation": {
+        "directProviderPressureObserved": true,
+        "localAdmissionContentionObserved": true,
+        "mofluxAdmissionClassProof": true,
+        "rateLimitIsolationPassed": true,
+        "conclusiveProviderOverloadComparison": true,
+        "inconclusiveReasons": [],
+        "warning": "Do not claim a provider-overload efficacy result unless conclusiveProviderOverloadComparison is true. A clean run with no direct-provider pressure is compatibility/load evidence, not proof that MoFlux improved behavior under OpenAI overload."
+      },
+      "acceptance": {
+        "executionCompleted": true,
+        "spendGuardPassed": true,
+        "matchedTraceByRun": true,
+        "mofluxAdmissionClassProof": true,
+        "rateLimitIsolationPassed": true
+      }
+    },
+    {
+      "seed": 5,
+      "generatedAt": "2026-08-29T21:15:54.374Z",
+      "traceFingerprint": "ad2511fde679df27cdb224601090672f5def7cf6fcd3ee630edd86b7737342d1",
+      "armOrder": [
+        "static",
+        "direct",
+        "moflux"
+      ],
+      "aggregate": {
+        "static": {
+          "offered": 660,
+          "providerAttempts": 505,
+          "success": 505,
+          "failures": 155,
+          "successRate": 0.7652,
+          "localRejects": 155,
+          "provider429s": 0,
+          "provider5xx": 0,
+          "providerOtherFailures": 0,
+          "gatewayFailures": 0,
+          "transportFailures": 0,
+          "ttftMs": {
+            "p50": 501.21,
+            "p95": 675.65
+          },
+          "latencyMs": {
+            "p50": 561.41,
+            "p95": 744.24
+          },
+          "goodputRps": 45.7088,
+          "promptTokens": 18053,
+          "completionTokens": 4040,
+          "measuredSuccessfulUsageCostUsd": 0.0084586,
+          "classes": {
+            "interactive": {
+              "offered": 100,
+              "providerAttempts": 79,
+              "success": 79,
+              "failures": 21,
+              "successRate": 0.79,
+              "localRejects": 21,
+              "provider429s": 0,
+              "provider5xx": 0,
+              "providerOtherFailures": 0,
+              "gatewayFailures": 0,
+              "transportFailures": 0,
+              "ttftMs": {
+                "p50": 501.21,
+                "p95": 708.19
+              },
+              "latencyMs": {
+                "p50": 562.24,
+                "p95": 756.51
+              },
+              "goodputRps": 7.1505,
+              "promptTokens": 2291,
+              "completionTokens": 632,
+              "measuredSuccessfulUsageCostUsd": 0.0012166
+            },
+            "batch": {
+              "offered": 560,
+              "providerAttempts": 426,
+              "success": 426,
+              "failures": 134,
+              "successRate": 0.7607,
+              "localRejects": 134,
+              "provider429s": 0,
+              "provider5xx": 0,
+              "providerOtherFailures": 0,
+              "gatewayFailures": 0,
+              "transportFailures": 0,
+              "ttftMs": {
+                "p50": 501.15,
+                "p95": 665.03
+              },
+              "latencyMs": {
+                "p50": 561.35,
+                "p95": 739.76
+              },
+              "goodputRps": 38.5584,
+              "promptTokens": 15762,
+              "completionTokens": 3408,
+              "measuredSuccessfulUsageCostUsd": 0.007242
+            }
+          }
+        },
+        "direct": {
+          "offered": 660,
+          "providerAttempts": 660,
+          "success": 623,
+          "failures": 37,
+          "successRate": 0.9439,
+          "localRejects": 0,
+          "provider429s": 37,
+          "provider5xx": 0,
+          "providerOtherFailures": 0,
+          "gatewayFailures": 0,
+          "transportFailures": 0,
+          "ttftMs": {
+            "p50": 498.72,
+            "p95": 665.97
+          },
+          "latencyMs": {
+            "p50": 552.29,
+            "p95": 746.4
+          },
+          "goodputRps": 59.7997,
+          "promptTokens": 22291,
+          "completionTokens": 4984,
+          "measuredSuccessfulUsageCostUsd": 0.010439,
+          "classes": {
+            "interactive": {
+              "offered": 100,
+              "providerAttempts": 100,
+              "success": 95,
+              "failures": 5,
+              "successRate": 0.95,
+              "localRejects": 0,
+              "provider429s": 5,
+              "provider5xx": 0,
+              "providerOtherFailures": 0,
+              "gatewayFailures": 0,
+              "transportFailures": 0,
+              "ttftMs": {
+                "p50": 498.53,
+                "p95": 671.46
+              },
+              "latencyMs": {
+                "p50": 549.65,
+                "p95": 724.31
+              },
+              "goodputRps": 9.1187,
+              "promptTokens": 2755,
+              "completionTokens": 760,
+              "measuredSuccessfulUsageCostUsd": 0.001463
+            },
+            "batch": {
+              "offered": 560,
+              "providerAttempts": 560,
+              "success": 528,
+              "failures": 32,
+              "successRate": 0.9429,
+              "localRejects": 0,
+              "provider429s": 32,
+              "provider5xx": 0,
+              "providerOtherFailures": 0,
+              "gatewayFailures": 0,
+              "transportFailures": 0,
+              "ttftMs": {
+                "p50": 498.72,
+                "p95": 665.97
+              },
+              "latencyMs": {
+                "p50": 553.22,
+                "p95": 746.86
+              },
+              "goodputRps": 50.6809,
+              "promptTokens": 19536,
+              "completionTokens": 4224,
+              "measuredSuccessfulUsageCostUsd": 0.008976
+            }
+          }
+        },
+        "moflux": {
+          "offered": 660,
+          "providerAttempts": 457,
+          "success": 457,
+          "failures": 203,
+          "successRate": 0.6924,
+          "localRejects": 203,
+          "provider429s": 0,
+          "provider5xx": 0,
+          "providerOtherFailures": 0,
+          "gatewayFailures": 0,
+          "transportFailures": 0,
+          "ttftMs": {
+            "p50": 531.43,
+            "p95": 735.31
+          },
+          "latencyMs": {
+            "p50": 585.55,
+            "p95": 806.91
+          },
+          "goodputRps": 42.9802,
+          "promptTokens": 16109,
+          "completionTokens": 3656,
+          "measuredSuccessfulUsageCostUsd": 0.007609,
+          "classes": {
+            "interactive": {
+              "offered": 100,
+              "providerAttempts": 100,
+              "success": 100,
+              "failures": 0,
+              "successRate": 1,
+              "localRejects": 0,
+              "provider429s": 0,
+              "provider5xx": 0,
+              "providerOtherFailures": 0,
+              "gatewayFailures": 0,
+              "transportFailures": 0,
+              "ttftMs": {
+                "p50": 535.54,
+                "p95": 751.3
+              },
+              "latencyMs": {
+                "p50": 590.78,
+                "p95": 837.28
+              },
+              "goodputRps": 9.4049,
+              "promptTokens": 2900,
+              "completionTokens": 800,
+              "measuredSuccessfulUsageCostUsd": 0.00154
+            },
+            "batch": {
+              "offered": 560,
+              "providerAttempts": 357,
+              "success": 357,
+              "failures": 203,
+              "successRate": 0.6375,
+              "localRejects": 203,
+              "provider429s": 0,
+              "provider5xx": 0,
+              "providerOtherFailures": 0,
+              "gatewayFailures": 0,
+              "transportFailures": 0,
+              "ttftMs": {
+                "p50": 531.01,
+                "p95": 711
+              },
+              "latencyMs": {
+                "p50": 585.22,
+                "p95": 780.87
+              },
+              "goodputRps": 33.5754,
+              "promptTokens": 13209,
+              "completionTokens": 2856,
+              "measuredSuccessfulUsageCostUsd": 0.006069
+            }
+          }
+        }
+      },
+      "interpretation": {
+        "directProviderPressureObserved": true,
+        "localAdmissionContentionObserved": true,
+        "mofluxAdmissionClassProof": true,
+        "rateLimitIsolationPassed": true,
+        "conclusiveProviderOverloadComparison": true,
+        "inconclusiveReasons": [],
+        "warning": "Do not claim a provider-overload efficacy result unless conclusiveProviderOverloadComparison is true. A clean run with no direct-provider pressure is compatibility/load evidence, not proof that MoFlux improved behavior under OpenAI overload."
+      },
+      "acceptance": {
+        "executionCompleted": true,
+        "spendGuardPassed": true,
+        "matchedTraceByRun": true,
+        "mofluxAdmissionClassProof": true,
+        "rateLimitIsolationPassed": true
+      }
+    },
+    {
+      "seed": 6,
+      "generatedAt": "2026-08-29T21:18:23.605Z",
+      "traceFingerprint": "28e64d1c59ffd38df5b2978f559c2537d5419ab7702677f1225dd9acb294c49e",
+      "armOrder": [
+        "moflux",
+        "static",
+        "direct"
+      ],
+      "aggregate": {
+        "moflux": {
+          "offered": 660,
+          "providerAttempts": 475,
+          "success": 475,
+          "failures": 185,
+          "successRate": 0.7197,
+          "localRejects": 185,
+          "provider429s": 0,
+          "provider5xx": 0,
+          "providerOtherFailures": 0,
+          "gatewayFailures": 0,
+          "transportFailures": 0,
+          "ttftMs": {
+            "p50": 519.38,
+            "p95": 728.01
+          },
+          "latencyMs": {
+            "p50": 579.09,
+            "p95": 778.89
+          },
+          "goodputRps": 41.8414,
+          "promptTokens": 16775,
+          "completionTokens": 3800,
+          "measuredSuccessfulUsageCostUsd": 0.007915,
+          "classes": {
+            "interactive": {
+              "offered": 100,
+              "providerAttempts": 100,
+              "success": 100,
+              "failures": 0,
+              "successRate": 1,
+              "localRejects": 0,
+              "provider429s": 0,
+              "provider5xx": 0,
+              "providerOtherFailures": 0,
+              "gatewayFailures": 0,
+              "transportFailures": 0,
+              "ttftMs": {
+                "p50": 513.53,
+                "p95": 719.89
+              },
+              "latencyMs": {
+                "p50": 576.73,
+                "p95": 777.21
+              },
+              "goodputRps": 8.8087,
+              "promptTokens": 2900,
+              "completionTokens": 800,
+              "measuredSuccessfulUsageCostUsd": 0.00154
+            },
+            "batch": {
+              "offered": 560,
+              "providerAttempts": 375,
+              "success": 375,
+              "failures": 185,
+              "successRate": 0.6696,
+              "localRejects": 185,
+              "provider429s": 0,
+              "provider5xx": 0,
+              "providerOtherFailures": 0,
+              "gatewayFailures": 0,
+              "transportFailures": 0,
+              "ttftMs": {
+                "p50": 519.38,
+                "p95": 731.21
+              },
+              "latencyMs": {
+                "p50": 579.13,
+                "p95": 778.89
+              },
+              "goodputRps": 33.0327,
+              "promptTokens": 13875,
+              "completionTokens": 3000,
+              "measuredSuccessfulUsageCostUsd": 0.006375
+            }
+          }
+        },
+        "static": {
+          "offered": 660,
+          "providerAttempts": 276,
+          "success": 257,
+          "failures": 403,
+          "successRate": 0.3894,
+          "localRejects": 384,
+          "provider429s": 0,
+          "provider5xx": 0,
+          "providerOtherFailures": 0,
+          "gatewayFailures": 0,
+          "transportFailures": 19,
+          "ttftMs": {
+            "p50": 489.03,
+            "p95": 686.69
+          },
+          "latencyMs": {
+            "p50": 543.21,
+            "p95": 754.49
+          },
+          "goodputRps": 20.585,
+          "promptTokens": 9173,
+          "completionTokens": 2056,
+          "measuredSuccessfulUsageCostUsd": 0.0043018,
+          "classes": {
+            "interactive": {
+              "offered": 100,
+              "providerAttempts": 44,
+              "success": 42,
+              "failures": 58,
+              "successRate": 0.42,
+              "localRejects": 56,
+              "provider429s": 0,
+              "provider5xx": 0,
+              "providerOtherFailures": 0,
+              "gatewayFailures": 0,
+              "transportFailures": 2,
+              "ttftMs": {
+                "p50": 492.45,
+                "p95": 715.19
+              },
+              "latencyMs": {
+                "p50": 539.26,
+                "p95": 754.49
+              },
+              "goodputRps": 3.3641,
+              "promptTokens": 1218,
+              "completionTokens": 336,
+              "measuredSuccessfulUsageCostUsd": 0.0006468
+            },
+            "batch": {
+              "offered": 560,
+              "providerAttempts": 232,
+              "success": 215,
+              "failures": 345,
+              "successRate": 0.3839,
+              "localRejects": 328,
+              "provider429s": 0,
+              "provider5xx": 0,
+              "providerOtherFailures": 0,
+              "gatewayFailures": 0,
+              "transportFailures": 17,
+              "ttftMs": {
+                "p50": 488.71,
+                "p95": 681.11
+              },
+              "latencyMs": {
+                "p50": 543.21,
+                "p95": 732.75
+              },
+              "goodputRps": 17.2209,
+              "promptTokens": 7955,
+              "completionTokens": 1720,
+              "measuredSuccessfulUsageCostUsd": 0.003655
+            }
+          }
+        },
+        "direct": {
+          "offered": 660,
+          "providerAttempts": 660,
+          "success": 627,
+          "failures": 33,
+          "successRate": 0.95,
+          "localRejects": 0,
+          "provider429s": 33,
+          "provider5xx": 0,
+          "providerOtherFailures": 0,
+          "gatewayFailures": 0,
+          "transportFailures": 0,
+          "ttftMs": {
+            "p50": 522.02,
+            "p95": 708.36
+          },
+          "latencyMs": {
+            "p50": 580.18,
+            "p95": 767.05
+          },
+          "goodputRps": 56.0545,
+          "promptTokens": 22431,
+          "completionTokens": 5016,
+          "measuredSuccessfulUsageCostUsd": 0.0105054,
+          "classes": {
+            "interactive": {
+              "offered": 100,
+              "providerAttempts": 100,
+              "success": 96,
+              "failures": 4,
+              "successRate": 0.96,
+              "localRejects": 0,
+              "provider429s": 4,
+              "provider5xx": 0,
+              "providerOtherFailures": 0,
+              "gatewayFailures": 0,
+              "transportFailures": 0,
+              "ttftMs": {
+                "p50": 532.21,
+                "p95": 672.36
+              },
+              "latencyMs": {
+                "p50": 589.14,
+                "p95": 743.53
+              },
+              "goodputRps": 8.5825,
+              "promptTokens": 2784,
+              "completionTokens": 768,
+              "measuredSuccessfulUsageCostUsd": 0.0014784
+            },
+            "batch": {
+              "offered": 560,
+              "providerAttempts": 560,
+              "success": 531,
+              "failures": 29,
+              "successRate": 0.9482,
+              "localRejects": 0,
+              "provider429s": 29,
+              "provider5xx": 0,
+              "providerOtherFailures": 0,
+              "gatewayFailures": 0,
+              "transportFailures": 0,
+              "ttftMs": {
+                "p50": 519.87,
+                "p95": 710.2
+              },
+              "latencyMs": {
+                "p50": 578.96,
+                "p95": 767.41
+              },
+              "goodputRps": 47.472,
+              "promptTokens": 19647,
+              "completionTokens": 4248,
+              "measuredSuccessfulUsageCostUsd": 0.009027
+            }
+          }
+        }
+      },
+      "interpretation": {
+        "directProviderPressureObserved": true,
+        "localAdmissionContentionObserved": true,
+        "mofluxAdmissionClassProof": true,
+        "rateLimitIsolationPassed": true,
+        "conclusiveProviderOverloadComparison": true,
+        "inconclusiveReasons": [],
+        "warning": "Do not claim a provider-overload efficacy result unless conclusiveProviderOverloadComparison is true. A clean run with no direct-provider pressure is compatibility/load evidence, not proof that MoFlux improved behavior under OpenAI overload."
+      },
+      "acceptance": {
+        "executionCompleted": true,
+        "spendGuardPassed": true,
+        "matchedTraceByRun": true,
+        "mofluxAdmissionClassProof": true,
+        "rateLimitIsolationPassed": true
+      }
+    },
+    {
+      "seed": 7,
+      "generatedAt": "2026-08-29T21:21:58.819Z",
+      "traceFingerprint": "336d77d9cb50b98130bfa18e052ab8928f192e34cff9a916ef532b14fabdbc07",
+      "armOrder": [
+        "direct",
+        "static",
+        "moflux"
+      ],
+      "aggregate": {
+        "direct": {
+          "offered": 660,
+          "providerAttempts": 660,
+          "success": 628,
+          "failures": 32,
+          "successRate": 0.9515,
+          "localRejects": 0,
+          "provider429s": 32,
+          "provider5xx": 0,
+          "providerOtherFailures": 0,
+          "gatewayFailures": 0,
+          "transportFailures": 0,
+          "ttftMs": {
+            "p50": 526.03,
+            "p95": 731.78
+          },
+          "latencyMs": {
+            "p50": 583.18,
+            "p95": 792.66
+          },
+          "goodputRps": 54.805,
+          "promptTokens": 22476,
+          "completionTokens": 5024,
+          "measuredSuccessfulUsageCostUsd": 0.010524,
+          "classes": {
+            "interactive": {
+              "offered": 100,
+              "providerAttempts": 100,
+              "success": 95,
+              "failures": 5,
+              "successRate": 0.95,
+              "localRejects": 0,
+              "provider429s": 5,
+              "provider5xx": 0,
+              "providerOtherFailures": 0,
+              "gatewayFailures": 0,
+              "transportFailures": 0,
+              "ttftMs": {
+                "p50": 530.07,
+                "p95": 731.78
+              },
+              "latencyMs": {
+                "p50": 592.8,
+                "p95": 779.11
+              },
+              "goodputRps": 8.2906,
+              "promptTokens": 2755,
+              "completionTokens": 760,
+              "measuredSuccessfulUsageCostUsd": 0.001463
+            },
+            "batch": {
+              "offered": 560,
+              "providerAttempts": 560,
+              "success": 533,
+              "failures": 27,
+              "successRate": 0.9518,
+              "localRejects": 0,
+              "provider429s": 27,
+              "provider5xx": 0,
+              "providerOtherFailures": 0,
+              "gatewayFailures": 0,
+              "transportFailures": 0,
+              "ttftMs": {
+                "p50": 524.93,
+                "p95": 733.02
+              },
+              "latencyMs": {
+                "p50": 582.33,
+                "p95": 798.32
+              },
+              "goodputRps": 46.5144,
+              "promptTokens": 19721,
+              "completionTokens": 4264,
+              "measuredSuccessfulUsageCostUsd": 0.009061
+            }
+          }
+        },
+        "static": {
+          "offered": 660,
+          "providerAttempts": 496,
+          "success": 496,
+          "failures": 164,
+          "successRate": 0.7515,
+          "localRejects": 164,
+          "provider429s": 0,
+          "provider5xx": 0,
+          "providerOtherFailures": 0,
+          "gatewayFailures": 0,
+          "transportFailures": 0,
+          "ttftMs": {
+            "p50": 532.15,
+            "p95": 689.42
+          },
+          "latencyMs": {
+            "p50": 587.98,
+            "p95": 766.74
+          },
+          "goodputRps": 45.0639,
+          "promptTokens": 17776,
+          "completionTokens": 3968,
+          "measuredSuccessfulUsageCostUsd": 0.0083168,
+          "classes": {
+            "interactive": {
+              "offered": 100,
+              "providerAttempts": 72,
+              "success": 72,
+              "failures": 28,
+              "successRate": 0.72,
+              "localRejects": 28,
+              "provider429s": 0,
+              "provider5xx": 0,
+              "providerOtherFailures": 0,
+              "gatewayFailures": 0,
+              "transportFailures": 0,
+              "ttftMs": {
+                "p50": 547.83,
+                "p95": 721.68
+              },
+              "latencyMs": {
+                "p50": 606.48,
+                "p95": 773.7
+              },
+              "goodputRps": 6.5415,
+              "promptTokens": 2088,
+              "completionTokens": 576,
+              "measuredSuccessfulUsageCostUsd": 0.0011088
+            },
+            "batch": {
+              "offered": 560,
+              "providerAttempts": 424,
+              "success": 424,
+              "failures": 136,
+              "successRate": 0.7571,
+              "localRejects": 136,
+              "provider429s": 0,
+              "provider5xx": 0,
+              "providerOtherFailures": 0,
+              "gatewayFailures": 0,
+              "transportFailures": 0,
+              "ttftMs": {
+                "p50": 528.39,
+                "p95": 687.3
+              },
+              "latencyMs": {
+                "p50": 581.32,
+                "p95": 765.54
+              },
+              "goodputRps": 38.5224,
+              "promptTokens": 15688,
+              "completionTokens": 3392,
+              "measuredSuccessfulUsageCostUsd": 0.007208
+            }
+          }
+        },
+        "moflux": {
+          "offered": 660,
+          "providerAttempts": 478,
+          "success": 478,
+          "failures": 182,
+          "successRate": 0.7242,
+          "localRejects": 182,
+          "provider429s": 0,
+          "provider5xx": 0,
+          "providerOtherFailures": 0,
+          "gatewayFailures": 0,
+          "transportFailures": 0,
+          "ttftMs": {
+            "p50": 513.75,
+            "p95": 720.92
+          },
+          "latencyMs": {
+            "p50": 569.4,
+            "p95": 786.38
+          },
+          "goodputRps": 43.9341,
+          "promptTokens": 16886,
+          "completionTokens": 3824,
+          "measuredSuccessfulUsageCostUsd": 0.007966,
+          "classes": {
+            "interactive": {
+              "offered": 100,
+              "providerAttempts": 100,
+              "success": 100,
+              "failures": 0,
+              "successRate": 1,
+              "localRejects": 0,
+              "provider429s": 0,
+              "provider5xx": 0,
+              "providerOtherFailures": 0,
+              "gatewayFailures": 0,
+              "transportFailures": 0,
+              "ttftMs": {
+                "p50": 535.7,
+                "p95": 756.18
+              },
+              "latencyMs": {
+                "p50": 586.82,
+                "p95": 854.67
+              },
+              "goodputRps": 9.1912,
+              "promptTokens": 2900,
+              "completionTokens": 800,
+              "measuredSuccessfulUsageCostUsd": 0.00154
+            },
+            "batch": {
+              "offered": 560,
+              "providerAttempts": 378,
+              "success": 378,
+              "failures": 182,
+              "successRate": 0.675,
+              "localRejects": 182,
+              "provider429s": 0,
+              "provider5xx": 0,
+              "providerOtherFailures": 0,
+              "gatewayFailures": 0,
+              "transportFailures": 0,
+              "ttftMs": {
+                "p50": 511.2,
+                "p95": 714.15
+              },
+              "latencyMs": {
+                "p50": 563.04,
+                "p95": 772.49
+              },
+              "goodputRps": 34.7429,
+              "promptTokens": 13986,
+              "completionTokens": 3024,
+              "measuredSuccessfulUsageCostUsd": 0.006426
+            }
+          }
+        }
+      },
+      "interpretation": {
+        "directProviderPressureObserved": true,
+        "localAdmissionContentionObserved": true,
+        "mofluxAdmissionClassProof": true,
+        "rateLimitIsolationPassed": true,
+        "conclusiveProviderOverloadComparison": true,
+        "inconclusiveReasons": [],
+        "warning": "Do not claim a provider-overload efficacy result unless conclusiveProviderOverloadComparison is true. A clean run with no direct-provider pressure is compatibility/load evidence, not proof that MoFlux improved behavior under OpenAI overload."
+      },
+      "acceptance": {
+        "executionCompleted": true,
+        "spendGuardPassed": true,
+        "matchedTraceByRun": true,
+        "mofluxAdmissionClassProof": true,
+        "rateLimitIsolationPassed": true
+      }
+    },
+    {
+      "seed": 8,
+      "generatedAt": "2026-08-29T21:24:58.261Z",
+      "traceFingerprint": "bf55726b3af6d5d3672ea49ff4f157a1276330834d3bbb43054546324b5fb0be",
+      "armOrder": [
+        "static",
+        "moflux",
+        "direct"
+      ],
+      "aggregate": {
+        "static": {
+          "offered": 660,
+          "providerAttempts": 498,
+          "success": 498,
+          "failures": 162,
+          "successRate": 0.7545,
+          "localRejects": 162,
+          "provider429s": 0,
+          "provider5xx": 0,
+          "providerOtherFailures": 0,
+          "gatewayFailures": 0,
+          "transportFailures": 0,
+          "ttftMs": {
+            "p50": 514.49,
+            "p95": 709.64
+          },
+          "latencyMs": {
+            "p50": 574.52,
+            "p95": 799.68
+          },
+          "goodputRps": 46.4215,
+          "promptTokens": 17786,
+          "completionTokens": 3984,
+          "measuredSuccessfulUsageCostUsd": 0.008338,
+          "classes": {
+            "interactive": {
+              "offered": 100,
+              "providerAttempts": 80,
+              "success": 80,
+              "failures": 20,
+              "successRate": 0.8,
+              "localRejects": 20,
+              "provider429s": 0,
+              "provider5xx": 0,
+              "providerOtherFailures": 0,
+              "gatewayFailures": 0,
+              "transportFailures": 0,
+              "ttftMs": {
+                "p50": 517.15,
+                "p95": 757.08
+              },
+              "latencyMs": {
+                "p50": 581.29,
+                "p95": 804.24
+              },
+              "goodputRps": 7.4573,
+              "promptTokens": 2320,
+              "completionTokens": 640,
+              "measuredSuccessfulUsageCostUsd": 0.001232
+            },
+            "batch": {
+              "offered": 560,
+              "providerAttempts": 418,
+              "success": 418,
+              "failures": 142,
+              "successRate": 0.7464,
+              "localRejects": 142,
+              "provider429s": 0,
+              "provider5xx": 0,
+              "providerOtherFailures": 0,
+              "gatewayFailures": 0,
+              "transportFailures": 0,
+              "ttftMs": {
+                "p50": 514.04,
+                "p95": 706.59
+              },
+              "latencyMs": {
+                "p50": 572.65,
+                "p95": 792.46
+              },
+              "goodputRps": 38.9642,
+              "promptTokens": 15466,
+              "completionTokens": 3344,
+              "measuredSuccessfulUsageCostUsd": 0.007106
+            }
+          }
+        },
+        "moflux": {
+          "offered": 660,
+          "providerAttempts": 467,
+          "success": 467,
+          "failures": 193,
+          "successRate": 0.7076,
+          "localRejects": 193,
+          "provider429s": 0,
+          "provider5xx": 0,
+          "providerOtherFailures": 0,
+          "gatewayFailures": 0,
+          "transportFailures": 0,
+          "ttftMs": {
+            "p50": 526.38,
+            "p95": 820.94
+          },
+          "latencyMs": {
+            "p50": 582.05,
+            "p95": 879.38
+          },
+          "goodputRps": 43.6658,
+          "promptTokens": 16495,
+          "completionTokens": 3736,
+          "measuredSuccessfulUsageCostUsd": 0.0077822,
+          "classes": {
+            "interactive": {
+              "offered": 100,
+              "providerAttempts": 98,
+              "success": 98,
+              "failures": 2,
+              "successRate": 0.98,
+              "localRejects": 2,
+              "provider429s": 0,
+              "provider5xx": 0,
+              "providerOtherFailures": 0,
+              "gatewayFailures": 0,
+              "transportFailures": 0,
+              "ttftMs": {
+                "p50": 544.54,
+                "p95": 820.94
+              },
+              "latencyMs": {
+                "p50": 594.59,
+                "p95": 880.5
+              },
+              "goodputRps": 9.1633,
+              "promptTokens": 2842,
+              "completionTokens": 784,
+              "measuredSuccessfulUsageCostUsd": 0.0015092
+            },
+            "batch": {
+              "offered": 560,
+              "providerAttempts": 369,
+              "success": 369,
+              "failures": 191,
+              "successRate": 0.6589,
+              "localRejects": 191,
+              "provider429s": 0,
+              "provider5xx": 0,
+              "providerOtherFailures": 0,
+              "gatewayFailures": 0,
+              "transportFailures": 0,
+              "ttftMs": {
+                "p50": 522.99,
+                "p95": 846.47
+              },
+              "latencyMs": {
+                "p50": 579.72,
+                "p95": 879.38
+              },
+              "goodputRps": 34.5025,
+              "promptTokens": 13653,
+              "completionTokens": 2952,
+              "measuredSuccessfulUsageCostUsd": 0.006273
+            }
+          }
+        },
+        "direct": {
+          "offered": 660,
+          "providerAttempts": 660,
+          "success": 620,
+          "failures": 40,
+          "successRate": 0.9394,
+          "localRejects": 0,
+          "provider429s": 40,
+          "provider5xx": 0,
+          "providerOtherFailures": 0,
+          "gatewayFailures": 0,
+          "transportFailures": 0,
+          "ttftMs": {
+            "p50": 522.08,
+            "p95": 796.22
+          },
+          "latencyMs": {
+            "p50": 577.75,
+            "p95": 861.44
+          },
+          "goodputRps": 57.4501,
+          "promptTokens": 22180,
+          "completionTokens": 4960,
+          "measuredSuccessfulUsageCostUsd": 0.010388,
+          "classes": {
+            "interactive": {
+              "offered": 100,
+              "providerAttempts": 100,
+              "success": 95,
+              "failures": 5,
+              "successRate": 0.95,
+              "localRejects": 0,
+              "provider429s": 5,
+              "provider5xx": 0,
+              "providerOtherFailures": 0,
+              "gatewayFailures": 0,
+              "transportFailures": 0,
+              "ttftMs": {
+                "p50": 522.75,
+                "p95": 809.13
+              },
+              "latencyMs": {
+                "p50": 578.03,
+                "p95": 870.18
+              },
+              "goodputRps": 8.8028,
+              "promptTokens": 2755,
+              "completionTokens": 760,
+              "measuredSuccessfulUsageCostUsd": 0.001463
+            },
+            "batch": {
+              "offered": 560,
+              "providerAttempts": 560,
+              "success": 525,
+              "failures": 35,
+              "successRate": 0.9375,
+              "localRejects": 0,
+              "provider429s": 35,
+              "provider5xx": 0,
+              "providerOtherFailures": 0,
+              "gatewayFailures": 0,
+              "transportFailures": 0,
+              "ttftMs": {
+                "p50": 522.08,
+                "p95": 796.22
+              },
+              "latencyMs": {
+                "p50": 577.75,
+                "p95": 861.44
+              },
+              "goodputRps": 48.6473,
+              "promptTokens": 19425,
+              "completionTokens": 4200,
+              "measuredSuccessfulUsageCostUsd": 0.008925
+            }
+          }
+        }
+      },
+      "interpretation": {
+        "directProviderPressureObserved": true,
+        "localAdmissionContentionObserved": true,
+        "mofluxAdmissionClassProof": true,
+        "rateLimitIsolationPassed": true,
+        "conclusiveProviderOverloadComparison": true,
+        "inconclusiveReasons": [],
+        "warning": "Do not claim a provider-overload efficacy result unless conclusiveProviderOverloadComparison is true. A clean run with no direct-provider pressure is compatibility/load evidence, not proof that MoFlux improved behavior under OpenAI overload."
+      },
+      "acceptance": {
+        "executionCompleted": true,
+        "spendGuardPassed": true,
+        "matchedTraceByRun": true,
+        "mofluxAdmissionClassProof": true,
+        "rateLimitIsolationPassed": true
+      }
+    }
+  ],
+  "sources": [
+    {
+      "seed": 1,
+      "file": "seed-1/summary.json",
+      "traceFingerprint": "29c7c6f5c407947911f858adc468fa7ca043dff3d5200d7b0436d24f45c8b0dc"
+    },
+    {
+      "seed": 2,
+      "file": "seed-2/summary.json",
+      "traceFingerprint": "1bb5312f9526af46fe07bfef79ffa3389f1e47a334404c43db35de8ea4c46b1d"
+    },
+    {
+      "seed": 3,
+      "file": "seed-3/summary.json",
+      "traceFingerprint": "bbf681cd4dfce2516d0d8ffec25dc31c361f38b58c1a274202bc3f20ae635d55"
+    },
+    {
+      "seed": 4,
+      "file": "seed-4/summary.json",
+      "traceFingerprint": "86e605415863ae276fb331e2dd418e12f152c5048acfa8e03e9075bdfbef8a4b"
+    },
+    {
+      "seed": 5,
+      "file": "seed-5/summary.json",
+      "traceFingerprint": "ad2511fde679df27cdb224601090672f5def7cf6fcd3ee630edd86b7737342d1"
+    },
+    {
+      "seed": 6,
+      "file": "seed-6/summary.json",
+      "traceFingerprint": "28e64d1c59ffd38df5b2978f559c2537d5419ab7702677f1225dd9acb294c49e"
+    },
+    {
+      "seed": 7,
+      "file": "seed-7/summary.json",
+      "traceFingerprint": "336d77d9cb50b98130bfa18e052ab8928f192e34cff9a916ef532b14fabdbc07"
+    },
+    {
+      "seed": 8,
+      "file": "seed-8/summary.json",
+      "traceFingerprint": "bf55726b3af6d5d3672ea49ff4f157a1276330834d3bbb43054546324b5fb0be"
+    }
+  ],
+  "runId": "20260829T210017Z",
+  "outputs": {
+    "summary": "results/openai-live-overload-8-seed.json",
+    "seedRunsDirectory": "results/openai-live-overload-8-seed"
+  },
+  "runs": [],
+  "publishedAt": "2026-08-29T21:33:20.766Z",
+  "publishedFrom": "results/runs/openai-live-overload-sweep/20260829T210017Z"
+}

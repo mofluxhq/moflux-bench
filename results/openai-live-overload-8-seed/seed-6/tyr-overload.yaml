@@ -1,0 +1,66 @@
+version: 1
+
+server:
+  port: 8787
+  maxRequestBodyBytes: 1048576
+  maxOutputTokens: 8
+
+upstreams:
+  openai:
+    baseUrl: https://api.openai.com
+
+timeouts:
+  responseHeadersMs: 90000
+  streamIdleMs: 90000
+  clientStallMs: 90000
+
+shutdown:
+  drainTimeoutMs: 30000
+
+identity:
+  jwt:
+    jwksUrl: http://host.docker.internal:18113/jwks
+    issuer: "moflux-bench-openai-overload"
+    audience: "moflux-bench-openai-overload"
+    header: x-tyr-identity-token
+    algorithms: [RS256]
+    cacheTtlMs: 300000
+    requestTimeoutMs: 3000
+    clockSkewSeconds: 5
+    requireExpiration: true
+    claims:
+      applicationId: azp
+      roles: roles
+  roles:
+    invoke: [tyr.invoke]
+
+telemetry:
+  metrics:
+    enabled: true
+  audit:
+    enabled: false
+
+pools:
+  - name: openai-overload
+    modelPrefixes: ["gpt-5.6-luna"]
+    estimatorModel: gpt-4o
+    maxConcurrent: 36
+    maxQueue: 0
+    admissionMode: enforce
+    defaultOutputReservation: 8
+    adaptiveEstimation:
+      enabled: false
+    admissionClasses:
+      defaultClass: batch
+      classes:
+        interactive:
+          protectedConcurrent: 8
+          maxConcurrent: 36
+        batch:
+          protectedConcurrent: 4
+          maxConcurrent: 36
+      rules:
+        - admissionClass: interactive
+          applicationIds: [interactive]
+        - admissionClass: batch
+          applicationIds: [batch]
