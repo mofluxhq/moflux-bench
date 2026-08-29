@@ -19,18 +19,16 @@ request characteristics.
 
 ## Runtime compatibility and setup
 
-The presenter is pinned to Tyr 0.27.0, Latchflo 0.12.4,
+The presenter is pinned to Tyr 0.28.0, Latchflo 0.13.0,
 async-bulkhead-llm 3.16.0, and async-bulkhead-ts 1.0.1. `npm run demo` uses
 Anthropic-shaped streams and enables progressive reconciliation with a
 256-token update step and a 256-token future-output safety margin. Input usage
 is available at stream start and cumulative output usage is reported while the
-stream is active, so early release is measurable. `npm run demo:openai` keeps an
-OpenAI-shaped compatibility path, but its simulated usage arrives only at
+stream is active, so early release is measurable. `npm run demo:openai:sim` keeps the
+simulated OpenAI-shaped compatibility path, but its simulated usage arrives only at
 completion. The command creates the ignored local env file and random demo
 credentials automatically.
-Tyr capacity-aware routing is enabled across the four private replica addresses
-with one generated local-only `TYR_ROUTING_SECRET`. Latchflo continues to
-distribute grants; it does not distribute routing topology or the secret.
+Tyr capacity-aware routing starts with no static peers. Each Tyr advertises its private endpoint, Latchflo 0.13.0 distributes the versioned active topology, and Tyr 0.28.0 applies newer revisions while continuing to use one generated local-only `TYR_ROUTING_SECRET`. Latchflo distributes grants and membership, but never the routing secret and never enters the request path.
 If a pinned image is missing, the command builds it from a matching sibling
 source repository (or from `MOFLUX_TYR_SOURCE_DIR` /
 `MOFLUX_LATCHFLO_SOURCE_DIR`) before attempting a registry pull.

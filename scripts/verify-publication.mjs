@@ -12,12 +12,22 @@ const required = [
   "CHANGELOG.md",
   "CONTRIBUTING.md",
   "SECURITY.md",
+  "VERIFICATION.md",
   ".gitignore",
   ".github/workflows/ci.yml",
   "demo/moflux/.env.example",
   "demo/classes/compose.yaml",
   "demo/classes/tyr-r1.yaml",
   "demo/TENANT-FAIRNESS.md",
+  "demo/membership.mjs",
+  "demo/membership/compose.yaml",
+  "demo/openai-live.mjs",
+  "demo/openai-overload.mjs",
+  "demo/openai-overload-lib.mjs",
+  "demo/verify-openai-overload.mjs",
+  "demo/openai/compose.yaml",
+  "demo/openai/compose-overload.yaml",
+  "demo/openai/tyr.yaml",
 ];
 const ignoredDirectories = new Set([".git", "node_modules", "coverage", ".tmp", "tmp"]);
 const forbiddenNames = new Set([".DS_Store", "Thumbs.db"]);
@@ -105,8 +115,8 @@ if (lock.packages?.[""]?.version !== pkg.version || lock.version !== pkg.version
 }
 const example = readFileSync(path.join(ROOT, "demo/moflux/.env.example"), "utf8");
 for (const expected of [
-  "MOFLUX_TYR_IMAGE=tyr-admission-controller:0.27.0",
-  "MOFLUX_LATCHFLO_IMAGE=latchflo-control-plane:0.12.4",
+  "MOFLUX_TYR_IMAGE=tyr-admission-controller:0.28.0",
+  "MOFLUX_LATCHFLO_IMAGE=latchflo-control-plane:0.13.0",
 ]) {
   if (!example.includes(expected)) {
     findings.push(`demo/moflux/.env.example: missing pinned runtime ${expected}`);
@@ -126,8 +136,8 @@ if (!compose.includes("TYR_ROUTING_SECRET: ${TYR_ROUTING_SECRET:?Set TYR_ROUTING
 for (let replica = 1; replica <= 4; replica += 1) {
   const rel = `demo/moflux/tyr-r${replica}.yaml`;
   const yaml = readFileSync(path.join(ROOT, rel), "utf8");
-  if (!/^    version: 0\.27\.0$/m.test(yaml)) {
-    findings.push(`${rel}: control-plane metadata must identify Tyr 0.27.0`);
+  if (!/^    version: 0\.28\.0$/m.test(yaml)) {
+    findings.push(`${rel}: control-plane metadata must identify Tyr 0.28.0`);
   }
   if (!/^  anthropic:\n    baseUrl: http:\/\/host\.docker\.internal:9000$/m.test(yaml)) {
     findings.push(`${rel}: Anthropic simulator upstream is missing`);
@@ -142,10 +152,14 @@ for (let replica = 1; replica <= 4; replica += 1) {
       !/^    sharedSecretEnv: TYR_ROUTING_SECRET$/m.test(yaml)) {
     findings.push(`${rel}: capacity-aware routing identity or secret environment is missing`);
   }
-  for (let peer = 1; peer <= 4; peer += 1) {
-    const peerLine = new RegExp(`^      - id: tyr-r${peer}$`, "m");
-    if (peer === replica && peerLine.test(yaml)) findings.push(`${rel}: routing peer list includes itself`);
-    if (peer !== replica && !peerLine.test(yaml)) findings.push(`${rel}: routing peer tyr-r${peer} is missing`);
+  if (!/^    peers: \[]$/m.test(yaml)) {
+    findings.push(`${rel}: managed mode must start with an empty static peer list and consume Latchflo topology`);
+  }
+  if (/^      - id: tyr-r\d+$/m.test(yaml)) {
+    findings.push(`${rel}: managed mode must not retain hard-coded Tyr peers`);
+  }
+  if (!new RegExp(`^    endpoint: http://tyr-r${replica}:8787$`, "m").test(yaml)) {
+    findings.push(`${rel}: control-plane metadata must advertise the routable Tyr endpoint`);
   }
 }
 
@@ -166,7 +180,7 @@ for (let replica = 1; replica <= 4; replica += 1) {
     "defaultClass: noisy",
     "tenantIds: [tenant-premium]",
     "pools: [sim-shared, sim-ceilings, sim-protected, sim-adaptive]",
-    "version: 0.27.0",
+    "version: 0.28.0",
   ]) {
     if (!yaml.includes(required)) findings.push(`${rel}: missing ${required}`);
   }
@@ -313,12 +327,55 @@ if (!pkg.scripts?.verify?.includes("scripts/verify.mjs")) {
   findings.push("package.json: verify must use the bounded verification runner");
 }
 if (!pkg.scripts?.["demo:progressive"]?.includes("--provider-api=anthropic") ||
-    !pkg.scripts?.["demo:openai"]?.includes("--provider-api=openai")) {
-  findings.push("package.json: progressive and OpenAI compatibility demo commands are required");
+    pkg.scripts?.["demo:openai"] !== "node demo/openai-live.mjs" ||
+    pkg.scripts?.["demo:openai:overload"] !== "node demo/openai-overload.mjs --mode=compare" ||
+    pkg.scripts?.["demo:openai:overload:dry-run"] !== "node demo/openai-overload.mjs --mode=compare --dry-run" ||
+    pkg.scripts?.["demo:openai:overload:calibrate"] !== "node demo/openai-overload.mjs --mode=calibrate" ||
+    pkg.scripts?.["demo:openai:overload:sweep"] !== "node demo/openai-overload-sweep.mjs" ||
+    pkg.scripts?.["demo:openai:overload:sweep:dry-run"] !== "node demo/openai-overload-sweep.mjs --dry-run" ||
+    pkg.scripts?.["verify:openai:overload:sweep"] !== "node demo/verify-openai-overload-sweep.mjs" ||
+    !pkg.scripts?.["demo:openai:sim"]?.includes("--provider-api=openai") ||
+    pkg.scripts?.["demo:membership"] !== "node demo/membership.mjs") {
+  findings.push("package.json: progressive, live OpenAI, simulator OpenAI, and membership demo commands are required");
 }
-if (pkg.version !== "0.27.0") {
-  findings.push("package.json: the current benchmark release must be version 0.27.0");
+if (pkg.version !== "0.29.0") {
+  findings.push("package.json: the current benchmark release must be version 0.29.0");
 }
+const openaiLive = readFileSync(path.join(ROOT, "demo/openai-live.mjs"), "utf8");
+for (const required of [
+  'DEFAULT_MODEL = "gpt-5.6-luna"',
+  'DEFAULT_MAX_USD = 0.01',
+  'MAX_RUN_CAP_USD = 1.00',
+  'OPENAI_API_KEY',
+  'conservative worst-case cost',
+  'usage',
+]) {
+  if (!openaiLive.includes(required)) findings.push(`demo/openai-live.mjs: missing budget/safety contract ${required}`);
+}
+const openaiOverload = readFileSync(path.join(ROOT, "demo/openai-overload.mjs"), "utf8");
+for (const required of [
+  "OPENAI_API_KEY",
+  "conservative worst-case cost",
+  "conclusiveProviderOverloadComparison",
+  "mofluxAdmissionClassProof",
+  "static_local",
+  "provider_429",
+  "calibration-rps-steps",
+  "drain_inclusive_goodput_below_threshold",
+  "rate_limit_headroom",
+  "provider_non_overload_failure",
+]) {
+  if (!openaiOverload.includes(required)) findings.push(`demo/openai-overload.mjs: missing overload evidence/safety contract ${required}`);
+}
+for (const rel of ["demo/openai/compose.yaml", "demo/openai/compose-overload.yaml", "demo/openai/tyr.yaml", "demo/moflux/.env.example"]) {
+  const text = readFileSync(path.join(ROOT, rel), "utf8");
+  if (text.includes("OPENAI_API_KEY")) findings.push(`${rel}: live OpenAI API key must stay in the caller process only`);
+}
+const verifyRunnerNewDemos = readFileSync(path.join(ROOT, "scripts/verify.mjs"), "utf8");
+for (const required of ["demo/verify-membership.mjs", "demo/verify-openai-live.mjs", "demo/verify-openai-overload.mjs"]) {
+  if (!verifyRunnerNewDemos.includes(required)) findings.push(`scripts/verify.mjs: missing ${required}`);
+}
+
 const classesScript = pkg.scripts?.["demo:classes"] ?? "";
 for (const required of ["demo/tenant-fairness.mjs", "--seeds=1-5", "--require-proof"]) {
   if (!classesScript.includes(required)) {

@@ -1,0 +1,26 @@
+services:
+  tyr-openai-overload:
+    image: ${MOFLUX_TYR_IMAGE:?Set MOFLUX_TYR_IMAGE}
+    restart: "no"
+    user: "${MOFLUX_TYR_USER:-0:0}"
+    environment:
+      TYR_CONFIG_FILE: /etc/tyr/config.yaml
+    ports:
+      - "127.0.0.1:18112:8787"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ${MOFLUX_OPENAI_TYR_CONFIG:?Set MOFLUX_OPENAI_TYR_CONFIG}:/etc/tyr/config.yaml:ro
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - >-
+          fetch('http://127.0.0.1:8787/readyz')
+          .then(response => { if (!response.ok) process.exit(1); })
+          .catch(() => process.exit(1))
+      interval: 500ms
+      timeout: 2s
+      start_period: 2s
+      retries: 30

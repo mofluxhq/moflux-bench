@@ -1,0 +1,49 @@
+version: 1
+
+server:
+  port: 8787
+  maxRequestBodyBytes: 1048576
+  maxOutputTokens: 1024
+
+upstreams:
+  openai:
+    baseUrl: https://api.openai.com
+
+timeouts:
+  responseHeadersMs: 60000
+  streamIdleMs: 60000
+  clientStallMs: 60000
+
+shutdown:
+  drainTimeoutMs: 30000
+
+# Local benchmark-only trust boundary. The live demo sends x-priority directly.
+priority:
+  trustHeader: true
+
+telemetry:
+  metrics:
+    enabled: true
+  audit:
+    enabled: false
+
+pools:
+  - name: openai-live
+    modelPrefixes: [gpt-]
+    estimatorModel: gpt-4o
+    maxConcurrent: 2
+    maxQueue: 0
+    admissionMode: enforce
+    inFlightTokenBudget: 8192
+    defaultOutputReservation: 64
+    adaptiveEstimation:
+      enabled: true
+      smoothing: 0.2
+      minSamples: 5
+      minCorrection: 0.5
+      maxCorrection: 2
+      maxModels: 16
+    progressiveReconciliation:
+      enabled: true
+      updateStepTokens: 64
+      outputSafetyMarginTokens: 64

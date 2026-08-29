@@ -48,6 +48,8 @@ check("the published sweep paths are declared reviewed", () => {
   assert.equal(isReviewedEvidence("results/video-seed-sweep.json"), true);
   assert.equal(isReviewedEvidence("results/video-seed-sweep/baseline-seed-1.json"), true);
   assert.equal(isReviewedEvidence("results/curated/negative-fragmented-batch-floor/aggregate.json"), true);
+  assert.equal(isReviewedEvidence("results/openai-live-overload-8-seed.json"), true);
+  assert.equal(isReviewedEvidence("results/openai-live-overload-8-seed/seed-1/summary.json"), true);
 });
 
 check("generated run output is not reviewed", () => {

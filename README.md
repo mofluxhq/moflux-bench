@@ -1,6 +1,6 @@
 # moflux-bench
 
-A synthetic benchmark harness for LLM admission control.
+A synthetic and budget-capped live-provider benchmark harness for LLM admission control.
 
 It exists to answer one question honestly: **when does reserving capacity before
 a request starts actually beat the alternatives, and what does it cost?**
@@ -56,12 +56,12 @@ cannot release the protected floor. Once the measured load generator is running,
 the presenter waits for a fresh interactive demand report and then arms the
 configured demand policy. Each accepted grant must also have enough remaining
 lifetime for a stable benchmark start. Startup fails if any live local grant is
-too small or too close to expiration. Pool creation also sends Latchflo 0.12.4's durable
+too small or too close to expiration. Pool creation also sends Latchflo 0.13.0's durable
 minimum-grant invariants: one concurrency slot, 755 tokens for interactive, and
 9,942 tokens for batch. Latchflo therefore rejects an unusable split before it
 can issue a zero-capacity or sub-request grant.
 
-The licensed path is pinned to **Tyr 0.27.0**, **Latchflo 0.12.4**,
+The licensed path is pinned to **Tyr 0.28.0**, **Latchflo 0.13.0**,
 **async-bulkhead-llm 3.16.0**, and **async-bulkhead-ts 1.0.1**. The canonical
 comparison uses Anthropic-shaped streaming because that protocol exposes input
 usage at `message_start` and cumulative output usage while the response is still
@@ -78,19 +78,20 @@ registry images, or build missing images from local source directories. Place
 or set `MOFLUX_TYR_SOURCE_DIR` and `MOFLUX_LATCHFLO_SOURCE_DIR` in the local
 environment file.
 
-Tyr 0.27.0 capacity-aware routing is enabled for the licensed four-replica
-MoFlux arm. Each Tyr polls the private capacity snapshots of the other three
-replicas and may forward a request once to the peer with better headroom for
-that request's concurrency and token reservation. Tyr also reports bounded
-per-pool demand snapshots to Latchflo 0.12.4 on the existing authenticated
+Tyr 0.28.0 capacity-aware routing is enabled for the licensed four-replica
+MoFlux arm. Managed Tyr configs start with `peers: []`: each replica advertises
+its routable endpoint when it registers, Latchflo 0.13.0 publishes a durable,
+versioned `routingTopology`, and Tyr applies only newer topology revisions. Tyr
+then polls private capacity snapshots for the currently active peers and may
+forward a request once to the peer with better request-specific headroom. Tyr
+also reports bounded per-pool demand snapshots on the existing authenticated
 heartbeat. The benchmark generates one local-only shared routing secret in
-`demo/moflux/.env`; the secret is never committed. Latchflo owns grants, demand-
-aware lending, starvation prevention, and lease safety. It does not distribute
-peer topology or the routing secret.
+`demo/moflux/.env`; the secret is never committed or distributed by Latchflo.
+Latchflo remains off the synchronous request path.
 
 The committed `results/` corpus is deliberately unchanged. Those files are
 historical evidence and retain their recorded Tyr 0.17.0/Latchflo 0.5.1 runtime
-metadata. New licensed runs use Tyr 0.27.0/Latchflo 0.12.4 and should be compared
+metadata. New licensed runs use Tyr 0.28.0/Latchflo 0.13.0 and should be compared
 as a new evidence set rather than silently relabeling the old one.
 
 Run the canonical progressive comparison:
@@ -101,11 +102,175 @@ npm run demo
 npm run demo:progressive
 ```
 
-To retain the OpenAI-shaped compatibility benchmark instead:
+For the retained **simulated** OpenAI-shaped protocol path:
 
 ```bash
-npm run demo:openai
+npm run demo:openai:sim
 ```
+
+Two focused 0.28.0 demos validate the new production-facing edges separately.
+The fleet-membership benchmark is entirely local and free:
+
+```bash
+npm run demo:membership
+```
+
+It repeatedly proves four-member convergence, heartbeat revision stability,
+timeout removal, replacement under a new identity/endpoint, topology agreement,
+and monotonic revisioning against Latchflo 0.13.0.
+
+Two live OpenAI paths are opt-in and budget-capped. The compatibility path stays deliberately tiny:
+
+```bash
+export OPENAI_API_KEY='...'
+npm run demo:openai:dry-run   # calculates the maximum planned cost; sends nothing
+npm run demo:openai           # 8 direct + 8 Tyr requests by default
+```
+
+The compatibility default is `gpt-5.6-luna`, 32 maximum output tokens, and a
+`$0.01` conservative per-run budget. It measures provider compatibility plus
+direct-vs-Tyr latency/TTFT; it is **not** overload evidence.
+
+MoFlux Bench 0.29.0 uses sustained direct-provider calibration before the live overload comparison. Calibrate first,
+review the result and your account limits, then dry-run the matched comparison:
+
+```bash
+npm run demo:openai:overload:calibrate:dry-run
+npm run demo:openai:overload:calibrate
+
+npm run demo:openai:overload:dry-run
+npm run demo:openai:overload
+```
+
+Calibration now establishes a 24-request baseline at 4 RPS, then offers bounded
+10-second stages at 10, 20, 30, and 40 RPS by default. It reports the first
+credible pressure signal from provider 429/5xx/transport failures, TTFT or
+end-to-end p95 inflation, or persistent request/token rate-limit headroom at or
+below 5%. The reported goodput/offered-rate ratio is diagnostic only because its
+wall-clock denominator includes the final drain tail; it cannot by itself declare
+provider pressure. Non-overload provider failures invalidate the pressure
+inference instead of being counted as overload. Before the baseline and every
+sustained stage, the harness also makes a tiny direct-provider probe and requires
+at least 95% request and token headroom. If the bucket is depleted it waits using
+the provider reset headers and reprobes; failure to recover within the bounded
+recovery window invalidates the evidence instead of running from an unequal
+starting state. Missing request/token limit headers also fail closed because the
+starting condition cannot be proven. The conservative default reserves up to 1,054 requests including
+recovery probes and remains below the $0.10 spend guard at the bundled model
+pricing. Calibration is never mixed into arm-comparison evidence.
+
+Useful overrides include:
+
+```bash
+npm run demo:openai:overload:calibrate -- \
+  --calibration-rps-steps=10,20,30,40,50 \
+  --calibration-stage-ms=10000 \
+  --calibration-baseline-requests=24 \
+  --calibration-baseline-rps=4
+```
+
+The old `--calibration-steps` / `--calibration-requests-per-worker` burst mode is
+retained for backward compatibility and is selected automatically when either
+legacy option is supplied. New runs should use sustained calibration.
+
+Compare mode generates one immutable mixed interactive/batch request trace and
+replays it through three arms: direct OpenAI, a fail-fast static local
+concurrency cap, and Tyr protected admission classes using the same physical
+concurrency cap. The default trace runs for 10 seconds with a 2 RPS interactive
+stream and a 6 RPS batch surge; the conservative worst-case plan is about $0.06
+at the reviewed default model pricing. The default overload budget is `$0.10`,
+and every explicit live-OpenAI per-run override remains hard-capped at `$1.00`.
+The harness also refuses more than 2,000 planned requests, including the maximum
+configured rate-limit recovery probes, in one invocation.
+
+For publication evidence across multiple independently guarded seeds, use the
+sequential sweep wrapper. It always runs the same three arms (`direct`, `static`,
+`moflux`) once per seed, but counterbalances their execution order with a
+deterministic six-permutation schedule keyed by seed. Seeds 1-6 cover every
+possible arm order once; seeds 7-8 repeat the first two permutations, leaving each
+arm in each first/middle/last position either two or three times across the default
+eight-seed sweep. The wrapper keeps the original per-seed request/spend and
+recovered-headroom gates, then validates identical runtime/workload/policies before
+pooling raw request records into one top-level `summary.json`. Per-seed summaries
+remain next to it for provenance. The sweep itself has a separate aggregate spend
+ceiling.
+
+```bash
+npm run demo:openai:overload:sweep:dry-run -- \
+  --seeds=1-8 \
+  --interactive-rps=10 \
+  --batch-rps=70 \
+  --batch-start-ms=2000 \
+  --batch-duration-ms=8000 \
+  --interactive-input-chars=64 \
+  --batch-input-chars=64 \
+  --interactive-max-output-tokens=8 \
+  --batch-max-output-tokens=8 \
+  --static-cap=36 \
+  --moflux-max-concurrent=36 \
+  --interactive-floor=8 \
+  --batch-floor=4 \
+  --rate-limit-start-headroom-ratio=0.99 \
+  --max-usd-per-seed=0.18 \
+  --max-sweep-usd=1.50
+
+# Remove --dry-run only after reviewing all eight per-seed plans.
+npm run demo:openai:overload:sweep -- \
+  --seeds=1-8 \
+  --interactive-rps=10 \
+  --batch-rps=70 \
+  --batch-start-ms=2000 \
+  --batch-duration-ms=8000 \
+  --interactive-input-chars=64 \
+  --batch-input-chars=64 \
+  --interactive-max-output-tokens=8 \
+  --batch-max-output-tokens=8 \
+  --static-cap=36 \
+  --moflux-max-concurrent=36 \
+  --interactive-floor=8 \
+  --batch-floor=4 \
+  --rate-limit-start-headroom-ratio=0.99 \
+  --max-usd-per-seed=0.18 \
+  --max-sweep-usd=1.50
+```
+
+Generated output lands under
+`results/runs/openai-live-overload-sweep/<run-id>/summary.json`, with
+`seed-1/summary.json` through `seed-8/summary.json` retained beneath the same
+run directory. The pooled summary recomputes success counts, provider failures,
+TTFT/latency percentiles, and goodput from the raw per-request records; it does
+not average per-seed p95 values. It also records paired per-seed deltas, the
+actual arm order and arm position for every seed, aggregate first/middle/last
+position counts, and flags for conclusive
+provider pressure, rate-limit isolation, zero controlled-arm 429s, counterbalanced
+arm ordering, and a positive MoFlux interactive-success advantage on every seed.
+
+The first live overload experiment intentionally isolates **single-node protected
+concurrency**. It does not enable Tyr's in-flight token budget and does not run
+Latchflo fleet coordination. That keeps the provider question separate from the
+coordinator question already covered by simulator sweeps. Tyr request classes
+are selected through short-lived benchmark JWTs served by an ephemeral local
+JWKS endpoint; the OpenAI API key remains only in the caller process and is
+forwarded as the provider `Authorization` header. Generated JWT signing keys
+exist only in memory.
+
+A completed run is not automatically an overload win. The JSON explicitly marks
+`conclusiveProviderOverloadComparison=false` unless the direct arm shows a strict
+provider-pressure signal, local admission contention is exercised, Tyr's bounded
+admission-class attribution is proven, and every arm starts with verified recovered
+provider rate-limit headroom. Before each arm, a direct-provider recovery probe
+requires at least 95% request and token headroom; depleted buckets are allowed to
+recover using provider reset headers, and failure to recover makes the comparison
+inconclusive. `--runs` still rotates arm order across repetitions, while
+`--arm-cooldown-ms` is only an optional minimum pause before the mandatory recovery
+gate. Useful fairness overrides are `--rate-limit-start-headroom-ratio`,
+`--rate-limit-recovery-timeout-ms`, and `--rate-limit-recovery-max-probes`.
+
+For either live path, the API key is read only from `OPENAI_API_KEY`; it is not
+copied into benchmark env files, Docker Compose, logs, or result JSON. Unknown
+models require explicit current input/output prices. The spend guard protects one
+planned run and does not know account-wide monthly spend. Pricing for the bundled
+default was reviewed against OpenAI's model page on 2026-08-28.
 
 On first use, the command creates an ignored `demo/moflux/.env` with random
 local-only tokens and the pinned image tags. For each missing image it first

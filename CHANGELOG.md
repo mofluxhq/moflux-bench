@@ -1,5 +1,58 @@
 # Changelog
 
+## 0.29.0 - 2026-08-29
+
+### Added
+
+- Add `npm run demo:openai:overload`, a budget-capped live OpenAI mixed-workload experiment that replays one immutable trace through direct OpenAI, an undifferentiated fail-fast static concurrency cap, and Tyr protected admission classes with the same physical cap.
+- Add a separate `demo:openai:overload:calibrate` path for bounded direct-provider calibration. The default establishes a separately sampled baseline and then probes sustained offered-load stages; explicit legacy flags retain the original concurrent-burst mode. Calibration is never combined with matched-arm evidence.
+- Add conservative cost and request-count guards for the overload path: the default compare plan is capped at $0.10, explicit per-run spend remains absolutely capped at $1.00, and one invocation may plan at most 2,000 arm-requests.
+- Add per-class logical completion, goodput, successful-request TTFT/latency, local rejects, provider 429s, provider-attempt counts, streamed usage, and measured successful-usage cost. Preserve per-request provider rate-limit headers and Tyr admission class/reason/revision attribution.
+- Add ephemeral benchmark JWT/JWKS identity so the live Tyr arm can exercise bounded `interactive` and `batch` admission classes without trusting a raw client class header or storing signing material on disk.
+- Add `demo/verify-openai-overload.mjs`, which proves matched traces, static-cap contention, Tyr class attribution, calibration pressure detection, per-stage/per-arm rate-limit start isolation (including depleted-bucket recovery), API-key non-disclosure, and fail-before-request spend refusal against local OpenAI-compatible mock servers.
+- Add `demo:openai:overload:sweep` and `demo:openai:overload:sweep:dry-run`. The wrapper runs up to eight independently guarded single-seed comparisons sequentially, fixes the arm set to direct/static/MoFlux, counterbalances execution order across a deterministic six-permutation seed cycle, preserves each seed summary, validates identical runtime/workload/policies and conclusive rate-limit-isolated evidence, and emits one pooled `openai-live-overload-sweep` summary from the raw request records with per-seed arm order and first/middle/last position counts.
+- Add an aggregate sweep spend ceiling (`--max-sweep-usd`, $1.50 by default, $5 absolute maximum) in addition to the existing per-seed run cap; a sweep is refused before its first child when the reserved per-seed caps exceed that ceiling.
+- Add `demo/verify-openai-overload-sweep.mjs` covering the six arm-order permutations and 8-seed position balance, pooled counts/percentiles across differing arm order, per-seed paired deltas, duplicate/mismatch/inconclusive refusal, sequential dry-run orchestration, and aggregate spend refusal.
+
+### Changed
+
+- Replace the default OpenAI overload calibration's two-request-per-worker concurrency bursts with sustained offered-load stages. The default establishes a 24-request / 4 RPS baseline and then probes 10, 20, 30, and 40 RPS for 10 seconds each.
+- Detect direct-provider pressure from provider 429/5xx/transport failures, TTFT or end-to-end p95 inflation, or persistent request/token rate-limit headroom exhaustion. Keep the drain-inclusive goodput/offered-rate ratio as a diagnostic only so normal post-stage drain time cannot create a false pressure signal.
+- Treat non-overload provider failures as calibration-invalidating evidence instead of misclassifying them as overload.
+- Preserve the old concurrent-burst calibration when callers explicitly use `--calibration-steps` or `--calibration-requests-per-worker`; sustained calibration is now the default.
+- Reduce default calibration request size/output reservation so the sustained plan remains below the existing $0.10 conservative per-run guard even after reserving bounded rate-limit recovery probes.
+- Require at least 95% request and token rate-limit headroom before the sustained calibration baseline, before every calibration stage, and before every comparison arm. Recovery uses provider reset headers plus bounded reprobes; failure to restore headroom or missing rate-limit headers invalidates calibration or makes comparison evidence inconclusive.
+- Include the maximum configured recovery probes in request-count and conservative spend guards, and include successful recovery-probe usage in measured cost.
+- Bump MoFlux Bench to 0.29.0. Licensed runtime pins remain Tyr 0.28.0, Latchflo 0.13.0, async-bulkhead-llm 3.16.0, and async-bulkhead-ts 1.0.1; the new experiment intentionally isolates single-node protected concurrency before adding token-budget or fleet-coordination variables.
+- Keep `npm run demo:openai` as the tiny compatibility/latency path. Live overload work now has separate commands, output under `results/runs/openai-live-overload/`, and an explicit `conclusiveProviderOverloadComparison` interpretation gate.
+
+### Verification
+
+- Extend `demo/verify-openai-overload.mjs` to prove a separately sampled baseline, sustained-RPS provider pressure detection, drain-tail false-positive protection, per-stage/per-arm recovered-headroom gating, an actual depleted-bucket wait/reprobe path, and backward-compatible legacy burst selection against local OpenAI-compatible mock servers.
+
+### Security
+
+- Keep `OPENAI_API_KEY` in the caller process only. The overload Compose file receives only the generated Tyr config path; benchmark JWT signing keys remain in memory, and publication verification rejects any OpenAI key reference in Compose/config files.
+
+## 0.28.0 - 2026-08-28
+
+### Added
+
+- Add `npm run demo:membership`, a local/free Latchflo 0.13.0 fleet-membership churn benchmark covering initial convergence, heartbeat revision stability, timed-out member removal, replacement under a new identity/endpoint, monotonic topology revisions, and bounded propagation timing.
+- Add `npm run demo:openai`, a deliberately small live-provider benchmark that alternates paired direct and Tyr requests, records TTFT/latency and provider usage, and reports actual usage-derived spend. The default is 8 requests per arm, 32 maximum output tokens, and `gpt-5.6-luna`.
+- Add `demo:openai:dry-run` and a fail-before-request spend guard. The bundled default refuses a conservative worst-case run above $0.01, and the configurable per-run cap cannot exceed $1.00. Unknown models require explicit current input/output prices.
+- Add self-tests for both new harnesses; the OpenAI verifier uses local mock SSE servers and proves paired execution, usage accounting, secret hygiene, and preflight refusal without contacting OpenAI.
+
+### Changed
+
+- Pin licensed runs to Tyr 0.28.0 and Latchflo 0.13.0 while retaining async-bulkhead-llm 3.16.0 and async-bulkhead-ts 1.0.1.
+- Remove hard-coded Tyr peer lists from managed benchmark configs. Each Tyr now advertises its endpoint to Latchflo and consumes Latchflo's versioned `routingTopology`; the routing shared secret remains local and Latchflo remains off the synchronous request path.
+- Rename the old simulator-only OpenAI-shaped protocol replay to `npm run demo:openai:sim`; `npm run demo:openai` now means the budget-capped live provider benchmark.
+
+### Security
+
+- The live OpenAI API key is read only from `OPENAI_API_KEY` in the caller process and is never written into benchmark env files, Compose configuration, logs, or result JSON. The spend guard limits the planned benchmark run, not account-wide monthly usage.
+
 ## 0.27.0 - 2026-08-26
 
 - Enable bounded interactive queueing for the licensed MoFlux arm: each `sim-interactive` Tyr replica may hold exactly one waiter, with a 750 ms construction-time queue timeout.

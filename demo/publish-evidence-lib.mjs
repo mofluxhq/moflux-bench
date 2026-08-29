@@ -62,12 +62,29 @@ export function retargetSummary(summary, fromPrefix, toPrefix) {
   return { ...summary, runs };
 }
 
-/** Files a run directory contributes as reviewed evidence. */
-export function evidenceFiles(runDir) {
-  return readdirSync(runDir, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && entry.name.endsWith(".json") && entry.name !== "summary.json")
-    .map((entry) => entry.name)
-    .sort();
+/** Files a run directory contributes as reviewed evidence.
+ *
+ * Keep the root summary separate because it is rewritten to
+ * `results/<name>.json`. Everything else that forms reproducible evidence may
+ * be nested (for example OpenAI sweep `seed-N/summary.json` plus the exact Tyr
+ * YAML used for that seed), so walk recursively instead of assuming a flat
+ * seed-sweep directory.
+ */
+export function evidenceFiles(runDir, relativeDir = "") {
+  const directory = path.join(runDir, relativeDir);
+  const files = [];
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const relative = path.join(relativeDir, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...evidenceFiles(runDir, relative));
+      continue;
+    }
+    if (!entry.isFile()) continue;
+    if (relativeDir === "" && entry.name === "summary.json") continue;
+    if (!/\.(?:json|ya?ml)$/i.test(entry.name)) continue;
+    files.push(relative);
+  }
+  return files.sort();
 }
 
 /**
@@ -113,13 +130,27 @@ export function publishRun({ root, resultsRoot, runDir, name, force = false, now
     repoRelative(runDir, root),
     targetDirRel,
   );
+  // Multi-seed sweep summaries may retain convenience pointers back to their
+  // generated run directory. Once promoted, those pointers must name the
+  // reviewed artifacts that will survive cleanup of `results/runs/`.
+  if (retargeted.outputs && typeof retargeted.outputs === "object") {
+    retargeted.outputs = {
+      ...retargeted.outputs,
+      ...(Object.hasOwn(retargeted.outputs, "summary") ? { summary: targetSummaryRel } : {}),
+      ...(Object.hasOwn(retargeted.outputs, "seedRunsDirectory")
+        ? { seedRunsDirectory: targetDirRel }
+        : {}),
+    };
+  }
   retargeted.publishedAt = now.toISOString();
   retargeted.publishedFrom = repoRelative(runDir, root);
 
   rmSync(targetDir, { recursive: true, force: true });
   mkdirSync(targetDir, { recursive: true });
   for (const file of files) {
-    copyFileSync(path.join(runDir, file), path.join(targetDir, file));
+    const destination = path.join(targetDir, file);
+    mkdirSync(path.dirname(destination), { recursive: true });
+    copyFileSync(path.join(runDir, file), destination);
   }
   // No trailing newline: matches every summary already published, so a
   // republish shows only the changes that are real.

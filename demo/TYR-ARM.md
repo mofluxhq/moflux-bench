@@ -8,7 +8,7 @@ independently reproducible.
 
 ## Presenter command
 
-The integrated arm requires Tyr 0.27.0 and Latchflo 0.12.4 licensed images.
+The integrated arm requires Tyr 0.28.0 and Latchflo 0.13.0 licensed images.
 Tyr contains async-bulkhead-llm 3.16.0 and async-bulkhead-ts 1.0.1. Once the
 images are tagged locally or accessible through the configured registry, run:
 
@@ -19,15 +19,15 @@ npm run demo
 The command creates the ignored local env file and random credentials on first
 use. The presenter creates or updates `sim-interactive` and `sim-batch` with a
 short
-enrollment lease before Tyr starts. It sends Latchflo 0.12.4's minimum viable
+enrollment lease before Tyr starts. It sends Latchflo 0.13.0's minimum viable
 grant settings for each request class, so an allocator split below one slot or
-below one request's token reservation fails explicitly. Tyr 0.27.0 also polls
+below one request's token reservation fails explicitly. Tyr 0.28.0 also polls
 private capacity snapshots from the other three replicas and can forward a
-request once to the peer with the best request-specific headroom. The shared
-routing secret is generated in the ignored local `.env`; Latchflo does not
-distribute topology or secrets. MoFlux Bench 0.27.0 grants `sim-interactive`
+request once to the peer with the best request-specific headroom. Managed Tyr configs begin with `peers: []`; each replica advertises its endpoint and Latchflo 0.13.0 distributes the versioned active routing topology. The shared
+routing secret is generated in the ignored local `.env`; Latchflo never
+distributes that secret. MoFlux Bench 0.28.0 grants `sim-interactive`
 exactly one local waiter per Tyr replica while keeping `sim-batch` at zero; the
-interactive replica configs bound that wait at 750 ms. Tyr 0.27.0 reports
+interactive replica configs bound that wait at 750 ms. Tyr 0.28.0 reports
 per-pool in-flight and pending work, recent admissions and rejections, and token
 headroom on its authenticated Latchflo heartbeat, so sustained queue pressure
 feeds the same headroom-restoration path as rejection pressure. A 750 ms queue
@@ -49,7 +49,7 @@ the workload trace unchanged. It then reports per-run token-accounting deltas.
 The default Anthropic-shaped stream
 reports input usage at start and cumulative output usage while active, allowing
 Tyr to reconcile progressively with the benchmark's pinned 256-token update
-step and 256-token future-output safety margin. Use `npm run demo:openai` only
+step and 256-token future-output safety margin. Use `npm run demo:openai:sim` only
 for protocol compatibility; its usage arrives at completion and therefore does
 not exercise early release. The full sequence is documented in
 `demo/VIDEO-DEMO.md`.

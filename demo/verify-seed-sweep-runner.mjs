@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -229,6 +230,12 @@ try {
     );
   }
 
+  // Nested evidence must survive promotion too. Live OpenAI sweeps keep each
+  // seed summary and the exact Tyr configuration below `seed-N/`.
+  mkdirSync(path.join(sweepDir, "seed-1"), { recursive: true });
+  writeFileSync(path.join(sweepDir, "seed-1", "summary.json"), "{}\n");
+  writeFileSync(path.join(sweepDir, "seed-1", "tyr-overload.yaml"), "version: 1\n");
+
   // Promotion is the only path to reviewed evidence, and it refuses to replace
   // an existing copy without --force.
   // `root` is what both sides express paths relative to; the sweep used the
@@ -242,6 +249,8 @@ try {
   assert.equal(published.replaced, false);
   assert.equal(existsSync(reviewedSummary), true);
   assert.equal(existsSync(path.join(reviewedDir, "baseline-seed-2.json")), true);
+  assert.equal(existsSync(path.join(reviewedDir, "seed-1", "summary.json")), true);
+  assert.equal(existsSync(path.join(reviewedDir, "seed-1", "tyr-overload.yaml")), true);
   const promoted = JSON.parse(readFileSync(reviewedSummary, "utf8"));
   const expectedBaseline = path
     .relative(ROOT, path.join(reviewedDir, "baseline-seed-2.json"))

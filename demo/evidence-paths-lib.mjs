@@ -47,6 +47,8 @@ export const REVIEWED_EVIDENCE = Object.freeze([
   "results/moflux-fault-seed-sweep/",
   "results/openai-live-compatibility.json",
   "results/openai-live-compatibility/",
+  "results/openai-live-overload-8-seed.json",
+  "results/openai-live-overload-8-seed/",
 ]);
 
 /** Directory under the results root that holds generated runs. */

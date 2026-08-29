@@ -2,7 +2,7 @@
 
 MoFlux Bench 0.19.0 includes the four-arm authenticated noisy-neighbor scenario
 introduced in 0.16.0, including demand-aware protected-floor lending with Tyr
-0.26.0 and Latchflo 0.12.4.
+0.28.0 and Latchflo 0.13.0.
 
 ## What it compares
 
