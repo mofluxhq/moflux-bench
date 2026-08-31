@@ -115,8 +115,8 @@ if (lock.packages?.[""]?.version !== pkg.version || lock.version !== pkg.version
 }
 const example = readFileSync(path.join(ROOT, "demo/moflux/.env.example"), "utf8");
 for (const expected of [
-  "MOFLUX_TYR_IMAGE=tyr-admission-controller:0.28.0",
-  "MOFLUX_LATCHFLO_IMAGE=latchflo-control-plane:0.13.0",
+  "MOFLUX_TYR_IMAGE=tyr-admission-controller:0.29.0",
+  "MOFLUX_LATCHFLO_IMAGE=latchflo-control-plane:0.13.1",
 ]) {
   if (!example.includes(expected)) {
     findings.push(`demo/moflux/.env.example: missing pinned runtime ${expected}`);
@@ -136,8 +136,8 @@ if (!compose.includes("TYR_ROUTING_SECRET: ${TYR_ROUTING_SECRET:?Set TYR_ROUTING
 for (let replica = 1; replica <= 4; replica += 1) {
   const rel = `demo/moflux/tyr-r${replica}.yaml`;
   const yaml = readFileSync(path.join(ROOT, rel), "utf8");
-  if (!/^    version: 0\.28\.0$/m.test(yaml)) {
-    findings.push(`${rel}: control-plane metadata must identify Tyr 0.28.0`);
+  if (!/^    version: 0\.29\.0$/m.test(yaml)) {
+    findings.push(`${rel}: control-plane metadata must identify Tyr 0.29.0`);
   }
   if (!/^  anthropic:\n    baseUrl: http:\/\/host\.docker\.internal:9000$/m.test(yaml)) {
     findings.push(`${rel}: Anthropic simulator upstream is missing`);
@@ -180,7 +180,7 @@ for (let replica = 1; replica <= 4; replica += 1) {
     "defaultClass: noisy",
     "tenantIds: [tenant-premium]",
     "pools: [sim-shared, sim-ceilings, sim-protected, sim-adaptive]",
-    "version: 0.28.0",
+    "version: 0.29.0",
   ]) {
     if (!yaml.includes(required)) findings.push(`${rel}: missing ${required}`);
   }
@@ -328,6 +328,9 @@ if (!pkg.scripts?.verify?.includes("scripts/verify.mjs")) {
 }
 if (!pkg.scripts?.["demo:progressive"]?.includes("--provider-api=anthropic") ||
     pkg.scripts?.["demo:openai"] !== "node demo/openai-live.mjs" ||
+    pkg.scripts?.["demo:openai:responses"] !== "node demo/openai-live.mjs --openai-api=responses" ||
+    pkg.scripts?.["demo:openai:chat"] !== "node demo/openai-live.mjs --openai-api=chat-completions" ||
+    pkg.scripts?.["verify:openai:responses:sim"] !== "node sim/verify-openai-responses.mjs" ||
     pkg.scripts?.["demo:openai:overload"] !== "node demo/openai-overload.mjs --mode=compare" ||
     pkg.scripts?.["demo:openai:overload:dry-run"] !== "node demo/openai-overload.mjs --mode=compare --dry-run" ||
     pkg.scripts?.["demo:openai:overload:calibrate"] !== "node demo/openai-overload.mjs --mode=calibrate" ||
@@ -338,8 +341,8 @@ if (!pkg.scripts?.["demo:progressive"]?.includes("--provider-api=anthropic") ||
     pkg.scripts?.["demo:membership"] !== "node demo/membership.mjs") {
   findings.push("package.json: progressive, live OpenAI, simulator OpenAI, and membership demo commands are required");
 }
-if (pkg.version !== "0.29.0") {
-  findings.push("package.json: the current benchmark release must be version 0.29.0");
+if (pkg.version !== "0.30.0") {
+  findings.push("package.json: the current benchmark release must be version 0.30.0");
 }
 const openaiLive = readFileSync(path.join(ROOT, "demo/openai-live.mjs"), "utf8");
 for (const required of [
@@ -347,6 +350,9 @@ for (const required of [
   'DEFAULT_MAX_USD = 0.01',
   'MAX_RUN_CAP_USD = 1.00',
   'OPENAI_API_KEY',
+  'normalizeOpenAIApi',
+  'buildOpenAIRequestBody',
+  'observeOpenAIStreamEvent',
   'conservative worst-case cost',
   'usage',
 ]) {
@@ -372,8 +378,16 @@ for (const rel of ["demo/openai/compose.yaml", "demo/openai/compose-overload.yam
   if (text.includes("OPENAI_API_KEY")) findings.push(`${rel}: live OpenAI API key must stay in the caller process only`);
 }
 const verifyRunnerNewDemos = readFileSync(path.join(ROOT, "scripts/verify.mjs"), "utf8");
-for (const required of ["demo/verify-membership.mjs", "demo/verify-openai-live.mjs", "demo/verify-openai-overload.mjs"]) {
+for (const required of ["sim/verify-openai-responses.mjs", "demo/verify-membership.mjs", "demo/verify-openai-live.mjs", "demo/verify-openai-overload.mjs"]) {
   if (!verifyRunnerNewDemos.includes(required)) findings.push(`scripts/verify.mjs: missing ${required}`);
+}
+
+const openaiApiLib = readFileSync(path.join(ROOT, "demo/openai-api-lib.mjs"), "utf8");
+for (const required of ["/v1/responses", "/v1/chat/completions", "max_output_tokens", "response.output_text.delta"]) {
+  if (!openaiApiLib.includes(required)) findings.push(`demo/openai-api-lib.mjs: missing Responses compatibility contract ${required}`);
+}
+for (const required of ["/v1/responses", "response.output_text.delta", "response.completed", "input_tokens", "output_tokens"]) {
+  if (!providerSim.includes(required)) findings.push(`sim/provider-sim.mjs: missing Responses simulator contract ${required}`);
 }
 
 const classesScript = pkg.scripts?.["demo:classes"] ?? "";

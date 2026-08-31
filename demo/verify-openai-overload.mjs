@@ -6,7 +6,13 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { generateCompareTrace, renderTyrOverloadConfig } from "./openai-overload-lib.mjs";
+import {
+  generateCompareTrace,
+  OPENAI_OVERLOAD_COMPARE_DEFAULTS,
+  OPENAI_OVERLOAD_DEFAULT_MAX_USD,
+  OPENAI_OVERLOAD_DEFAULT_RATE_LIMIT_START_HEADROOM_RATIO,
+  renderTyrOverloadConfig,
+} from "./openai-overload-lib.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const KEY = "openai-overload-test-key-not-secret";
@@ -204,6 +210,54 @@ try {
   assert.match(config, /applicationIds: \[interactive\]/);
   assert.doesNotMatch(config, /OPENAI_API_KEY/);
 
+  assert.equal(OPENAI_OVERLOAD_COMPARE_DEFAULTS.durationMs, 10_000);
+  assert.equal(OPENAI_OVERLOAD_COMPARE_DEFAULTS.interactiveRps, 10);
+  assert.equal(OPENAI_OVERLOAD_COMPARE_DEFAULTS.batchRps, 70);
+  assert.equal(OPENAI_OVERLOAD_COMPARE_DEFAULTS.maxConcurrent, 36);
+  assert.equal(OPENAI_OVERLOAD_COMPARE_DEFAULTS.interactiveFloor, 8);
+  assert.equal(OPENAI_OVERLOAD_COMPARE_DEFAULTS.batchFloor, 4);
+  assert.ok(
+    OPENAI_OVERLOAD_COMPARE_DEFAULTS.interactiveFloor + OPENAI_OVERLOAD_COMPARE_DEFAULTS.batchFloor <
+      OPENAI_OVERLOAD_COMPARE_DEFAULTS.maxConcurrent,
+    "canonical protected floors must leave shared concurrency for borrowing",
+  );
+  assert.equal(OPENAI_OVERLOAD_DEFAULT_MAX_USD, 0.18);
+  assert.equal(OPENAI_OVERLOAD_DEFAULT_RATE_LIMIT_START_HEADROOM_RATIO, 0.99);
+
+  const defaultDryRun = await run(["--mode=compare", "--dry-run"]);
+  assert.equal(defaultDryRun.code, 0, `${defaultDryRun.stdout}\n${defaultDryRun.stderr}`);
+  assert.match(defaultDryRun.stdout, /1998/);
+  assert.match(defaultDryRun.stdout, /1980/);
+  assert.match(defaultDryRun.stdout, /0\.16832/);
+  assert.match(defaultDryRun.stdout, /0\.18/);
+  assert.doesNotMatch(
+    defaultDryRun.stdout + defaultDryRun.stderr,
+    /protected floors consume all configured concurrency/,
+  );
+
+  const fullyReservedDryRun = await run([
+    "--mode=compare",
+    "--dry-run",
+    "--duration-ms=1000",
+    "--interactive-rps=1",
+    "--batch-rps=1",
+    "--batch-start-ms=0",
+    "--batch-duration-ms=1000",
+    "--interactive-input-chars=64",
+    "--batch-input-chars=64",
+    "--interactive-max-output-tokens=8",
+    "--batch-max-output-tokens=8",
+    "--static-cap=2",
+    "--moflux-max-concurrent=2",
+    "--interactive-floor=1",
+    "--batch-floor=1",
+  ]);
+  assert.equal(fullyReservedDryRun.code, 0, `${fullyReservedDryRun.stdout}\n${fullyReservedDryRun.stderr}`);
+  assert.match(
+    fullyReservedDryRun.stdout + fullyReservedDryRun.stderr,
+    /protected floors consume all configured concurrency; no shared slots remain/,
+  );
+
   const compareOut = path.join(temp, "compare.json");
   const compare = await run([
     "--mode=compare",
@@ -375,7 +429,7 @@ try {
   assert.match(guard.stdout + guard.stderr, /Refusing to run/);
   assert.equal(directRequests + mofluxRequests, before, "spend guard must fail before any API request");
 
-  console.log("PASS OpenAI overload harness: matched trace, static contention, class proof, per-stage/per-arm rate-limit start isolation with depleted-bucket recovery, sustained calibration pressure, drain-tail false-positive protection, legacy calibration compatibility, secret hygiene, and spend guard");
+  console.log("PASS OpenAI overload harness: canonical shared-capacity defaults, full-floor warning, matched trace, static contention, class proof, per-stage/per-arm rate-limit start isolation with depleted-bucket recovery, sustained calibration pressure, drain-tail false-positive protection, legacy calibration compatibility, secret hygiene, and spend guard");
 } finally {
   await Promise.all([
     new Promise((resolve) => directServer.close(resolve)),

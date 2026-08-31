@@ -210,7 +210,13 @@ function textLength(content) {
   if (!Array.isArray(content)) return 0;
   let n = 0;
   for (const block of content) {
-    if (block?.type === "text" && typeof block.text === "string") n += block.text.length;
+    if ((block?.type === "text" || block?.type === "input_text") && typeof block.text === "string") {
+      n += block.text.length;
+    } else if (typeof block?.content === "string") {
+      n += block.content.length;
+    } else if (Array.isArray(block?.content)) {
+      n += textLength(block.content);
+    }
   }
   return n;
 }
@@ -223,6 +229,8 @@ function trueInputTokens(body, key) {
   let chars = 0;
   for (const m of body.messages ?? []) chars += textLength(m.content);
   if (body.system !== undefined) chars += textLength(body.system);
+  if (body.instructions !== undefined) chars += textLength(body.instructions);
+  if (body.input !== undefined) chars += textLength(body.input);
   const base = chars / CONFIG.inputCharRatio;
   const jitter = 1 + CONFIG.inputJitter * (2 * uniform(key, "input-jitter") - 1);
   return Math.max(1, Math.round(base * jitter));
@@ -340,6 +348,51 @@ function finish(job, { error } = {}) {
         usage,
       });
     }
+  } else if (job.api === "openai-responses") {
+    const usage = {
+      input_tokens: job.inputTokens,
+      output_tokens: job.emitted,
+      total_tokens: job.inputTokens + job.emitted,
+    };
+    const output = [
+      {
+        type: "message",
+        id: `${job.id}_message`,
+        status: "completed",
+        role: "assistant",
+        content: [{ type: "output_text", text: fillerFor(job.emitted), annotations: [] }],
+      },
+    ];
+    if (job.stream) {
+      startStream(job);
+      writeSse(job, {
+        type: "response.output_text.done",
+        output_index: 0,
+        content_index: 0,
+        text: fillerFor(job.emitted),
+      });
+      writeSse(job, {
+        type: "response.completed",
+        response: {
+          id: job.id,
+          object: "response",
+          status: "completed",
+          model: job.model,
+          output,
+          usage,
+        },
+      });
+      job.res.end();
+    } else {
+      sendJson(job.res, 200, {
+        id: job.id,
+        object: "response",
+        status: "completed",
+        model: job.model,
+        output,
+        usage,
+      });
+    }
   } else {
     const usage = {
       prompt_tokens: job.inputTokens,
@@ -377,7 +430,7 @@ function finish(job, { error } = {}) {
 }
 
 function writeSse(job, payload) {
-  const event = job.api === "anthropic" && typeof payload?.type === "string"
+  const event = (job.api === "anthropic" || job.api === "openai-responses") && typeof payload?.type === "string"
     ? `event: ${payload.type}\n`
     : "";
   job.res.write(`${event}data: ${JSON.stringify(payload)}\n\n`);
@@ -409,6 +462,18 @@ function startStream(job) {
       type: "content_block_start",
       index: 0,
       content_block: { type: "text", text: "" },
+    });
+  } else if (job.api === "openai-responses") {
+    writeSse(job, {
+      type: "response.created",
+      response: {
+        id: job.id,
+        object: "response",
+        status: "in_progress",
+        model: job.model,
+        output: [],
+        usage: null,
+      },
     });
   }
 }
@@ -469,6 +534,14 @@ function tick() {
           type: "message_delta",
           delta: { stop_reason: null, stop_sequence: null },
           usage: { output_tokens: job.emitted },
+        });
+      } else if (job.api === "openai-responses") {
+        writeSse(job, {
+          type: "response.output_text.delta",
+          response_id: job.id,
+          output_index: 0,
+          content_index: 0,
+          delta: fillerFor(emit),
         });
       } else {
         writeSse(job, {
@@ -571,8 +644,9 @@ const server = createServer(async (req, res) => {
   }
 
   const isChat = req.url === "/v1/chat/completions";
+  const isResponses = req.url === "/v1/responses";
   const isMessages = req.url === "/v1/messages";
-  if (req.method !== "POST" || !(isChat || isMessages)) {
+  if (req.method !== "POST" || !(isChat || isResponses || isMessages)) {
     sendJson(res, 404, { error: { type: "not_found" } });
     return;
   }
@@ -615,15 +689,15 @@ const server = createServer(async (req, res) => {
       ? `trace-${anthropicReplayKey}`
       : `untraced-${sequence}`;
   const inputTokens = trueInputTokens(body, requestKey);
-  const cap = Number(body.max_tokens ?? body.max_completion_tokens ?? 4096);
+  const cap = Number(body.max_tokens ?? body.max_completion_tokens ?? body.max_output_tokens ?? 4096);
 
   const roll = uniform(requestKey, "fault");
   const injectFault =
     roll < CONFIG.failRate ? "500" : roll < CONFIG.failRate + CONFIG.stallRate ? "stall" : null;
 
   const job = {
-    id: `${isMessages ? "simmsg" : "simcmpl"}_${requestKey}`,
-    api: isMessages ? "anthropic" : "openai",
+    id: `${isMessages ? "simmsg" : isResponses ? "simresp" : "simcmpl"}_${requestKey}`,
+    api: isMessages ? "anthropic" : isResponses ? "openai-responses" : "openai-chat",
     res,
     model: requestModel,
     stream: body.stream === true,
@@ -681,6 +755,6 @@ server.listen(CONFIG.port, "0.0.0.0", () => {
   console.log(
     `provider-sim :${CONFIG.port} envelope=${CONFIG.envelope} queue=${CONFIG.queue} ` +
       `sigma=${CONFIG.sigma} kappa=${CONFIG.kappa} r1=${CONFIG.r1} seed=${CONFIG.seed} ` +
-      `instance=${INSTANCE_ID} APIs=openai,anthropic`,
+      `instance=${INSTANCE_ID} APIs=openai-chat,openai-responses,anthropic`,
   );
 });

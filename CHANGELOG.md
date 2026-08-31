@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.30.0 - 2026-08-30
+
+### Added
+
+- Add first-class OpenAI Responses API compatibility to the budget-capped live benchmark. `npm run demo:openai` now defaults to `POST /v1/responses`; `demo:openai:responses` makes that choice explicit and `demo:openai:chat` preserves the legacy Chat Completions path.
+- Add shared OpenAI request/stream helpers that generate the correct request shape for Responses versus Chat Completions and reconcile Responses usage from semantic lifecycle events such as `response.completed`.
+- Extend the deterministic provider simulator with `POST /v1/responses`, including non-streaming response objects, `response.output_text.delta` streaming events, terminal `response.completed` usage, `input`/`instructions` accounting, and `max_output_tokens`.
+- Add `sim/verify-openai-responses.mjs` and include it in the bounded verification runner. The verifier covers non-streaming Responses, semantic SSE, and final usage accounting without contacting OpenAI.
+
+### Changed
+
+- Bump MoFlux Bench to 0.30.0 and pin new licensed runs to Tyr 0.29.0, Latchflo 0.13.1, async-bulkhead-llm 3.16.0, and async-bulkhead-ts 1.0.2.
+- Keep the published OpenAI overload methodology on Chat Completions for continuity with the reviewed 0.29.0 evidence. Responses support is added to the compatibility path rather than silently changing the historical overload protocol.
+- Correct the canonical live-overload defaults to the calibrated 80-RPS profile: 10 interactive RPS plus a 70-RPS batch surge, 36 shared physical concurrency slots, and 8/4 protected interactive/batch floors. The protected floors now leave 24 shared slots instead of consuming the entire cap, preventing the default benchmark from behaving like a rigid static partition when the provider is not overloaded.
+- Raise the default live-overload per-run guard to $0.18 so the canonical 1,998-request matched comparison fits beneath its own conservative spend ceiling; the eight-seed sweep uses the same $0.18 per-seed ceiling and still fits under the existing $1.50 aggregate sweep cap.
+- Require 99% request/token rate-limit headroom by default before live overload stages/arms, and abort a multi-seed live sweep after the first inconclusive seed because such a sweep cannot satisfy the all-seeds-conclusive publication gate.
+- Refresh current-state README, integration, contribution, security, video-demo, tenant-fairness, and results documentation so old runtime pins or release-era wording are either updated or explicitly described as historical. Clarify the curated-evidence README without rewriting retained negative-evidence data.
+
+### Verification
+
+- Expand the live OpenAI harness self-test to run both Responses and Chat Completions against local mock SSE servers, verifying request shape, usage reconciliation, secret hygiene, and hard spend refusal for both protocols.
+- Add regression coverage for the canonical live-overload defaults, including positive shared concurrency headroom and a warning when an explicit protected-floor configuration consumes the full physical cap.
+- Extend publication verification to require the 0.30.0 runtime pins, Responses commands, shared OpenAI API helper, Responses simulator contract, and Responses regression test.
+
 ## 0.29.0 - 2026-08-29
 
 ### Added

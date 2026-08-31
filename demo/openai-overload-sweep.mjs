@@ -30,6 +30,7 @@ import {
 import {
   aggregateOpenAiOverloadCompareSummaries,
   counterbalancedArmOrderForSeed,
+  OPENAI_OVERLOAD_DEFAULT_MAX_USD,
   OPENAI_OVERLOAD_MAX_RUN_CAP_USD,
   OPENAI_OVERLOAD_MULTI_SWEEP_DEFAULT_MAX_USD,
   OPENAI_OVERLOAD_MULTI_SWEEP_MAX_SEEDS,
@@ -82,7 +83,7 @@ function parseSeeds(value) {
 }
 
 const seeds = parseSeeds(str("seeds", "1-8"));
-const maxUsdPerSeed = num("max-usd-per-seed", 0.10);
+const maxUsdPerSeed = num("max-usd-per-seed", OPENAI_OVERLOAD_DEFAULT_MAX_USD);
 const maxSweepUsd = num("max-sweep-usd", OPENAI_OVERLOAD_MULTI_SWEEP_DEFAULT_MAX_USD);
 const dryRun = bool("dry-run", false);
 const runId = str("run-id", newRunId());
@@ -205,6 +206,13 @@ for (let index = 0; index < seeds.length; index += 1) {
 
   if (!dryRun) {
     const summary = JSON.parse(readFileSync(seedSummary, "utf8"));
+    if (summary.interpretation?.conclusiveProviderOverloadComparison !== true) {
+      const reasons = summary.interpretation?.inconclusiveReasons ?? [];
+      throw new Error(
+        `seed ${seed} was not a conclusive provider-overload comparison; aborting remaining seeds` +
+          (reasons.length > 0 ? `: ${reasons.join("; ")}` : ""),
+      );
+    }
     summaries.push(summary);
     sourceFiles.push(path.relative(path.dirname(out), seedSummary).split(path.sep).join("/"));
   }

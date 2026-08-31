@@ -14,6 +14,12 @@ import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 import { ensureDemoEnv, TYR_VERSION } from "./env-lib.mjs";
 import {
+  buildOpenAIRequestBody,
+  normalizeOpenAIApi,
+  observeOpenAIStreamEvent,
+  openAIPath,
+} from "./openai-api-lib.mjs";
+import {
   assertSafeOutputFile,
   assertSafeResultsDir,
   assertSafeRunDir,
@@ -63,17 +69,21 @@ const str = (name, fallback) => args.get(name) ?? fallback;
 const bool = (name, fallback) => (args.has(name) ? args.get(name) === "true" : fallback);
 
 const model = str("model", process.env.MOFLUX_OPENAI_MODEL ?? DEFAULT_MODEL);
+const openaiApi = normalizeOpenAIApi(
+  str("openai-api", process.env.MOFLUX_OPENAI_API ?? "responses"),
+);
+const openaiPath = openAIPath(openaiApi);
 const requestsPerArm = num("requests-per-arm", 8);
 const maxOutputTokens = num("max-output-tokens", 32);
 const maxUsd = num("max-usd", Number(process.env.MOFLUX_OPENAI_MAX_USD ?? String(DEFAULT_MAX_USD)));
 const requestTimeoutMs = num("request-timeout-ms", 90000);
 const directUrl = str(
   "direct-url",
-  process.env.MOFLUX_OPENAI_DIRECT_URL ?? "https://api.openai.com/v1/chat/completions",
+  process.env.MOFLUX_OPENAI_DIRECT_URL ?? `https://api.openai.com${openaiPath}`,
 );
 const mofluxUrl = str(
   "moflux-url",
-  process.env.MOFLUX_OPENAI_TYR_URL ?? "http://127.0.0.1:18110/v1/chat/completions",
+  process.env.MOFLUX_OPENAI_TYR_URL ?? `http://127.0.0.1:18110${openaiPath}`,
 );
 const manageStack = bool("manage-stack", process.env.MOFLUX_OPENAI_MANAGE_STACK !== "false");
 const keepStack = bool("keep-stack", false);
@@ -293,22 +303,19 @@ async function parseStream(response, startedAt) {
           continue;
         }
 
-        const content = parsed?.choices?.[0]?.delta?.content;
+        const observed = observeOpenAIStreamEvent(parsed, openaiApi);
 
-        if (typeof content === "string" && content.length > 0) {
+        if (observed.text.length > 0) {
           if (ttftMs === null) {
             ttftMs = performance.now() - startedAt;
           }
 
-          textChars += content.length;
+          textChars += observed.text.length;
         }
 
-        if (Number.isFinite(parsed?.usage?.prompt_tokens)) {
-          promptTokens = parsed.usage.prompt_tokens;
-        }
-
-        if (Number.isFinite(parsed?.usage?.completion_tokens)) {
-          completionTokens = parsed.usage.completion_tokens;
+        if (observed.usage) {
+          promptTokens = observed.usage.input;
+          completionTokens = observed.usage.output;
         }
       }
     }
@@ -331,21 +338,13 @@ async function runRequest({ arm, url, prompt, pair }) {
     const response = await fetch(url, {
       method: "POST",
       headers: authHeaders({ moflux: arm === "moflux" }),
-      body: JSON.stringify({
+      body: JSON.stringify(buildOpenAIRequestBody({
+        api: openaiApi,
         model,
-        messages: [
-          {
-            role: "user",
-            content: prompt,
-          },
-        ],
+        prompt,
+        maxOutputTokens,
         stream: true,
-        stream_options: {
-          include_usage: true,
-        },
-        max_completion_tokens: maxOutputTokens,
-        reasoning_effort: "none",
-      }),
+      })),
       signal: controller.signal,
     });
 
@@ -573,6 +572,8 @@ const summary = {
   runtime: {
     tyr: TYR_VERSION,
     model,
+    openaiApi,
+    endpoint: openaiPath,
   },
   budget: {
     ...budgetPlan,
@@ -679,7 +680,7 @@ if (!summary.acceptance.passed) {
   process.exitCode = 1;
 } else {
   console.log(
-    `PASS OpenAI live benchmark; conservative run ceiling $${worstCaseUsd.toFixed(6)} <= $${maxUsd.toFixed(4)}`,
+    `PASS OpenAI ${openaiApi} live benchmark; conservative run ceiling $${worstCaseUsd.toFixed(6)} <= $${maxUsd.toFixed(4)}`,
   );
 
   if (runOutputDir) {

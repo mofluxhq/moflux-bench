@@ -2,9 +2,30 @@ import { createHash } from "node:crypto";
 
 export const OPENAI_OVERLOAD_SWEEP_NAME = "openai-live-overload";
 export const OPENAI_OVERLOAD_DEFAULT_MODEL = "gpt-5.6-luna";
-export const OPENAI_OVERLOAD_DEFAULT_MAX_USD = 0.10;
+export const OPENAI_OVERLOAD_DEFAULT_MAX_USD = 0.18;
 export const OPENAI_OVERLOAD_MAX_RUN_CAP_USD = 1.00;
 export const OPENAI_OVERLOAD_MAX_REQUESTS = 2_000;
+export const OPENAI_OVERLOAD_DEFAULT_RATE_LIMIT_START_HEADROOM_RATIO = 0.99;
+
+// Canonical matched workload selected by live sustained calibration on 2026-08-30.
+// At the reviewed OpenAI account limits, 80 offered RPS produced strict provider
+// pressure while the 36-slot controlled arms had enough shared capacity to avoid
+// turning protected floors into static partitions under ordinary load.
+export const OPENAI_OVERLOAD_COMPARE_DEFAULTS = Object.freeze({
+  durationMs: 10_000,
+  interactiveRps: 10,
+  batchRps: 70,
+  batchStartMs: 2_000,
+  batchDurationMs: 8_000,
+  jitterFraction: 0.05,
+  interactiveInputChars: 64,
+  batchInputChars: 64,
+  interactiveMaxOutputTokens: 8,
+  batchMaxOutputTokens: 8,
+  maxConcurrent: 36,
+  interactiveFloor: 8,
+  batchFloor: 4,
+});
 
 // Pricing source reviewed 2026-08-28:
 // https://developers.openai.com/api/docs/models/gpt-5.6-luna

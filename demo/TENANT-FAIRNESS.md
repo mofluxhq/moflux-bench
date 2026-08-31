@@ -1,8 +1,8 @@
 # Admission-class fairness and lending benchmark
 
-MoFlux Bench 0.19.0 includes the four-arm authenticated noisy-neighbor scenario
-introduced in 0.16.0, including demand-aware protected-floor lending with Tyr
-0.28.0 and Latchflo 0.13.0.
+MoFlux Bench 0.30.0 retains the four-arm authenticated noisy-neighbor scenario
+introduced in 0.16.0, including demand-aware protected-floor lending with the current Tyr
+0.29.0 and Latchflo 0.13.1 runtime.
 
 ## What it compares
 
@@ -58,7 +58,7 @@ first in that same fresh seed.
 Latchflo may release the active protected floor only after every active Tyr
 replica reports the class idle. The hard class ceilings remain unchanged. When
 noisy demand returns, Latchflo stops new borrowing, stages the restored floor,
-and uses Tyr 0.27.0's ordered class acknowledgement plus fresh occupancy
+and uses Tyr 0.29.0's ordered class acknowledgement plus fresh occupancy
 evidence to prove the shared authority has drained by attrition. Running
 requests are never revoked; lease expiry remains the fallback if proof fails.
 
@@ -137,8 +137,8 @@ performance metric improves.
 
 ## Floor semantics
 
-Tyr 0.27.0 reports bounded per-class demand and ordered class occupancy evidence while enforcing the class limits in its
-currently applied Latchflo grant. Latchflo 0.12.4 owns the lending and handoff decisions.
+Tyr 0.29.0 reports bounded per-class demand and ordered class occupancy evidence while enforcing the class limits in its
+currently applied Latchflo grant. Latchflo 0.13.1 owns the lending and handoff decisions; these handoff semantics were introduced in earlier 0.12.x releases and are preserved here.
 
 A configured protected floor is therefore the **nominal floor**. In the
 adaptive arm the **active floor** may temporarily be lower while the class is

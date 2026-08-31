@@ -117,7 +117,7 @@ function makeSummary(seed, { staticInteractiveSuccesses, mofluxInteractiveSucces
     benchmark: "openai-live-overload",
     generatedAt: `2026-08-29T19:00:0${seed}.000Z`,
     mode: "compare",
-    runtime: { tyr: "0.28.0", model: "gpt-5.6-luna" },
+    runtime: { tyr: "0.29.0", model: "gpt-5.6-luna" },
     workload: {
       runs: 1,
       seed,
@@ -303,6 +303,16 @@ assert.match(dry.stdout, /seed 1 .*order=direct -> static -> moflux/);
 assert.match(dry.stdout, /seed 2 .*order=static -> moflux -> direct/);
 assert.match(dry.stdout, /PASS sweep dry-run: 2 independently guarded seed plans validated/);
 
+const defaultProfileDry = await runSweep([
+  "--dry-run",
+  "--seeds=1",
+]);
+assert.equal(defaultProfileDry.code, 0, `${defaultProfileDry.stdout}\n${defaultProfileDry.stderr}`);
+assert.match(defaultProfileDry.stdout, /1998/);
+assert.match(defaultProfileDry.stdout, /1980/);
+assert.match(defaultProfileDry.stdout, /0\.16832/);
+assert.match(defaultProfileDry.stdout, /0\.18/);
+
 const budgetRefusal = await runSweep([
   "--dry-run",
   "--seeds=1-8",
@@ -312,4 +322,4 @@ const budgetRefusal = await runSweep([
 assert.notEqual(budgetRefusal.code, 0);
 assert.match(`${budgetRefusal.stdout}\n${budgetRefusal.stderr}`, /above --max-sweep-usd/);
 
-console.log("PASS OpenAI overload multi-seed sweep counterbalanced ordering, aggregation, mismatch guards, dry-run orchestration, and aggregate spend guard");
+console.log("PASS OpenAI overload multi-seed sweep counterbalanced ordering, aggregation, mismatch guards, canonical-profile dry-run orchestration, and aggregate spend guard");

@@ -40,6 +40,8 @@ import {
 import {
   OPENAI_OVERLOAD_DEFAULT_MAX_USD,
   OPENAI_OVERLOAD_DEFAULT_MODEL,
+  OPENAI_OVERLOAD_DEFAULT_RATE_LIMIT_START_HEADROOM_RATIO,
+  OPENAI_OVERLOAD_COMPARE_DEFAULTS,
   OPENAI_OVERLOAD_MAX_REQUESTS,
   OPENAI_OVERLOAD_MAX_RUN_CAP_USD,
   OPENAI_OVERLOAD_MODEL_PRICING_USD_PER_MTOK,
@@ -253,7 +255,10 @@ function rateLimitSnapshot(rateLimit) {
 }
 
 function rateLimitIsolationOptions() {
-  const targetRatio = num("rate-limit-start-headroom-ratio", 0.95);
+  const targetRatio = num(
+    "rate-limit-start-headroom-ratio",
+    OPENAI_OVERLOAD_DEFAULT_RATE_LIMIT_START_HEADROOM_RATIO,
+  );
   const timeoutMs = int("rate-limit-recovery-timeout-ms", 120_000);
   const maxProbes = int("rate-limit-recovery-max-probes", 6);
   if (!Number.isFinite(targetRatio) || targetRatio <= 0 || targetRatio > 1) {
@@ -1223,20 +1228,29 @@ async function runCompare() {
   const arms = parseArms(str("arms", "direct,static,moflux"));
   const runs = int("runs", 1);
   const seed = int("seed", 1);
-  const durationMs = int("duration-ms", 10_000);
-  const interactiveRps = num("interactive-rps", 2);
-  const batchRps = num("batch-rps", 6);
-  const batchStartMs = int("batch-start-ms", 2_000);
-  const batchDurationMs = int("batch-duration-ms", 7_000);
-  const jitterFraction = num("jitter-fraction", 0.05);
-  const interactiveInputChars = int("interactive-input-chars", 300);
-  const batchInputChars = int("batch-input-chars", 1_500);
-  const interactiveMaxOutputTokens = int("interactive-max-output-tokens", 24);
-  const batchMaxOutputTokens = int("batch-max-output-tokens", 32);
-  const staticCap = int("static-cap", 8);
+  const durationMs = int("duration-ms", OPENAI_OVERLOAD_COMPARE_DEFAULTS.durationMs);
+  const interactiveRps = num("interactive-rps", OPENAI_OVERLOAD_COMPARE_DEFAULTS.interactiveRps);
+  const batchRps = num("batch-rps", OPENAI_OVERLOAD_COMPARE_DEFAULTS.batchRps);
+  const batchStartMs = int("batch-start-ms", OPENAI_OVERLOAD_COMPARE_DEFAULTS.batchStartMs);
+  const batchDurationMs = int("batch-duration-ms", OPENAI_OVERLOAD_COMPARE_DEFAULTS.batchDurationMs);
+  const jitterFraction = num("jitter-fraction", OPENAI_OVERLOAD_COMPARE_DEFAULTS.jitterFraction);
+  const interactiveInputChars = int(
+    "interactive-input-chars",
+    OPENAI_OVERLOAD_COMPARE_DEFAULTS.interactiveInputChars,
+  );
+  const batchInputChars = int("batch-input-chars", OPENAI_OVERLOAD_COMPARE_DEFAULTS.batchInputChars);
+  const interactiveMaxOutputTokens = int(
+    "interactive-max-output-tokens",
+    OPENAI_OVERLOAD_COMPARE_DEFAULTS.interactiveMaxOutputTokens,
+  );
+  const batchMaxOutputTokens = int(
+    "batch-max-output-tokens",
+    OPENAI_OVERLOAD_COMPARE_DEFAULTS.batchMaxOutputTokens,
+  );
+  const staticCap = int("static-cap", OPENAI_OVERLOAD_COMPARE_DEFAULTS.maxConcurrent);
   const mofluxMaxConcurrent = int("moflux-max-concurrent", staticCap);
-  const interactiveFloor = int("interactive-floor", 6);
-  const batchFloor = int("batch-floor", 2);
+  const interactiveFloor = int("interactive-floor", OPENAI_OVERLOAD_COMPARE_DEFAULTS.interactiveFloor);
+  const batchFloor = int("batch-floor", OPENAI_OVERLOAD_COMPARE_DEFAULTS.batchFloor);
   const cooldownMs = int("arm-cooldown-ms", 2_000);
   const jwksPort = int("jwks-port", 18_113);
   const rateLimitIsolation = rateLimitIsolationOptions();
@@ -1270,6 +1284,11 @@ async function runCompare() {
   }
   if (interactiveFloor + batchFloor > mofluxMaxConcurrent) {
     throw new Error("interactive and batch protected floors must not exceed --moflux-max-concurrent");
+  }
+  if (interactiveFloor + batchFloor === mofluxMaxConcurrent) {
+    console.warn(
+      "WARNING: protected floors consume all configured concurrency; no shared slots remain for cross-class borrowing.",
+    );
   }
   if (interactiveFloor === 0 || batchFloor === 0) {
     console.warn("WARNING: a zero protected floor weakens the workload-isolation experiment.");
