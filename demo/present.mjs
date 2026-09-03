@@ -36,8 +36,13 @@ import { summarizeAdmissionProvenance } from "./admission-provenance-lib.mjs";
 import {
   DEFAULT_CAPACITY_GROUP_NAME,
   buildDemandAwareCapacityGroup,
+  capacityGroupRestorationClaim,
   summarizeControllerLending,
 } from "./lending-evidence-lib.mjs";
+import {
+  DEFAULT_RESTORATION_SLO_MS,
+  buildRestorationContract,
+} from "./restoration-contract-lib.mjs";
 import {
   dividedStaticCap,
   partitionStaticCap,
@@ -266,6 +271,28 @@ const OPT = Object.freeze({
   lendingReportStaleAfterMs: num("lending-report-stale-after-ms", 6000),
   lendingIdleAfterMs: num("lending-idle-after-ms", 3000),
   lendingMaxStarvationMs: num("lending-max-starvation-ms", 5000),
+  /**
+   * Latchflo 0.15.0 prices restoration per resource. `non_preemptive` is the
+   * default because it is exactly what every committed lending result was
+   * measured under: the whole idle token floor is lendable and its return is a
+   * wall-clock objective. `unlent_floor` carves an allocation-enforced slice
+   * that Latchflo will not hand to a borrower at all.
+   *
+   * The two are not "worse and better". An unlent slice is capacity the
+   * borrower never gets, so it is dead during the idle window by design. That
+   * cost is the thing worth measuring; `npm run demo:restoration` measures it
+   * on the admission-class side, and these flags apply the same choice to the
+   * physical capacity group.
+   *
+   * `unlent_floor` requires a positive slice on every token-carrying member,
+   * so it must be paired with --unlent-interactive-tokens and
+   * --unlent-batch-tokens.
+   */
+  restorationTokenMechanism: str("restoration-token-mechanism", "non_preemptive"),
+  restorationSlotSloMs: num("restoration-slot-slo-ms", DEFAULT_RESTORATION_SLO_MS),
+  restorationTokenSloMs: num("restoration-token-slo-ms", DEFAULT_RESTORATION_SLO_MS),
+  unlentInteractiveTokens: num("unlent-interactive-tokens", 0),
+  unlentBatchTokens: num("unlent-batch-tokens", 0),
   handoffSampleIntervalMs: num("handoff-sample-interval-ms", 500),
   /**
    * "uniform" reproduces the version-1 trace exactly, so every result recorded
@@ -642,6 +669,20 @@ const RESOLVED_CAPACITY = Object.freeze(
   }),
 );
 
+// Latchflo 0.15.0 requires this before it will accept an enabled lending
+// policy. It is built once here so the same contract reaches the capacity
+// group, the bootstrap group, and the published record — a result that claims
+// an enforced floor while the control plane was told something weaker is the
+// specific failure this single source of truth prevents.
+const RESTORATION_CONTRACT = OPT.lending
+  ? buildRestorationContract({
+      tokenAware: true,
+      upstreamMechanism: OPT.restorationTokenMechanism,
+      admissionSlotSloMs: OPT.restorationSlotSloMs,
+      upstreamTokenSloMs: OPT.restorationTokenSloMs,
+    })
+  : null;
+
 const CAPACITY_GROUP = OPT.lending
   ? Object.freeze(buildDemandAwareCapacityGroup({
       name: DEFAULT_CAPACITY_GROUP_NAME,
@@ -650,11 +691,15 @@ const CAPACITY_GROUP = OPT.lending
       reportStaleAfterMs: OPT.lendingReportStaleAfterMs,
       idleAfterMs: OPT.lendingIdleAfterMs,
       maxStarvationMs: OPT.lendingMaxStarvationMs,
+      restoration: RESTORATION_CONTRACT,
       interactive: {
         pool: "sim-interactive",
         priority: 100,
         guaranteedMaxConcurrent: CAPACITY.interactiveConcurrencySlots,
         guaranteedTokenBudget: CAPACITY.pools.find((pool) => pool.name === "sim-interactive").guaranteedTokenBudget,
+        ...(OPT.unlentInteractiveTokens > 0
+          ? { unlentTokenBudget: OPT.unlentInteractiveTokens }
+          : {}),
         ...(headroomAdaptiveProfileRequested
           ? {
               headroomLending: {
@@ -672,9 +717,16 @@ const CAPACITY_GROUP = OPT.lending
         priority: 10,
         guaranteedMaxConcurrent: CAPACITY.batchConcurrencySlots,
         guaranteedTokenBudget: CAPACITY.pools.find((pool) => pool.name === "sim-batch").guaranteedTokenBudget,
+        ...(OPT.unlentBatchTokens > 0
+          ? { unlentTokenBudget: OPT.unlentBatchTokens }
+          : {}),
       },
     }))
   : null;
+
+const RESTORATION_CLAIM = CAPACITY_GROUP === null
+  ? null
+  : capacityGroupRestorationClaim(CAPACITY_GROUP);
 
 // Pre-benchmark heartbeats correctly report no demand. If demand-aware lending
 // is armed during Docker enrollment, a slow-starting replica can arrive after
@@ -2398,6 +2450,12 @@ async function runMoflux(env) {
     capacityGroup: CAPACITY_GROUP,
     demandPolicy: CAPACITY.demandPolicy,
     demandPolicyActivation,
+    /**
+     * What the configured Latchflo 0.15.0 contract entitles this run to claim
+     * per resource. Recorded alongside the policy so a reader never has to
+     * infer enforceability from the presence of a protected floor.
+     */
+    restoration: RESTORATION_CLAIM,
     pools: RESOLVED_CAPACITY,
     liveGrants,
   };

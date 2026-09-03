@@ -1,3 +1,5 @@
+import { versionAtLeast } from "./version-lib.mjs";
+
 export const ADMISSION_TIMING_FRAMING =
   "Redis's atomic Lua reserve round trip is its entire admission-decision cost. " +
   "MoFlux decision duration is Tyr/async-bulkhead-llm synchronous local decision work and explicitly excludes queue wait; " +
@@ -6,19 +8,8 @@ export const ADMISSION_TIMING_FRAMING =
 const TYR_TIMING_MIN_VERSION = [0, 27, 0];
 const SERIES_LABELS = ["pool", "outcome", "admission_class"];
 
-function versionTuple(version) {
-  const match = /^(\d+)\.(\d+)\.(\d+)/.exec(String(version ?? "").trim());
-  return match ? match.slice(1).map(Number) : null;
-}
-
 export function tyrTimingExpected(version) {
-  const tuple = versionTuple(version);
-  if (!tuple) return false;
-  for (let i = 0; i < 3; i += 1) {
-    if (tuple[i] > TYR_TIMING_MIN_VERSION[i]) return true;
-    if (tuple[i] < TYR_TIMING_MIN_VERSION[i]) return false;
-  }
-  return true;
+  return versionAtLeast(version, TYR_TIMING_MIN_VERSION);
 }
 
 function unescapeLabel(value) {

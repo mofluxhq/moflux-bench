@@ -52,7 +52,7 @@ A refund means unused safety reservation was returned for reuse; it is not newly
 
 ## Headroom-aware policy runs
 
-The current `adaptive-headroom-28-4` path retains the sustained active-demand lending semantics introduced with Latchflo 0.12.4 in MoFlux Bench 0.24.0. Under the current Latchflo 0.13.1 runtime, long-lived pressure-free interactive demand remains `demanding`, while `starved` is reserved for aged demand with pending/rejection pressure. MoFlux Bench 0.23.0 introduced the profile without replacing the existing
+The current `adaptive-headroom-28-4` path retains the sustained active-demand lending semantics introduced with Latchflo 0.12.4 in MoFlux Bench 0.24.0. Under the current Latchflo 0.15.0 runtime, long-lived pressure-free interactive demand remains `demanding`, while `starved` is reserved for aged demand with pending/rejection pressure. MoFlux Bench 0.23.0 introduced the profile without replacing the existing
 `adaptive-28-4` control policy. `npm run demo:hetero:headroom` writes an ordinary
 five-seed sweep for the new policy. `npm run demo:headroom:compare` runs the two
 policies over the same ordered seed set and verifies same-seed immutable trace
@@ -70,7 +70,7 @@ precedes a bounded Tyr applied-capacity transfer observed before the measured
 workload ends. `demo:headroom:compare` uses a dedicated 3-RPS uniform interactive
 trace for both policies so this sustained-slack state is intentionally exercised;
 the heterogeneous headroom command keeps the ordinary 6-RPS lognormal workload.
-The summary also retains exact successor-grant admission proof coverage, first added with Tyr 0.26.0 and exercised by current licensed runs on Tyr 0.29.0.
+The summary also retains exact successor-grant admission proof coverage, first added with Tyr 0.26.0 and exercised by current licensed runs on Tyr 0.30.0.
 Seed-sweep schema version 7 carries the strict in-window evidence semantics;
 headroom-policy comparison schema version 4 adds the capacity-derived threshold
 basis and exercised-seed aggregates. A failed
@@ -98,8 +98,8 @@ Latchflo 0.5.1**. Read that field rather than any prose description — prose dr
 and an earlier revision of this file and of `.gitignore` both described this
 corpus as Tyr 0.16.0 / Latchflo 0.5.0, which the files themselves contradict.
 
-New licensed runs use Tyr 0.29.0, Latchflo 0.13.1,
-async-bulkhead-llm 3.16.0, and async-bulkhead-ts 1.0.2. The main sweep retains
+New licensed runs use Tyr 0.30.0, Latchflo 0.15.0,
+async-bulkhead-llm 3.17.0, and async-bulkhead-ts 1.0.1. The main sweep retains
 one-hop capacity-aware routing, per-pool demand heartbeats, pool-level lending,
 and progressive reconciliation for Anthropic-shaped streams. Demand-aware pool
 lending now records the acknowledged restoration handoff and samples Tyr's

@@ -117,7 +117,7 @@ function makeSummary(seed, { staticInteractiveSuccesses, mofluxInteractiveSucces
     benchmark: "openai-live-overload",
     generatedAt: `2026-08-29T19:00:0${seed}.000Z`,
     mode: "compare",
-    runtime: { tyr: "0.29.0", model: "gpt-5.6-luna" },
+    runtime: { tyr: "0.30.0", model: "gpt-5.6-luna" },
     workload: {
       runs: 1,
       seed,

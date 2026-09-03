@@ -1,7 +1,13 @@
 import { proveAdmissionUsesSuccessorGrant } from "./admission-provenance-lib.mjs";
+import {
+  buildRestorationContract,
+  restorationEnforceability,
+  usesUnlentFloor,
+  validateUnlentSlice,
+} from "./restoration-contract-lib.mjs";
 
 /**
- * Pure helpers for configuring and interpreting Latchflo 0.12.4 demand-aware
+ * Pure helpers for configuring and interpreting Latchflo 0.15.0 demand-aware
  * capacity groups. Kept separate from presenter orchestration so the safety
  * and evidence contract can be tested without Docker or licensed images.
  */
@@ -24,12 +30,26 @@ export function buildDemandAwareCapacityGroup({
   reportStaleAfterMs,
   idleAfterMs,
   maxStarvationMs,
+  restoration,
 }) {
   finiteInteger(envelope, "envelope", 1);
   finiteInteger(tokenBudget, "tokenBudget", 1);
   finiteInteger(reportStaleAfterMs, "reportStaleAfterMs", 1000);
   finiteInteger(idleAfterMs, "idleAfterMs", 0);
   finiteInteger(maxStarvationMs, "maxStarvationMs", 1000);
+
+  // Latchflo 0.15.0 rejects an enabled lending policy that does not price
+  // restoration per resource. A caller that says nothing gets the contract
+  // Latchflo itself migrates a pre-0.14 policy to, so the historical
+  // non-preemptive behaviour stays reproducible by default rather than
+  // silently acquiring an unlent floor.
+  const restorationContract =
+    restoration ?? buildRestorationContract({ tokenAware: true });
+  if (restorationContract.upstreamCapacity === undefined) {
+    throw new Error(
+      "a token-aware capacity group requires restoration.upstreamCapacity",
+    );
+  }
 
   const members = [interactive, batch].map((member, index) => {
     if (!member?.pool) throw new Error(`member ${index + 1} requires a pool`);
@@ -55,11 +75,23 @@ export function buildDemandAwareCapacityGroup({
         throw new Error(`${member.pool}.headroomLending demanding lend caps require demandingSustainMs`);
       }
     }
+    // The unlent slice is the only allocation-enforced part of a token floor.
+    // Latchflo requires one on every token-carrying member once the group uses
+    // `unlent_floor`, and rejects one otherwise, so validate both directions.
+    const unlentTokenBudget = validateUnlentSlice({
+      label: `${member.pool}.unlentTokenBudget`,
+      unlentTokens: member.unlentTokenBudget,
+      protectedTokens: member.guaranteedTokenBudget,
+      contract: restorationContract,
+      lendingEnabled: true,
+    });
+
     return {
       pool: member.pool,
       priority: member.priority,
       guaranteedMaxConcurrent: member.guaranteedMaxConcurrent,
       guaranteedTokenBudget: member.guaranteedTokenBudget,
+      ...(unlentTokenBudget > 0 ? { unlentTokenBudget } : {}),
       ...(headroom === undefined
         ? {}
         : {
@@ -91,6 +123,22 @@ export function buildDemandAwareCapacityGroup({
   if (members[0].priority === members[1].priority) {
     throw new Error("capacity-group priorities must be unique");
   }
+  // An unlent floor that covers the whole envelope is a static split wearing a
+  // lending policy's clothes. Latchflo would accept it; it would just never
+  // lend anything, and the run would publish a null result as if the mechanism
+  // had been tested.
+  if (usesUnlentFloor(restorationContract)) {
+    const unlentTokens = members.reduce(
+      (sum, member) => sum + (member.unlentTokenBudget ?? 0),
+      0,
+    );
+    if (unlentTokens >= guaranteedTokens) {
+      throw new Error(
+        `unlent token floors total ${unlentTokens} of ${guaranteedTokens} guaranteed tokens, ` +
+          "leaving nothing lendable; this is a static split, not a lending policy",
+      );
+    }
+  }
 
   return {
     name,
@@ -102,9 +150,38 @@ export function buildDemandAwareCapacityGroup({
       reportStaleAfterMs,
       idleAfterMs,
       maxStarvationMs,
+      restoration: restorationContract,
     },
     members,
   };
+}
+
+/**
+ * The enforceability this group's configuration entitles a result to claim.
+ *
+ * Published separately from the group itself so an evidence record states what
+ * each resource's mechanism can actually guarantee, rather than leaving a
+ * reader to infer "protected" means "reclaimable".
+ */
+export function capacityGroupRestorationClaim(group) {
+  const contract = group?.demandPolicy?.restoration;
+  if (contract === undefined) return null;
+  const unlentByPool = Object.fromEntries(
+    (group.members ?? [])
+      .filter((member) => (member.unlentTokenBudget ?? 0) > 0)
+      .map((member) => [member.pool, member.unlentTokenBudget]),
+  );
+  return Object.freeze({
+    contract,
+    enforceability: restorationEnforceability(contract),
+    unlentTokenBudgetByPool: Object.freeze(unlentByPool),
+    /**
+     * Deliberately explicit. `unlent_floor` means Latchflo never hands the
+     * slice to a borrower; it does not mean tokens already in flight at the
+     * provider can be reclaimed.
+     */
+    upstreamReclamation: "not-claimed",
+  });
 }
 
 function eventMembers(event) {

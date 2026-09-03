@@ -19,8 +19,8 @@ request characteristics.
 
 ## Runtime compatibility and setup
 
-The presenter is pinned to Tyr 0.29.0, Latchflo 0.13.1,
-async-bulkhead-llm 3.16.0, and async-bulkhead-ts 1.0.2. `npm run demo` uses
+The presenter is pinned to Tyr 0.30.0, Latchflo 0.15.0,
+async-bulkhead-llm 3.17.0, and async-bulkhead-ts 1.0.1. `npm run demo` uses
 Anthropic-shaped streams and enables progressive reconciliation with a
 256-token update step and a 256-token future-output safety margin. Input usage
 is available at stream start and cumulative output usage is reported while the
@@ -28,7 +28,7 @@ stream is active, so early release is measurable. `npm run demo:openai:sim` keep
 simulated OpenAI-shaped compatibility path, but its simulated usage arrives only at
 completion. The command creates the ignored local env file and random demo
 credentials automatically.
-Tyr capacity-aware routing starts with no static peers. Each Tyr advertises its private endpoint, Latchflo 0.13.1 distributes the versioned active topology, and Tyr 0.29.0 applies newer revisions while continuing to use one generated local-only `TYR_ROUTING_SECRET`. Latchflo distributes grants and membership, but never the routing secret and never enters the request path.
+Tyr capacity-aware routing starts with no static peers. Each Tyr advertises its private endpoint, Latchflo 0.15.0 distributes the versioned active topology, and Tyr 0.30.0 applies newer revisions while continuing to use one generated local-only `TYR_ROUTING_SECRET`. Latchflo distributes grants and membership, but never the routing secret and never enters the request path.
 If a pinned image is missing, the command builds it from a matching sibling
 source repository (or from `MOFLUX_TYR_SOURCE_DIR` /
 `MOFLUX_LATCHFLO_SOURCE_DIR`) before attempting a registry pull.
@@ -48,7 +48,7 @@ Latchflo/Tyr state, then the verified single-pair presenter:
 
 1. validates Docker, Compose, licensed images, and configuration;
 2. starts Latchflo, the telemetry relay, Prometheus, and Grafana;
-3. creates or updates `sim-interactive` and `sim-batch` with a short enrollment lease, an exact 31/1 concurrency split, 30,000/10,000 token budgets, Latchflo 0.13.1 minimum-grant floors (1 slot; 755 interactive tokens; 9,942 batch tokens), and the bounded queue policy: one managed waiter per interactive Tyr replica, zero batch waiters; each interactive Tyr pins a 750 ms queue timeout;
+3. creates or updates `sim-interactive` and `sim-batch` with a short enrollment lease, an exact 31/1 concurrency split, 30,000/10,000 token budgets, Latchflo 0.15.0 minimum-grant floors (1 slot; 755 interactive tokens; 9,942 batch tokens), and the bounded queue policy: one managed waiter per interactive Tyr replica, zero batch waiters; each interactive Tyr pins a 750 ms queue timeout;
 4. runs the no-control arm;
 5. replaces passthrough replicas with Tyr, waits for all four registrations,
    promotes the pools to the steady-state lease, and waits for one simultaneous
@@ -169,7 +169,7 @@ npm run demo:hetero:adaptive:blind
 ```
 
 `demo:lending` is the focused static-partition comparison. `demo:handoff` is
-the five-seed release proof for the acknowledged Latchflo 0.13.1 / Tyr 0.29.0
+the five-seed release proof for the acknowledged Latchflo 0.15.0 / Tyr 0.30.0
 handoff without the extra control arms. The adaptive heterogeneous commands are the recommended mixed-workload scenes:
 they add all control arms, select the headroom-aware 28/4 policy, and keep the same
 lognormal request sizes and acceptance gate. The blind variant
@@ -178,13 +178,13 @@ policy.
 
 This is a separate five-seed comparison because it changes the control-plane
 policy and lease cadence. The reference arm is an exact static 28/4 partition
-with interactive caps of 7/7/7/7. The MoFlux arm creates a Latchflo 0.13.1 demand-aware capacity group and
-receives live demand snapshots from Tyr 0.29.0. When batch demand returns,
+with interactive caps of 7/7/7/7. The MoFlux arm creates a Latchflo 0.15.0 demand-aware capacity group and
+receives live demand snapshots from Tyr 0.30.0. When batch demand returns,
 Latchflo prepares drain grants for borrowed capacity; Tyr applies the lower
 limit by attrition, acknowledges it, and publishes fresh occupancy evidence.
 Latchflo can then commit the restored batch floor. Before every restrictive
 drain ACK arrives, the predecessor lease is the safety fallback. After the ACK
-barrier, Latchflo 0.13.1 transfers authority to the prepared successor grants,
+barrier, Latchflo 0.15.0 transfers authority to the prepared successor grants,
 so their earliest expiry becomes the handoff safety deadline and natural
 predecessor expiry no longer aborts restoration.
 The harness uses a 120-second steady-state grant TTL and waits for at least 55
@@ -204,7 +204,7 @@ idle-window occupancy above the static 28-slot ceiling provides independent
 corroboration somewhere in the sweep. Floor restoration requires a restoration handoff plus a post-lending Tyr `/stats` sample that restores both the protected concurrency and token floor; batch completions remain a separate service gate. The ACK barrier uses the first ACK for each unique drain grant, while repeated ACKs are retained only as diagnostics.
 Every adaptive seed must prove the drain ACKs precede commit, commit remains
 inside the applicable handoff safety deadline, and 500 ms Tyr `/stats` samples never show more applied
-capacity than the physical envelope. Admission ordering is measured separately. Tyr 0.29.0 exact admission provenance
+capacity than the physical envelope. Admission ordering is measured separately. Tyr 0.30.0 exact admission provenance
 is scoped to the restoration handoff that precedes the first data-plane-observed
 batch-floor restoration. Only admissions at or after that handoff's
 `handoff_prepared` event and within its predecessor/successor grant lineage are

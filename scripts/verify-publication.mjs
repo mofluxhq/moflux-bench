@@ -25,9 +25,9 @@ const required = [
   "demo/openai-overload.mjs",
   "demo/openai-overload-lib.mjs",
   "demo/verify-openai-overload.mjs",
-  "demo/openai/compose.yaml",
-  "demo/openai/compose-overload.yaml",
-  "demo/openai/tyr.yaml",
+  "demo/ollama/compose.yaml",
+  "demo/ollama/compose-overload.yaml",
+  "demo/ollama/tyr.yaml",
 ];
 const ignoredDirectories = new Set([".git", "node_modules", "coverage", ".tmp", "tmp"]);
 const forbiddenNames = new Set([".DS_Store", "Thumbs.db"]);
@@ -115,8 +115,8 @@ if (lock.packages?.[""]?.version !== pkg.version || lock.version !== pkg.version
 }
 const example = readFileSync(path.join(ROOT, "demo/moflux/.env.example"), "utf8");
 for (const expected of [
-  "MOFLUX_TYR_IMAGE=tyr-admission-controller:0.29.0",
-  "MOFLUX_LATCHFLO_IMAGE=latchflo-control-plane:0.13.1",
+  "MOFLUX_TYR_IMAGE=tyr-admission-controller:0.30.0",
+  "MOFLUX_LATCHFLO_IMAGE=latchflo-control-plane:0.15.0",
 ]) {
   if (!example.includes(expected)) {
     findings.push(`demo/moflux/.env.example: missing pinned runtime ${expected}`);
@@ -136,8 +136,8 @@ if (!compose.includes("TYR_ROUTING_SECRET: ${TYR_ROUTING_SECRET:?Set TYR_ROUTING
 for (let replica = 1; replica <= 4; replica += 1) {
   const rel = `demo/moflux/tyr-r${replica}.yaml`;
   const yaml = readFileSync(path.join(ROOT, rel), "utf8");
-  if (!/^    version: 0\.29\.0$/m.test(yaml)) {
-    findings.push(`${rel}: control-plane metadata must identify Tyr 0.29.0`);
+  if (!/^    version: 0\.30\.0$/m.test(yaml)) {
+    findings.push(`${rel}: control-plane metadata must identify Tyr 0.30.0`);
   }
   if (!/^  anthropic:\n    baseUrl: http:\/\/host\.docker\.internal:9000$/m.test(yaml)) {
     findings.push(`${rel}: Anthropic simulator upstream is missing`);
@@ -179,15 +179,27 @@ for (let replica = 1; replica <= 4; replica += 1) {
     "jwksUrl: https://host.docker.internal:9010/jwks",
     "defaultClass: noisy",
     "tenantIds: [tenant-premium]",
-    "pools: [sim-shared, sim-ceilings, sim-protected, sim-adaptive]",
-    "version: 0.29.0",
+    "pools: [sim-shared, sim-ceilings, sim-protected, sim-adaptive, sim-unlent, sim-deadline]",
+    "name: sim-unlent",
+    "name: sim-deadline",
+    "version: 0.30.0",
   ]) {
     if (!yaml.includes(required)) findings.push(`${rel}: missing ${required}`);
   }
   const progressiveBlock = "    progressiveReconciliation:\n      enabled: true\n      updateStepTokens: 256\n      outputSafetyMarginTokens: 256";
   const progressiveBlocks = yaml.split(progressiveBlock).length - 1;
-  if (progressiveBlocks !== 4) {
-    findings.push(`${rel}: all four tenant-fairness pools must enable progressive reconciliation`);
+  if (progressiveBlocks !== 6) {
+    findings.push(`${rel}: all six tenant-fairness pools must enable progressive reconciliation`);
+  }
+  // Tyr's borrowed-slot deadline is local policy Latchflo never sends. Only the
+  // deadline arm may carry it: if it leaked onto sim-unlent, the two ladder
+  // arms would stop isolating Latchflo's mechanism from Tyr's.
+  const borrowedSlotBlocks = yaml.split("borrowedAdmissionSlot:").length - 1;
+  if (borrowedSlotBlocks !== 1) {
+    findings.push(`${rel}: borrowedAdmissionSlot must be configured on sim-deadline only`);
+  }
+  if (!yaml.slice(yaml.indexOf("name: sim-deadline")).includes("releaseMechanism: deadline_abandonment")) {
+    findings.push(`${rel}: sim-deadline must declare the deadline_abandonment release mechanism`);
   }
   if (!new RegExp(`^    instanceId: tyr-r${replica}$`, "m").test(yaml)) {
     findings.push(`${rel}: routing instance ID is missing`);
@@ -203,6 +215,12 @@ for (const required of [
   'model: "sim-model-ceilings"',
   'model: "sim-model-protected"',
   'model: "sim-model-adaptive"',
+  'tenantPoolDefinition("sim-unlent"',
+  'tenantPoolDefinition("sim-deadline"',
+  '"sim-model-unlent"',
+  '"sim-model-deadline"',
+  "collectRestorationLadder",
+  "restorationEnforceabilityVerdict",
   "validateAdmissionClassGrantSet",
 ]) {
   if (!tenantRunner.includes(required)) findings.push(`demo/tenant-fairness.mjs: missing ${required}`);
@@ -341,8 +359,26 @@ if (!pkg.scripts?.["demo:progressive"]?.includes("--provider-api=anthropic") ||
     pkg.scripts?.["demo:membership"] !== "node demo/membership.mjs") {
   findings.push("package.json: progressive, live OpenAI, simulator OpenAI, and membership demo commands are required");
 }
-if (pkg.version !== "0.30.0") {
-  findings.push("package.json: the current benchmark release must be version 0.30.0");
+if (pkg.version !== "0.31.0") {
+  findings.push("package.json: the current benchmark release must be version 0.31.0");
+}
+if (
+  !pkg.scripts?.["demo:restoration"]?.includes("--restoration-ladder") ||
+  pkg.scripts?.["verify:restoration"] !== "node demo/verify-restoration-enforceability.mjs"
+) {
+  findings.push("package.json: the restoration-enforceability ladder commands are required");
+}
+// The analysis is what keeps an enforceability claim tied to its evidence and
+// its bill; shipping the arms without it would leave the claim unchecked.
+for (const [rel, required] of [
+  ["demo/restoration-contract-lib.mjs", ["lease_safe_handoff", "unlent_floor", "deadline_abandonment"]],
+  ["demo/restoration-enforceability-lib.mjs", ["not-claimed", "unverified", "silentTruncationRate"]],
+  ["load/loadgen.mjs", ["borrowedDeadlineAbandoned", "borrowed_admission_deadline"]],
+]) {
+  const source = readFileSync(path.join(ROOT, rel), "utf8");
+  for (const token of required) {
+    if (!source.includes(token)) findings.push(`${rel}: missing ${token}`);
+  }
 }
 const openaiLive = readFileSync(path.join(ROOT, "demo/openai-live.mjs"), "utf8");
 for (const required of [
@@ -373,7 +409,7 @@ for (const required of [
 ]) {
   if (!openaiOverload.includes(required)) findings.push(`demo/openai-overload.mjs: missing overload evidence/safety contract ${required}`);
 }
-for (const rel of ["demo/openai/compose.yaml", "demo/openai/compose-overload.yaml", "demo/openai/tyr.yaml", "demo/moflux/.env.example"]) {
+for (const rel of ["demo/ollama/compose.yaml", "demo/ollama/compose-overload.yaml", "demo/ollama/tyr.yaml", "demo/moflux/.env.example"]) {
   const text = readFileSync(path.join(ROOT, rel), "utf8");
   if (text.includes("OPENAI_API_KEY")) findings.push(`${rel}: live OpenAI API key must stay in the caller process only`);
 }

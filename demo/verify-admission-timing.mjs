@@ -25,7 +25,7 @@ function tyrMetrics({ admitted = 0, rejected = 0, admittedSum = 0, rejectedSum =
 
 assert.equal(tyrTimingExpected("0.26.9"), false);
 assert.equal(tyrTimingExpected("0.27.0"), true);
-assert.equal(tyrTimingExpected("0.29.0"), true);
+assert.equal(tyrTimingExpected("0.30.0"), true);
 
 const historical = summarizeTyrAdmissionTiming({ beforeTexts: [], afterTexts: [""], tyrVersion: "0.26.0" });
 assert.equal(historical.status, "not-instrumented");

@@ -49,6 +49,7 @@ const tests = [
   ["demo/verify-admission-provenance.mjs", 30_000],
   ["demo/verify-headroom-compare.mjs", 30_000],
   ["demo/verify-lending.mjs", 30_000],
+  ["demo/verify-restoration-enforceability.mjs", 30_000],
   ["demo/verify-seed-sweep-runner.mjs", 180_000],
   ["demo/verify-demo-command.mjs", 180_000],
 ];

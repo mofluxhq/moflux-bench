@@ -7,7 +7,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { startIdentityFixture } from "./identity-fixture-lib.mjs";
+import { buildBorrowedAdmissionSlotPolicy } from "./restoration-contract-lib.mjs";
 import {
+  BORROWED_ADMISSION_SLOT_DEADLINE_MS,
   TENANT_FAIRNESS_POLICY,
   compareTenantFairness,
   summarizeAdaptiveClassHandoff,
@@ -200,10 +202,17 @@ try {
   assert.deepEqual(ceilings.admissionClassLimits, TENANT_FAIRNESS_POLICY.classPolicies.ceilings);
   assert.deepEqual(protectedPool.admissionClassLimits, TENANT_FAIRNESS_POLICY.classPolicies.protected);
   assert.deepEqual(adaptivePool.admissionClassLimits, TENANT_FAIRNESS_POLICY.classPolicies.adaptive);
+  // Latchflo 0.15.0 rejects an enabled admission-class lending policy that
+  // does not price restoration per resource, and this policy is token-aware,
+  // so the upstream contract is mandatory rather than optional.
   assert.deepEqual(adaptivePool.admissionClassDemandPolicy, {
     enabled: true,
     reportStaleAfterMs: 5000,
     idleAfterMs: 1000,
+    restoration: {
+      admissionSlots: { releaseMechanism: "lease_safe_handoff", sloMs: 15000 },
+      upstreamCapacity: { releaseMechanism: "non_preemptive", sloMs: 15000 },
+    },
   });
 
   const ceilingsGrants = [0, 1, 2, 3].map(() => ({
@@ -478,15 +487,50 @@ try {
 
   for (let replica = 1; replica <= 4; replica += 1) {
     const yaml = readFileSync(path.join(ROOT, "demo", "classes", `tyr-r${replica}.yaml`), "utf8");
-    assert.match(yaml, /version: 0\.29\.0/);
+    assert.match(yaml, /version: 0\.30\.0/);
     assert.match(yaml, /name: sim-ceilings/);
     assert.match(yaml, /name: sim-protected/);
     assert.match(yaml, /name: sim-adaptive/);
+    assert.match(yaml, /name: sim-unlent/);
+    assert.match(yaml, /name: sim-deadline/);
     assert.match(yaml, /defaultClass: noisy/);
     assert.match(yaml, /tenantIds: \[tenant-premium\]/);
     assert.match(yaml, /protectedConcurrent: 0/);
     assert.match(yaml, /protectedInFlightTokens: 0/);
     assert.match(yaml, /jwksUrl: https:\/\/host\.docker\.internal:9010\/jwks/);
+    assert.match(
+      yaml,
+      /pools: \[sim-shared, sim-ceilings, sim-protected, sim-adaptive, sim-unlent, sim-deadline\]/,
+      `tyr-r${replica} must register for every configured pool`,
+    );
+    // Tyr's borrowed-slot deadline is local policy that Latchflo never sends,
+    // so only the deadline arm may carry it. If it leaked onto sim-unlent the
+    // two ladder arms would stop isolating Latchflo's mechanism from Tyr's.
+    const deadlineOccurrences = yaml.match(/borrowedAdmissionSlot:/g) ?? [];
+    assert.equal(
+      deadlineOccurrences.length,
+      1,
+      `tyr-r${replica} must configure borrowedAdmissionSlot on sim-deadline only`,
+    );
+    const deadlineBlock = yaml.slice(yaml.indexOf("name: sim-deadline"));
+    // Checked against the built policy rather than against literals, so the
+    // YAML, the runner, and the analysis cannot disagree about which mechanism
+    // and deadline were measured.
+    const expectedPolicy = buildBorrowedAdmissionSlotPolicy({
+      deadlineMs: BORROWED_ADMISSION_SLOT_DEADLINE_MS,
+    });
+    for (const [field, value] of Object.entries(expectedPolicy)) {
+      assert.match(
+        deadlineBlock,
+        new RegExp(`^\\s+${field}: ${value}$`, "m"),
+        `tyr-r${replica} sim-deadline must declare ${field}: ${value}`,
+      );
+    }
+    assert.ok(
+      !yaml.slice(yaml.indexOf("name: sim-unlent"), yaml.indexOf("name: sim-deadline"))
+        .includes("borrowedAdmissionSlot"),
+      `tyr-r${replica} sim-unlent must not carry a borrowed-slot deadline`,
+    );
   }
   console.log("PASS  four-arm tenant fairness, pre-expiry class handoff proof, feasible grants, starvation rejection, and identity attribution");
 } finally {

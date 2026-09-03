@@ -1,3 +1,9 @@
+import {
+  buildRestorationContract,
+  restorationEnforceability,
+  validateUnlentSlice,
+} from "./restoration-contract-lib.mjs";
+
 const PROTECTED_CLASS_LIMITS = Object.freeze({
   premium: Object.freeze({
     globalProtectedConcurrent: 4,
@@ -12,6 +18,43 @@ const PROTECTED_CLASS_LIMITS = Object.freeze({
     globalMaxInFlightTokens: 64_000,
   }),
 });
+
+/**
+ * Exactly half of each protected token floor is withheld from borrowing under
+ * Latchflo 0.15.0's `unlent_floor` mechanism.
+ *
+ * A 50/50 split is chosen so the arm is interpretable rather than optimal: the
+ * half that is allocation-enforced and the half that is only an objective are
+ * the same size, so any difference the run measures is attributable to the
+ * mechanism instead of to how much capacity each mechanism happened to guard.
+ */
+const UNLENT_PROTECTED_TOKENS = Object.freeze({
+  premium: 4_000,
+  noisy: 18_000,
+});
+
+/**
+ * Tyr 0.30.0's bounded post-admission deadline for a *borrowed* admission slot.
+ *
+ * 2.5 s is a starting point, not a calibrated value. The deadline is
+ * unconditional — a borrowed request is abandoned this long after admission
+ * even with nothing waiting for the floor — so it must sit above the
+ * borrower's ordinary completion time or the arm sheds continuously and
+ * measures nothing but its own misconfiguration. It is set here at roughly six
+ * times the 15-second restoration SLO's per-request scale and below it, which
+ * makes the arm distinguishable from the handoff path in principle; whether
+ * that holds for this workload is a question the ladder sweep answers rather
+ * than assumes.
+ *
+ * The run reports the evidence either way: `releasedByCause.deadline` rising
+ * toward the total borrowed-admission count is the signal that this number is
+ * too tight for the workload it was pointed at.
+ *
+ * The policy is Tyr-local configuration and lives in demo/classes/tyr-r*.yaml;
+ * the constant is exported so the config, the runner, and the analysis cannot
+ * disagree about which deadline was measured.
+ */
+export const BORROWED_ADMISSION_SLOT_DEADLINE_MS = 2_500;
 
 export const TENANT_FAIRNESS_POLICY = Object.freeze({
   physical: Object.freeze({
@@ -44,8 +87,33 @@ export const TENANT_FAIRNESS_POLICY = Object.freeze({
     }),
     protected: PROTECTED_CLASS_LIMITS,
     adaptive: PROTECTED_CLASS_LIMITS,
+    // Same numeric floors as `adaptive`, so the only variable between the two
+    // arms is which release mechanism the restoration contract names.
+    unlent: Object.freeze(
+      Object.fromEntries(
+        Object.entries(PROTECTED_CLASS_LIMITS).map(([admissionClass, limits]) => [
+          admissionClass,
+          Object.freeze({
+            ...limits,
+            globalUnlentProtectedInFlightTokens:
+              UNLENT_PROTECTED_TOKENS[admissionClass],
+          }),
+        ]),
+      ),
+    ),
   }),
+  unlentProtectedTokens: UNLENT_PROTECTED_TOKENS,
+  borrowedAdmissionSlotDeadlineMs: BORROWED_ADMISSION_SLOT_DEADLINE_MS,
 });
+
+/** Class policies that ask Latchflo to lend an idle protected class floor. */
+export const LENDING_CLASS_POLICIES = Object.freeze(["adaptive", "unlent"]);
+const CLASS_POLICIES = Object.freeze([
+  "shared",
+  "ceilings",
+  "protected",
+  ...LENDING_CLASS_POLICIES,
+]);
 
 export function tenantPoolDefinition(
   name,
@@ -53,8 +121,35 @@ export function tenantPoolDefinition(
   { classPolicy = "shared" } = {},
 ) {
   const policy = TENANT_FAIRNESS_POLICY;
-  if (!["shared", "ceilings", "protected", "adaptive"].includes(classPolicy)) {
+  if (!CLASS_POLICIES.includes(classPolicy)) {
     throw new Error(`unknown tenant-fairness class policy ${classPolicy}`);
+  }
+  const lending = LENDING_CLASS_POLICIES.includes(classPolicy);
+  const classLimits = lending ? policy.classPolicies[classPolicy] : undefined;
+  // Latchflo 0.15.0 requires an enabled admission-class lending policy to
+  // price restoration per resource. This policy is token-aware because both
+  // classes declare a protected token floor, so the upstream contract is
+  // mandatory rather than optional.
+  const restoration = lending
+    ? buildRestorationContract({
+        tokenAware: true,
+        upstreamMechanism: classPolicy === "unlent" ? "unlent_floor" : "non_preemptive",
+        admissionSlotSloMs: policy.adaptive.restorationObserveTimeoutMs,
+        upstreamTokenSloMs: policy.adaptive.restorationObserveTimeoutMs,
+      })
+    : undefined;
+  if (lending) {
+    // Mirror Latchflo's per-class unlent rules so a bad split fails here with
+    // the class name rather than at pool creation with a wire path.
+    for (const [admissionClass, limits] of Object.entries(classLimits)) {
+      validateUnlentSlice({
+        label: `${name}.${admissionClass}.globalUnlentProtectedInFlightTokens`,
+        unlentTokens: limits.globalUnlentProtectedInFlightTokens,
+        protectedTokens: limits.globalProtectedInFlightTokens ?? 0,
+        contract: restoration,
+        lendingEnabled: true,
+      });
+    }
   }
   return Object.freeze({
     name,
@@ -69,15 +164,47 @@ export function tenantPoolDefinition(
     ...(classPolicy === "shared"
       ? {}
       : { admissionClassLimits: policy.classPolicies[classPolicy] }),
-    ...(classPolicy === "adaptive"
+    ...(lending
       ? {
           admissionClassDemandPolicy: {
             enabled: true,
             reportStaleAfterMs: policy.adaptive.reportStaleAfterMs,
             idleAfterMs: policy.adaptive.idleAfterMs,
+            restoration,
           },
         }
       : {}),
+  });
+}
+
+/**
+ * What each resource's configured mechanism entitles this arm to claim.
+ *
+ * Reported per arm so a five-arm comparison cannot present an allocation-
+ * enforced token floor and a wall-clock objective as the same kind of promise.
+ */
+export function tenantClassRestorationClaim(classPolicy) {
+  if (!LENDING_CLASS_POLICIES.includes(classPolicy)) return null;
+  const { admissionClassDemandPolicy } = tenantPoolDefinition("probe", 60_000, {
+    classPolicy,
+  });
+  const contract = admissionClassDemandPolicy.restoration;
+  return Object.freeze({
+    classPolicy,
+    contract,
+    enforceability: restorationEnforceability(contract),
+    unlentProtectedTokens: Object.freeze(
+      Object.fromEntries(
+        Object.entries(TENANT_FAIRNESS_POLICY.classPolicies[classPolicy]).map(
+          ([admissionClass, limits]) => [
+            admissionClass,
+            limits.globalUnlentProtectedInFlightTokens ?? 0,
+          ],
+        ),
+      ),
+    ),
+    /** Latchflo withholds the unlent slice; it never reclaims provider-side tokens. */
+    upstreamReclamation: "not-claimed",
   });
 }
 

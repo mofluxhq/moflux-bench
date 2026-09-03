@@ -37,12 +37,21 @@ import {
   aggregateAdmissionClassGrants,
   summarizeAdaptiveClassHandoff,
   summarizeAdaptiveLendingSamples,
+  tenantClassRestorationClaim,
   tenantFairnessProof,
   tenantPoolDefinition,
   validateAdmissionClassCeilings,
   validateAdmissionClassGrantSet,
   validateNoisyRequestFitsEveryGrant,
 } from "./tenant-fairness-lib.mjs";
+import {
+  aggregateRestorationLadder,
+  restorationEnforceabilityVerdict,
+  summarizeBorrowedDeadlineCost,
+  summarizeLatchfloRestorationEpisodes,
+  summarizeTyrRestoration,
+  summarizeUnlentFloorGauges,
+} from "./restoration-enforceability-lib.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const BASE_COMPOSE = path.join(ROOT, "demo", "compose.yaml");
@@ -129,6 +138,17 @@ const OPT = Object.freeze({
   requireProof: flag("require-proof"),
   doctor: flag("doctor"),
   keepStack: flag("keep-stack"),
+  /**
+   * Adds the two restoration-enforceability arms introduced with Latchflo
+   * 0.15.0 and Tyr 0.30.0.
+   *
+   * Off by default so the published four-arm comparison keeps running exactly
+   * the arms it has always run. The ladder is additive: it replays the same
+   * trace through `sim-unlent` (an allocation-enforced token slice) and
+   * `sim-deadline` (that plus Tyr's bounded borrowed-slot deadline), so the
+   * mechanism is the only variable against `sim-adaptive`.
+   */
+  restorationLadder: flag("restoration-ladder"),
 });
 if (!Number.isSafeInteger(OPT.durationMs) || OPT.durationMs < 15000) {
   throw new Error("--duration-ms must be an integer of at least 15000");
@@ -279,13 +299,34 @@ function validatePrerequisites(env) {
   validateImages(env);
 }
 
-async function configurePools(token, ttlMs, { allowCreate }) {
-  for (const spec of [
+/**
+ * The pools this run configures.
+ *
+ * Both restoration-ladder pools use the `unlent` class policy: the Latchflo
+ * contract is identical for the two, and the only difference is that
+ * `sim-deadline`'s Tyr config also gives the borrowing class a bounded
+ * post-admission deadline. Keeping the control-plane side identical is what
+ * isolates Tyr's mechanism from Latchflo's.
+ */
+function poolSpecs(ttlMs) {
+  const specs = [
     tenantPoolDefinition("sim-shared", ttlMs),
     tenantPoolDefinition("sim-ceilings", ttlMs, { classPolicy: "ceilings" }),
     tenantPoolDefinition("sim-protected", ttlMs, { classPolicy: "protected" }),
     tenantPoolDefinition("sim-adaptive", ttlMs, { classPolicy: "adaptive" }),
-  ]) {
+  ];
+  // Tyr's configuration lists all six pools unconditionally, and a managed Tyr
+  // will not become ready until every pool it registers for has a grant. So
+  // these are created even when the ladder arms are not measured.
+  specs.push(
+    tenantPoolDefinition("sim-unlent", ttlMs, { classPolicy: "unlent" }),
+    tenantPoolDefinition("sim-deadline", ttlMs, { classPolicy: "unlent" }),
+  );
+  return specs;
+}
+
+async function configurePools(token, ttlMs, { allowCreate }) {
+  for (const spec of poolSpecs(ttlMs)) {
     const { name, ...body } = spec;
     const update = await jsonRequest(`http://127.0.0.1:18080/v1/pools/${name}`, {
       method: "PUT", token, body, allowed: [200, 404, 405],
@@ -515,6 +556,76 @@ async function collectAdaptiveClassHandoff(adminToken, startedAt) {
     events: handoffEvents,
     grants: grants.filter((grant) => relevantGrantIds.has(grant?.grantId)),
   };
+}
+
+/**
+ * Collects the evidence for one seed's restoration-enforceability ladder.
+ *
+ * Three independent sources, deliberately: Tyr's `/stats` says which slots it
+ * took back and why, Latchflo's episodes and gauges say what it withheld and
+ * whether each resource met its own objective, and the load generator says
+ * what the caller lost. A verdict built from only the controller's side would
+ * report an enforced restoration without ever pricing it.
+ */
+async function collectRestorationLadder(adminToken, arms) {
+  const statsRows = await readTyrStats();
+  const metrics = await fetchWithTimeout(
+    "http://127.0.0.1:18080/metrics",
+    { headers: { authorization: `Bearer ${adminToken}` } },
+    3000,
+  ).then((response) => (response.ok ? response.text() : ""), () => "");
+  // Latchflo filters restoration episodes by protected pool server-side, which
+  // is what keeps one arm's evidence out of the other's summary.
+  const episodesForPool = async (pool) => {
+    const response = await jsonRequest(
+      `http://127.0.0.1:18080/v1/restoration-episodes?protectedPool=${encodeURIComponent(pool)}&limit=500`,
+      { token: adminToken, allowed: [200, 404] },
+    ).catch(() => null);
+    return Array.isArray(response?.body?.restorationEpisodes)
+      ? response.body.restorationEpisodes
+      : [];
+  };
+
+  const ladder = {};
+  for (const [key, pool, classPolicy] of [
+    ["unlent", "sim-unlent", "unlent"],
+    ["deadline", "sim-deadline", "unlent"],
+  ]) {
+    // Every replica reports its own view of the same pool; merging them gives
+    // the fleet-wide totals the verdict is about.
+    const statsByPool = Object.fromEntries(
+      statsRows.map((row, index) => [`${pool}@r${index + 1}`, row?.[pool]]).filter(([, value]) => value !== undefined),
+    );
+    const tyrRestoration = summarizeTyrRestoration({ statsByPool, tyrVersion: TYR_VERSION });
+    const unlentGauges = summarizeUnlentFloorGauges({
+      metricsTexts: [metrics],
+      latchfloVersion: LATCHFLO_VERSION,
+      // Scoped to this arm's own pool: one Latchflo serves all six, and an
+      // unscoped scrape would credit this arm with a neighbour's withheld tokens.
+      pools: [pool],
+    });
+    const latchfloEpisodes = summarizeLatchfloRestorationEpisodes({
+      episodes: await episodesForPool(pool),
+      latchfloVersion: LATCHFLO_VERSION,
+    });
+    const deadlineCost = summarizeBorrowedDeadlineCost(arms[key]);
+    ladder[key] = {
+      pool,
+      tyrRestoration,
+      latchfloEpisodes,
+      unlentGauges,
+      deadlineCost,
+      verdict: restorationEnforceabilityVerdict({
+        arm: key === "unlent" ? "moflux-unlent-token-floor" : "moflux-unlent-plus-slot-deadline",
+        restorationClaim: tenantClassRestorationClaim(classPolicy),
+        tyrRestoration,
+        latchfloEpisodes,
+        unlentGauges,
+        deadlineCost,
+      }),
+    };
+  }
+  return ladder;
 }
 
 async function waitForUsableFleet(adminToken) {
@@ -757,11 +868,17 @@ function aggregateResults(rows, outputDir, classGrants) {
       protectedTotal: comparisons.reduce((sum, row) => sum + row.upstream429s.protected, 0),
       adaptiveTotal: comparisons.reduce((sum, row) => sum + row.upstream429s.adaptive, 0),
     },
+    ...(rows.some((row) => row.restorationLadder !== undefined)
+      ? { restorationLadder: aggregateRestorationLadder(rows) }
+      : {}),
     results: rows.map((row) => ({
       seed: row.seed,
       comparison: row.comparison,
       adaptiveLending: row.adaptiveLending,
       adaptiveHandoff: row.adaptiveHandoff,
+      ...(row.restorationLadder === undefined
+        ? {}
+        : { restorationLadder: row.restorationLadder }),
     })),
   };
   writeFileSync(path.join(outputDir, "summary.json"), JSON.stringify(summary, null, 2));
@@ -864,17 +981,55 @@ try {
         path.join(outputDir, `adaptive-lending-seed-${seed}.json`),
         JSON.stringify(adaptiveObservation, null, 2),
       );
-      await terminateHostChild(provider);
+      // Collected before the ladder runs, and deliberately so. Latchflo serves
+      // `/v1/events` newest-first with a hard cap of 1000, so this evidence has
+      // a limited shelf life: the adaptive arm's `admission_class.handoff_*`
+      // events are dropped once enough newer events accumulate. Running the two
+      // ladder arms first — roughly ninety seconds of load, against a fleet
+      // whose event rate is now higher because two more pools have lending
+      // enabled — pushed those events out of the window and silently emptied
+      // the handoff proof. The ladder must not sit between the adaptive arm and
+      // this read.
       const adaptiveHandoffEvidence = await collectAdaptiveClassHandoff(adminToken, adaptiveStartedAt);
       writeFileSync(
         path.join(outputDir, `adaptive-handoff-seed-${seed}.json`),
         JSON.stringify(adaptiveHandoffEvidence, null, 2),
       );
+      // The restoration ladder replays the same trace through the two arms
+      // whose only difference from `sim-adaptive` is which release mechanism
+      // guards the protected floor.
+      let ladder = null;
+      if (OPT.restorationLadder) {
+        const arms = {};
+        for (const [key, model, arm] of [
+          ["unlent", "sim-model-unlent", "moflux-unlent-token-floor"],
+          ["deadline", "sim-model-deadline", "moflux-unlent-plus-slot-deadline"],
+        ]) {
+          await sleep(1000);
+          arms[key] = await runLoadgen({
+            seed,
+            model,
+            arm,
+            traceFile,
+            outFile: path.join(outputDir, `${key}-seed-${seed}.json`),
+            tokens: identity.tokens,
+          });
+        }
+        ladder = await collectRestorationLadder(adminToken, arms);
+        writeFileSync(
+          path.join(outputDir, `restoration-ladder-seed-${seed}.json`),
+          JSON.stringify(ladder, null, 2),
+        );
+      }
+      await terminateHostChild(provider);
       const comparison = compareTenantFairness(shared, ceilings, protectedArm, adaptiveArm);
       const adaptiveLending = adaptiveObservation.summary;
       const adaptiveHandoff = adaptiveHandoffEvidence.summary;
       const proof = tenantFairnessProof(comparison, adaptiveLending, adaptiveHandoff);
-      const row = { seed, comparison, adaptiveLending, adaptiveHandoff, proof };
+      const row = {
+        seed, comparison, adaptiveLending, adaptiveHandoff, proof,
+        ...(ladder === null ? {} : { restorationLadder: ladder }),
+      };
       rows.push(row);
       writeFileSync(path.join(outputDir, `comparison-seed-${seed}.json`), JSON.stringify(row, null, 2));
       console.log(
@@ -888,6 +1043,18 @@ try {
           `lease avoided=${adaptiveHandoff.leaseAvoidedMs ?? "n/a"}ms; ` +
           `proof=${proof.passed ? "pass" : "fail"}`,
       );
+      if (ladder !== null) {
+        for (const [key, entry] of Object.entries(ladder)) {
+          const verdict = entry.verdict;
+          console.log(
+            `  ladder ${key.padEnd(8)} slots=${verdict.admissionSlots.effectiveEnforceability} ` +
+              `tokens=${verdict.upstreamCapacity.effectiveEnforceability} ` +
+              `withheld=${verdict.cost.tokensWithheldFromBorrowing} tokens ` +
+              `shed=${verdict.cost.requestsShed} requests ` +
+              `(upstream reclamation ${verdict.upstreamCapacity.reclamation})`,
+          );
+        }
+      }
       if (OPT.requireProof && !proof.passed) {
         throw new Error(`tenant-fairness proof failed for seed ${seed}: ${JSON.stringify(proof.checks)}`);
       }

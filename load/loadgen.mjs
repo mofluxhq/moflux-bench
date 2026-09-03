@@ -151,6 +151,18 @@ for (const cls of classes) {
     success: 0,
     localReject: 0, // cheap: refused before upstream work was spent
     upstreamReject: 0, // expensive: 429 after provider capacity was consumed
+    /**
+     * Tyr 0.30.0 `504 borrowed_admission_deadline`: admitted on a borrowed
+     * slot, then abandoned when the bounded post-admission deadline expired.
+     *
+     * Deliberately its own counter. This is not a cheap local reject — the
+     * request was admitted and upstream work had already started — and it is
+     * not a server fault either. Folding it into `localReject` would flatter
+     * the mechanism by pricing an abandoned in-flight request the same as one
+     * refused before it cost anything.
+     */
+    borrowedDeadlineAbandoned: 0,
+    borrowedDeadlineSnapshots: [],
     serverError: 0,
     transportError: 0,
     exhausted: 0, // gave up after maxAttempts
@@ -438,6 +450,13 @@ async function issue(entry) {
       progress.attempt = attempt;
       touch("request");
       let response;
+      // Declared at attempt scope so the catch below can attribute a torn
+      // stream to an expired borrowed-slot deadline. Admission happens
+      // somewhere between these two instants, which is what makes the
+      // attribution a bracket rather than a single comparison.
+      const attemptStartedAtMs = performance.now();
+      let borrowedSlotDeadlineMs = null;
+      let responseHeadersAtMs = null;
       try {
         const target = targets[entry.targetSlots[attempt] % targets.length];
         const providerSeed = entry.providerSeeds[attempt];
@@ -487,6 +506,46 @@ async function issue(entry) {
           rejectedLocally &&
           (response.status === 429 ||
             (response.status === 504 && admissionReasonHeader === "timeout"));
+        const borrowedDeadlineResponse =
+          response.status === 504 &&
+          admissionReasonHeader === "borrowed_admission_deadline";
+
+        // Tyr 0.30.0 returns this after admitting the request on a borrowed
+        // slot. The local slot is genuinely released; the upstream request only
+        // received an abort signal, and Tyr reports that reclamation as
+        // unverified. Record it verbatim rather than summarizing it as
+        // recovered capacity.
+        if (borrowedDeadlineResponse) {
+          s.borrowedDeadlineAbandoned += 1;
+          const raw = await response.text().catch(() => "");
+          let parsed = null;
+          try {
+            parsed = raw ? JSON.parse(raw) : null;
+          } catch {
+            // A proxy may rewrite the body; the headers still carry the deadline.
+          }
+          const headerDeadline = Number(response.headers.get("x-admission-slot-deadline-ms"));
+          s.borrowedDeadlineSnapshots.push({
+            requestId: entry.id,
+            requestClass: cls,
+            attempt: attempt + 1,
+            abandonedAtMs: +offsetMs().toFixed(1),
+            admissionClass: responseAdmissionClass,
+            deadlineMs: Number.isFinite(headerDeadline) ? headerDeadline : null,
+            releaseMechanism: parsed?.error?.releaseMechanism ?? null,
+            localSlotReleased: parsed?.error?.localSlotReleased ?? null,
+            upstreamCancellation: parsed?.error?.upstreamCancellation ?? null,
+            upstreamReclamation: parsed?.error?.upstreamReclamation ?? null,
+            resources: parsed?.error?.resources ?? null,
+            /** Tyr still owned the response, so the caller got an explanation. */
+            outcome: "gateway_timeout",
+          });
+          if (attempt + 1 < CONFIG.maxAttempts) {
+            touch("backoff");
+            await backoff(s, entry, attempt, response);
+          }
+          continue;
+        }
 
         if (localAdmissionResponse) {
           s.localReject += 1;
@@ -613,6 +672,19 @@ async function issue(entry) {
         // streaming LLM traffic it includes provider prefill / TTFT.
         markResponseHeaders(cls);
 
+        // Tyr 0.30.0 can only write a clean 504 while it still owns the
+        // response. Once a stream has begun it destroys the connection
+        // instead, so on streaming traffic — this benchmark's canonical shape
+        // — an expired borrowed-slot deadline reaches the client as a torn
+        // stream. Capture what the admitted response promised so the teardown
+        // can be attributed to the mechanism instead of to network flakiness.
+        borrowedSlotDeadlineMs = (() => {
+          if (response.headers.get("x-admission-slot-borrowed") !== "true") return null;
+          const value = Number(response.headers.get("x-admission-slot-deadline-ms"));
+          return Number.isFinite(value) && value > 0 ? value : null;
+        })();
+        responseHeadersAtMs = performance.now();
+
         // Drain the stream, capture TTFT and output tokens. A replica may
         // disappear after the headers have arrived; in that case Undici throws
         // while iterating response.body rather than from fetch() itself. Treat
@@ -671,10 +743,58 @@ async function issue(entry) {
         return;
       } catch {
         if (runAbort.signal.aborted) return;
-        // Covers both connection failures before headers and stream termination
-        // after a 2xx response has begun. Partial output is deliberately not
-        // counted as a successful logical request; the request is retried.
-        s.transportError += 1;
+        // A stream torn down by its own borrowed-slot deadline is the mechanism
+        // firing, not a flaky network — but the two have to be told apart from
+        // the client side, where the admission instant is not observable.
+        //
+        // What is observable brackets it. Tyr starts the deadline at admission,
+        // which happens after this request was sent and before its response
+        // headers arrived. So if the deadline fired:
+        //
+        //     teardown - headersReceived  <=  deadlineMs  <=  teardown - sent
+        //
+        // Both bounds are required. The earlier one-sided test against
+        // headers-received alone missed every real abandonment in a measured
+        // run — upstream prefill happens before the client sees headers, so the
+        // post-header remainder is always shorter than the deadline — while an
+        // unbounded test would sweep in ordinary transport faults.
+        const teardownAtMs = performance.now();
+        const elapsedSinceSendMs = teardownAtMs - attemptStartedAtMs;
+        const elapsedSinceHeadersMs =
+          responseHeadersAtMs === null ? null : teardownAtMs - responseHeadersAtMs;
+        if (
+          borrowedSlotDeadlineMs !== null &&
+          elapsedSinceHeadersMs !== null &&
+          elapsedSinceSendMs >= borrowedSlotDeadlineMs &&
+          elapsedSinceHeadersMs <= borrowedSlotDeadlineMs
+        ) {
+          s.borrowedDeadlineAbandoned += 1;
+          s.borrowedDeadlineSnapshots.push({
+            requestId: entry.id,
+            requestClass: cls,
+            attempt: attempt + 1,
+            abandonedAtMs: +offsetMs().toFixed(1),
+            admissionClass: response.headers.get("x-admission-class") ?? "unclassified",
+            deadlineMs: borrowedSlotDeadlineMs,
+            releaseMechanism: "deadline_abandonment",
+            localSlotReleased: true,
+            upstreamCancellation: "requested",
+            upstreamReclamation: "unverified",
+            resources: null,
+            /**
+             * The client-visible shape. `stream_destroyed` costs the caller a
+             * truncated response with no error body; `gateway_timeout` at
+             * least carries Tyr's explanation. Recorded separately because
+             * they are not equally good outcomes for a caller.
+             */
+            outcome: "stream_destroyed",
+          });
+        } else {
+          // Covers both connection failures before headers and stream
+          // termination after a 2xx response has begun. Partial output is
+          // deliberately not counted as a successful logical request.
+          s.transportError += 1;
+        }
         await response?.body?.cancel().catch(() => {});
         // A stream that died mid-flight carries no capacity hint.
         if (attempt + 1 < CONFIG.maxAttempts) {
@@ -769,6 +889,12 @@ function renderMetrics() {
     );
   }
   emit("counter", "bench_upstream_rejects_total", "429s earned after upstream work.", rows((s) => s.upstreamReject));
+  emit(
+    "counter",
+    "bench_borrowed_deadline_abandoned_total",
+    "Admitted requests shed when a borrowed admission slot's deadline expired.",
+    rows((s) => s.borrowedDeadlineAbandoned),
+  );
   emit("counter", "bench_server_errors_total", "Unattributed 5xx responses.", rows((s) => s.serverError));
   emit("counter", "bench_transport_errors_total", "Connection failures.", rows((s) => s.transportError));
   emit("counter", "bench_exhausted_total", "Logical requests that never succeeded.", rows((s) => s.exhausted));
@@ -998,6 +1124,9 @@ for (const cls of classes) {
     localRejectSnapshots: s.localRejectSnapshots,
     admissionClassResponses: s.admissionClassResponses,
     upstreamReject: s.upstreamReject,
+    /** Post-admission abandonment; see the counter's definition. */
+    borrowedDeadlineAbandoned: s.borrowedDeadlineAbandoned,
+    borrowedDeadlineSnapshots: s.borrowedDeadlineSnapshots,
     serverError: s.serverError,
     transportError: s.transportError,
     exhausted: s.exhausted,

@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.31.0 - 2026-09-03
+
+### Added
+
+- Add `demo/restoration-contract-lib.mjs`, which builds and validates the per-resource restoration contracts Latchflo 0.15.0 requires. Every rule Latchflo enforces is mirrored locally so a bad split fails before Docker with a message that names the benchmark flag rather than a wire path.
+- Add `demo/restoration-enforceability-lib.mjs`, the analysis for what a restoration mechanism actually guarantees. It reads Tyr 0.30.0's `tyr.restoration` block, Latchflo 0.15.0's per-resource episodes and unlent-floor gauges, and the load generator's own losses, then pairs each enforceability claim with its bill.
+- Add the restoration-enforceability ladder to the tenant-fairness scenario behind `--restoration-ladder` (`npm run demo:restoration`). Two new arms replay the same trace through `sim-unlent` (an allocation-enforced token slice) and `sim-deadline` (that plus Tyr's bounded borrowed-slot deadline), so the release mechanism is the only variable against the existing `sim-adaptive` arm.
+- Add `sim-unlent` and `sim-deadline` pools to the four class-scenario Tyr configs, and the `unlent` admission-class policy that withholds exactly half of each protected token floor from borrowing.
+- Add `borrowedDeadlineAbandoned`, per-request abandonment snapshots, and `bench_borrowed_deadline_abandoned_total` to the load generator, plus `demo/verify-restoration-enforceability.mjs` covering contract shapes, unlent-slice rules, stats parsing, episode evidence, gauge scoping, and cost accounting.
+- Add `demo/version-lib.mjs` so runtime capability gating is shared rather than duplicated per analysis module, and move `admission-timing-lib`'s private copy of the comparator onto it.
+
+### Changed
+
+- Bump MoFlux Bench to 0.31.0 and pin new licensed runs to Tyr 0.30.0, Latchflo 0.15.0, async-bulkhead-llm 3.17.0, and async-bulkhead-ts 1.0.1.
+- **Breaking against Latchflo 0.15.0**: every enabled lending policy this benchmark writes now carries a `restoration` contract. Latchflo rejects an enabled `demandPolicy` or `admissionClassDemandPolicy` without one with `400 ... restoration is required when lending is enabled`, so the demand-aware capacity group and the tenant-fairness adaptive arm could not have started at all before this change. Callers that say nothing get the contract Latchflo itself migrates a pre-0.14 policy to, keeping historical non-preemptive behavior reproducible by default.
+- Correct the recorded `async-bulkhead-ts` runtime version from 1.0.2 to 1.0.1. The published image vendors 1.0.1; the previous metadata described a dependency the licensed runtime never contained.
+- Classify Tyr 0.30.0's `504 borrowed_admission_deadline` as its own outcome rather than a server fault. It is deliberately not folded into `localReject`: the request was admitted and upstream work had already started, so pricing it as a cheap pre-admission refusal would flatter the mechanism.
+
+### Measured
+
+- The borrowed-slot deadline is **unconditional**. Measured directly against `tyr-admission-controller:0.30.0`, a borrowed request is abandoned `deadlineMs` after admission even with zero contention and nothing waiting on the floor. It bounds how long a borrowed slot may be held at all, not how long it may be held after the owner asks for it back. That is what makes the floor owner's worst-case wait enforceable, and the bill is every borrower that legitimately runs longer.
+- Deadline abandonment has two client-visible shapes, and they are not equally good. Tyr can only write its `504` while it still owns the response; once a stream has begun it destroys the connection instead. On this benchmark's canonical streaming workload the caller therefore usually gets a truncated body with no error at all, so the summary reports `byOutcome` and `silentTruncationRate` rather than one total.
+- Attributing a torn stream to the deadline needs a two-sided bracket, not a single comparison. Tyr starts the deadline at admission, which the client cannot observe; it can only bound it, because admission happens after the request was sent and before its response headers arrived. A first run against the licensed stack made the case for this concretely: Tyr reported 26 deadline releases while a rule comparing only against response-headers-received attributed none of them, leaving all 26 in `transportError` and the mechanism looking free. `cost.clientAttributionGap` now reports the difference between the controller's count and the client's so that failure cannot recur silently.
+
+### Safety
+
+- No configuration this stack can produce claims upstream token reclamation. `unlent_floor` is allocation-enforced — Latchflo will not hand the slice to a borrower — which is strictly weaker than reclaiming tokens already in flight at the provider. Tyr reports its abort signal as `unverified`, and the analysis refuses to summarize a response that claims otherwise.
+- Unlent-floor gauges are scoped to the pools of the arm being measured. One Latchflo serves every arm, so an unscoped scrape would credit a `non_preemptive` arm with a neighbouring arm's withheld capacity; that now raises rather than inflating a result.
+- A capacity group whose unlent floors cover the entire guarantee is refused. It is a static split wearing a lending policy's clothes, and would publish a null result as though the mechanism had been tested.
+
+### Unchanged
+
+- The committed `results/` corpus keeps its recorded Tyr 0.17.0 / Latchflo 0.5.1 metadata. New licensed runs on Tyr 0.30.0 / Latchflo 0.15.0 are a new evidence set, not a relabelling of the old one.
+- The default four-arm tenant-fairness comparison runs exactly the arms it always has. The ladder is additive and opt-in.
+
 ## 0.30.0 - 2026-08-30
 
 ### Added

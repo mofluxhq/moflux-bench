@@ -1,8 +1,44 @@
 # Admission-class fairness and lending benchmark
 
-MoFlux Bench 0.30.0 retains the four-arm authenticated noisy-neighbor scenario
+MoFlux Bench 0.31.0 retains the four-arm authenticated noisy-neighbor scenario
 introduced in 0.16.0, including demand-aware protected-floor lending with the current Tyr
-0.29.0 and Latchflo 0.13.1 runtime.
+0.30.0 and Latchflo 0.15.0 runtime.
+
+## The restoration-enforceability ladder (0.31.0)
+
+`--restoration-ladder` (`npm run demo:restoration`) adds two arms on top of the
+four below. They exist to answer a question the original four cannot: when the
+protected floor is demanded back while a borrower still holds it, what actually
+returns it?
+
+| Pool | Latchflo `restoration` | Tyr policy | Enforceability |
+|---|---|---|---|
+| `sim-adaptive` | `lease_safe_handoff` + `non_preemptive` | none | both resources are wall-clock objectives |
+| `sim-unlent` | `lease_safe_handoff` + `unlent_floor` | none | tokens: half the floor is allocation-enforced |
+| `sim-deadline` | identical to `sim-unlent` | `borrowedAdmissionSlot`, 2,500 ms | slots: enforced by an expiring deadline |
+
+The Latchflo contract for `sim-unlent` and `sim-deadline` is deliberately
+identical. Tyr's deadline is local configuration that Latchflo never sends, so
+holding the control-plane side constant is what isolates Tyr's mechanism from
+Latchflo's. The numeric floors match `sim-adaptive` exactly for the same reason.
+
+The unlent slice is exactly half of each protected token floor — 4,000 of
+premium's 8,000 and 18,000 of noisy's 36,000. Half is chosen for
+interpretability rather than performance: the allocation-enforced half and the
+objective-only half are the same size, so a measured difference is attributable
+to the mechanism and not to how much capacity each one happened to guard.
+
+Three properties are reported explicitly because each is easy to overstate:
+
+- **The deadline is unconditional.** A borrowed request is abandoned 2,500 ms
+  after admission even when nothing is waiting for the floor. It bounds how long
+  a borrowed slot may be held at all, not how long it may be held after the
+  owner demands it back.
+- **Every enforced restoration is reported with its bill** — requests shed, or
+  tokens withheld from borrowing for the whole idle window.
+- **No arm claims upstream token reclamation.** `unlent_floor` withholds a slice
+  before lending; Tyr's abort signal is reported as `unverified`. Every verdict
+  carries `upstreamReclamation: "not-claimed"`.
 
 ## What it compares
 
@@ -58,7 +94,7 @@ first in that same fresh seed.
 Latchflo may release the active protected floor only after every active Tyr
 replica reports the class idle. The hard class ceilings remain unchanged. When
 noisy demand returns, Latchflo stops new borrowing, stages the restored floor,
-and uses Tyr 0.29.0's ordered class acknowledgement plus fresh occupancy
+and uses Tyr 0.30.0's ordered class acknowledgement plus fresh occupancy
 evidence to prove the shared authority has drained by attrition. Running
 requests are never revoked; lease expiry remains the fallback if proof fails.
 
@@ -137,8 +173,8 @@ performance metric improves.
 
 ## Floor semantics
 
-Tyr 0.29.0 reports bounded per-class demand and ordered class occupancy evidence while enforcing the class limits in its
-currently applied Latchflo grant. Latchflo 0.13.1 owns the lending and handoff decisions; these handoff semantics were introduced in earlier 0.12.x releases and are preserved here.
+Tyr 0.30.0 reports bounded per-class demand and ordered class occupancy evidence while enforcing the class limits in its
+currently applied Latchflo grant. Latchflo 0.15.0 owns the lending and handoff decisions; these handoff semantics were introduced in earlier 0.12.x releases and are preserved here.
 
 A configured protected floor is therefore the **nominal floor**. In the
 adaptive arm the **active floor** may temporarily be lower while the class is

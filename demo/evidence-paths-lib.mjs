@@ -35,6 +35,8 @@ import path from "node:path";
  */
 export const REVIEWED_EVIDENCE = Object.freeze([
   "results/curated/",
+  "results/tenant-fairness.json",
+  "results/tenant-fairness/",
   "results/video-seed-sweep.json",
   "results/video-seed-sweep/",
   "results/video-seed-sweep-fault.json",
