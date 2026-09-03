@@ -69,6 +69,7 @@ import { assertSafeResultsDir } from "./evidence-paths-lib.mjs";
 import { maxQueuePerAgentForPool } from "./queue-policy.mjs";
 import {
   assertHostPortFree,
+  fetchTextFresh,
   fetchWithTimeout,
   hostChildren,
   killChildTree,
@@ -2085,6 +2086,32 @@ function localOutcomeMetric(text, metricName, outcome) {
  * cost. Results are kept per outcome; a pooled mean would mix different
  * admitted/rejected populations and is not a headline metric.
  */
+/**
+ * Confirms a `/metrics` body came from the kind of server the caller wanted.
+ *
+ * Tyr and the host replicas take turns on the same loopback ports, so a scrape
+ * that names a port has not established who answered it. Reading the wrong one
+ * is not hypothetical: it is what made `verify-presenter` fail intermittently,
+ * and the Tyr direction is the more dangerous of the two because absent
+ * `tyr_*` series would have aggregated to zero rather than raised.
+ */
+function assertMetricsFrom(text, { port, expect, prefix }) {
+  if (new RegExp(`^${prefix}[a-z_]*[ {]`, "m").test(text)) return text;
+  const seen = [...new Set(
+    text.split(/\r?\n/)
+      .filter((line) => line && !line.startsWith("#"))
+      .map((line) => line.split(/[{ ]/)[0])
+      .filter(Boolean),
+  )];
+  throw new Error(
+    `port ${port} served ${seen.length === 0 ? "no" : seen.slice(0, 3).join("/")} metrics ` +
+      `where ${expect} was expected. Tyr and a host replica occupy this same port at different ` +
+      "points in a run, and they bind different addresses, so the wrong one can answer without " +
+      "any bind conflict. This is a misdirected scrape, not a missing metric: nothing was " +
+      "measured from it.",
+  );
+}
+
 async function readLocalAdmissionDecision(ports) {
   let totalMs = 0;
   let decisions = 0;
@@ -2094,9 +2121,13 @@ async function readLocalAdmissionDecision(ports) {
   };
   const perReplica = [];
   for (const port of ports) {
-    const response = await fetchWithTimeout(`http://127.0.0.1:${port}/metrics`, {}, 2000);
-    if (!response.ok) throw new Error(`replica ${port} metrics returned HTTP ${response.status}`);
-    const text = await response.text();
+    const response = await fetchTextFresh(`http://127.0.0.1:${port}/metrics`, 2000);
+    if (response.status !== 200) throw new Error(`replica ${port} metrics returned HTTP ${response.status}`);
+    const text = assertMetricsFrom(response.text, {
+      port,
+      expect: "the local replica",
+      prefix: "replica_",
+    });
     const sumMs = prometheusMetric(text, "replica_admission_overhead_ms_sum");
     const count = prometheusMetric(text, "replica_admission_overhead_decisions_total");
     if (sumMs === null || count === null) {
@@ -2151,9 +2182,9 @@ async function readLocalAdmissionDecision(ports) {
 
 async function readTyrMetricsTexts() {
   return Promise.all(TYR_PORTS.map(async (port) => {
-    const response = await fetchWithTimeout(`http://127.0.0.1:${port}/metrics`, {}, 2000);
-    if (!response.ok) throw new Error(`Tyr ${port} metrics returned HTTP ${response.status}`);
-    return response.text();
+    const response = await fetchTextFresh(`http://127.0.0.1:${port}/metrics`, 2000);
+    if (response.status !== 200) throw new Error(`Tyr ${port} metrics returned HTTP ${response.status}`);
+    return assertMetricsFrom(response.text, { port, expect: "Tyr", prefix: "tyr_" });
   }));
 }
 

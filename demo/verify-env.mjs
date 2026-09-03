@@ -5,8 +5,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import {
   DEFAULT_LATCHFLO_IMAGE,
+  DEFAULT_LOCAL_MODEL,
+  DEFAULT_OLLAMA_IMAGE,
   DEFAULT_TYR_IMAGE,
   LATCHFLO_VERSION,
+  OLLAMA_VERSION,
   TYR_VERSION,
   ensureDemoEnv,
   imageMatchesVersion,
@@ -20,12 +23,15 @@ try {
   const text = readFileSync(file, "utf8");
   assert.match(text, new RegExp(`^MOFLUX_TYR_IMAGE=${DEFAULT_TYR_IMAGE}$`, "m"));
   assert.match(text, new RegExp(`^MOFLUX_LATCHFLO_IMAGE=${DEFAULT_LATCHFLO_IMAGE}$`, "m"));
+  assert.match(text, new RegExp(`^MOFLUX_OLLAMA_IMAGE=${DEFAULT_OLLAMA_IMAGE}$`, "m"));
+  assert.match(text, new RegExp(`^MOFLUX_LOCAL_MODEL=${DEFAULT_LOCAL_MODEL}$`, "m"));
   assert.match(text, /^LATCHFLO_ADMIN_TOKEN=moflux-demo-admin-[A-Za-z0-9_-]{40,}$/m);
   assert.match(text, /^LATCHFLO_AGENT_BOOTSTRAP_TOKEN=moflux-demo-bootstrap-[A-Za-z0-9_-]{40,}$/m);
   assert.match(text, /^TYR_ROUTING_SECRET=moflux-demo-routing-[A-Za-z0-9_-]{40,}$/m);
   if (process.platform !== "win32") assert.equal(statSync(file).mode & 0o777, 0o600);
   assert.equal(imageMatchesVersion(DEFAULT_TYR_IMAGE, TYR_VERSION), true);
   assert.equal(imageMatchesVersion(DEFAULT_LATCHFLO_IMAGE, LATCHFLO_VERSION), true);
+  assert.equal(imageMatchesVersion(DEFAULT_OLLAMA_IMAGE, OLLAMA_VERSION), true);
   assert.equal(imageMatchesVersion("tyr-admission-controller:0.15.1", TYR_VERSION), false);
 
   writeFileSync(
@@ -48,6 +54,11 @@ try {
   assert.match(migratedText, new RegExp(`^MOFLUX_TYR_IMAGE=${DEFAULT_TYR_IMAGE}$`, "m"));
   assert.match(migratedText, new RegExp(`^MOFLUX_LATCHFLO_IMAGE=${DEFAULT_LATCHFLO_IMAGE}$`, "m"));
   assert.match(migratedText, /^LATCHFLO_ADMIN_TOKEN=preserve-admin$/m);
+  // A .env written before the local inference benchmark existed has neither
+  // key. It must gain both, or demo:local fails at compose with an
+  // unset-variable error naming a variable the operator never chose to omit.
+  assert.match(migratedText, new RegExp(`^MOFLUX_OLLAMA_IMAGE=${DEFAULT_OLLAMA_IMAGE}$`, "m"));
+  assert.match(migratedText, new RegExp(`^MOFLUX_LOCAL_MODEL=${DEFAULT_LOCAL_MODEL}$`, "m"));
   assert.match(migratedText, /^LATCHFLO_AGENT_BOOTSTRAP_TOKEN=preserve-bootstrap$/m);
   assert.match(migratedText, /^TYR_ROUTING_SECRET=moflux-demo-routing-[A-Za-z0-9_-]{40,}$/m);
 
@@ -56,6 +67,8 @@ try {
     [
       "MOFLUX_TYR_IMAGE=registry.example/tyr@sha256:abc",
       "MOFLUX_LATCHFLO_IMAGE=registry.example/latchflo@sha256:def",
+      "MOFLUX_OLLAMA_IMAGE=registry.example/ollama@sha256:aaa",
+      "MOFLUX_LOCAL_MODEL=llama3.2:1b",
       "LATCHFLO_ADMIN_TOKEN=custom-admin",
       "LATCHFLO_AGENT_BOOTSTRAP_TOKEN=custom-bootstrap",
       "TYR_ROUTING_SECRET=custom-routing-secret-with-at-least-32-chars",
@@ -64,8 +77,13 @@ try {
   );
   const custom = ensureDemoEnv(file, { quiet: true });
   assert.equal(custom.updated, false);
-  assert.match(readFileSync(file, "utf8"), /registry\.example\/latchflo@sha256:def/);
-  console.log("PASS  demo environment is generated safely, migrates local runtime defaults, and provisions routing credentials");
+  const customText = readFileSync(file, "utf8");
+  assert.match(customText, /registry\.example\/latchflo@sha256:def/);
+  // A deliberately chosen registry path and model survive the migration: only
+  // an unset key is filled in, never an operator's answer.
+  assert.match(customText, /^MOFLUX_OLLAMA_IMAGE=registry\.example\/ollama@sha256:aaa$/m);
+  assert.match(customText, /^MOFLUX_LOCAL_MODEL=llama3\.2:1b$/m);
+  console.log("PASS  demo environment is generated safely, migrates local runtime and inference defaults, and provisions routing credentials");
 } finally {
   rmSync(temp, { recursive: true, force: true });
 }

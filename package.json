@@ -1,7 +1,7 @@
 {
   "name": "moflux-bench",
-  "version": "0.31.0",
-  "description": "Synthetic and live-provider benchmark harness for LLM admission control, including reproducible simulator sweeps, dynamic fleet-membership checks, and budget-capped OpenAI compatibility and overload experiments.",
+  "version": "0.32.0",
+  "description": "Synthetic, self-hosted and live-provider benchmark harness for LLM admission control, including reproducible simulator sweeps, dynamic fleet-membership checks, an unmetered local-inference benchmark, and budget-capped OpenAI compatibility and overload experiments.",
   "license": "Apache-2.0",
   "type": "module",
   "private": true,
@@ -35,6 +35,9 @@
     "demo:openai": "node demo/openai-live.mjs",
     "demo:openai:responses": "node demo/openai-live.mjs --openai-api=responses",
     "demo:openai:chat": "node demo/openai-live.mjs --openai-api=chat-completions",
+    "demo:local": "node demo/local-inference.mjs",
+    "demo:local:dry-run": "node demo/local-inference.mjs --dry-run",
+    "demo:local:keep": "node demo/local-inference.mjs --keep-stack",
     "demo:progressive": "node demo/ensure-env.mjs --quiet && node demo/seed-sweep.mjs --seeds=1-5 --pause-ms=0 --provider-api=anthropic",
     "demo:prepare": "node demo/ensure-env.mjs",
     "demo:record": "node demo/seed-sweep.mjs --seeds=1-5 --step",
@@ -72,10 +75,13 @@
     "demo:openai:overload:sweep": "node demo/openai-overload-sweep.mjs",
     "demo:openai:overload:sweep:dry-run": "node demo/openai-overload-sweep.mjs --dry-run",
     "verify:openai:overload:sweep": "node demo/verify-openai-overload-sweep.mjs",
-    "verify:restoration": "node demo/verify-restoration-enforceability.mjs"
+    "verify:restoration": "node demo/verify-restoration-enforceability.mjs",
+    "verify:local": "node demo/verify-local-inference.mjs"
   },
   "keywords": [
     "llm",
+    "local-inference",
+    "ollama",
     "admission-control",
     "benchmark",
     "load-shedding",

@@ -10,6 +10,7 @@
 
 import { spawn, spawnSync } from "node:child_process";
 import { createServer, request as httpRequest } from "node:http";
+import { connect } from "node:net";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -110,10 +111,42 @@ async function listenRequired(factory, port, label) {
   }
 }
 
+/**
+ * True when nothing accepts a connection on 127.0.0.1:`port`.
+ *
+ * EADDRINUSE is not a usable signal for this handoff. `arms/replica.mjs` binds
+ * `0.0.0.0` and these doubles bind `127.0.0.1`, which the OS treats as two
+ * different addresses: the double's `listen` succeeds while a replica is still
+ * serving, and connections to `127.0.0.1` then go to the more specific bind —
+ * the double. The presenter's next scrape reads Tyr metrics from a port it
+ * believes is its replica. Reachability is the property that actually matters,
+ * so it is the one tested.
+ */
+function portSilent(port, timeoutMs = 500) {
+  return new Promise((resolve) => {
+    const socket = connect({ port, host: "127.0.0.1" });
+    const done = (silent) => {
+      socket.removeAllListeners();
+      socket.destroy();
+      resolve(silent);
+    };
+    socket.setTimeout(timeoutMs, () => done(false));
+    socket.once("connect", () => done(false));
+    socket.once("error", (error) => done(error?.code === "ECONNREFUSED"));
+  });
+}
+
 async function listenWhenFree(factory, port, timeoutMs = 30000) {
   const deadline = Date.now() + timeoutMs;
   let lastError = null;
   while (Date.now() < deadline) {
+    // Wait for the replica to actually let go before claiming the address.
+    // Without this the bind succeeds immediately and silently steals traffic
+    // from a replica the presenter has not finished measuring.
+    if (!(await portSilent(port))) {
+      await sleep(100);
+      continue;
+    }
     const server = factory(port);
     try {
       await listen(server, port);

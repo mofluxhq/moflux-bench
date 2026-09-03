@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.32.0 - 2026-09-03
+
+### Added
+
+- Add `demo/local-inference.mjs` (`npm run demo:local`), an unmetered benchmark against a self-hosted Ollama server. It replays the same paired, alternating-order design as the OpenAI compatibility path, so the two arms differ only by whether the request passed through Tyr, and it needs no API key.
+- Add `demo/ollama/`, the local inference stack: a pinned Ollama server and one Tyr whose only configured upstream is that server on the compose network. Its pool is pinned to `maxConcurrent: 1` to match `OLLAMA_NUM_PARALLEL=1`, because an admission bound above the server's real concurrency sheds against capacity that does not exist.
+- Add `demo/local-inference-lib.mjs` with the locality guard, the Ollama-shaped request body, per-arm aggregation, and a `decodeTokensPerSecond` reported per arm — on a local run the proxy and the model share the machine, so a decode-rate gap between arms is the signal that they are competing for the same cores.
+- Add `demo/verify-local-inference.mjs`, covering the request body Ollama actually reads, arm asymmetry, usage accounting, warm-up disclosure, and every branch of the locality guard. It runs against loopback stubs, so it needs neither Docker nor weights.
+- Add `deltas.steadyState` and `acceptance.steadyStateMeasured` to the local summary. A run with no more pairs than the warm-up count labels its own deltas as unquotable and says so on stdout, because such a run routinely reports the proxied arm beating the direct one — whichever arm went first paid to load the weights. It still passes: every request succeeding is a real compatibility result, and failing the run would discard the half that is valid.
+- Add `OLLAMA_VERSION`, `DEFAULT_OLLAMA_IMAGE`, and `DEFAULT_LOCAL_MODEL` to `demo/env-lib.mjs`, and `MOFLUX_OLLAMA_IMAGE` / `MOFLUX_LOCAL_MODEL` to the generated `.env` and `.env.example`. A `.env` written by an earlier release gains both keys on next use rather than failing at compose with an unset-variable error naming a variable the operator never chose to omit.
+
+### Changed
+
+- Bump MoFlux Bench to 0.32.0 and pin the local inference runtime to Ollama 0.12.3 with `qwen3:0.6b` as the default weights. Licensed runs stay on Tyr 0.30.0, Latchflo 0.15.0, async-bulkhead-llm 3.17.0, and async-bulkhead-ts 1.0.1.
+- `demo/local-inference.mjs` creates `demo/moflux/.env` only when it is actually starting containers. A `--manage-stack=false` run against an already-running server now writes nothing into the working tree; the previous unconditional call is what made the verification suite leave a file behind that `verify:publication` then refused.
+
+### Fixed
+
+- Fix the intermittent `demo/verify-presenter.mjs` failure that 0.31.0 recorded as a known flake. It was a race that let the presenter measure the wrong server. `arms/replica.mjs` binds `0.0.0.0` and the test's Tyr doubles bind `127.0.0.1`, which the OS treats as different addresses, so a double's `listen` succeeded while a replica was still serving that port — no `EADDRINUSE`, and therefore no retry from a helper called `listenWhenFree`. Connections to `127.0.0.1` then reached the more specific bind. The handoff was triggered by the baseline summary file appearing, which the load generator writes *before* `present.mjs` scrapes replica metrics. `listenWhenFree` now waits until nothing accepts a connection on the address, since reachability rather than `EADDRINUSE` is the property that matters. 6/6 runs pass where 2/5 did before, and `npm run verify` completes at 45/45.
+- Assert that a `/metrics` scrape came from the server the caller intended. `readTyrMetricsTexts` and `readLocalAdmissionDecision` request the identical URL on the identical ports and expect different servers, so a URL never established who answered. The replica direction failed loudly because `replica_*` series were missing; the Tyr direction would have found no `tyr_*` series and **aggregated them to zero**, publishing a wrong measurement rather than raising. Both now name the mismatch instead.
+- Complete the abandoned `demo/openai/` → `demo/ollama/` rename by reverting it. The three YAML files it moved are OpenAI stack configs, and both callers still resolved `demo/openai/`: `demo/openai-live.mjs` and `demo/openai-overload.mjs` pointed at a compose file that did not exist, so **every live OpenAI demo was broken from 0.31.0 until now**. `verify:publication` had been updated to the new paths and so passed throughout, which is why it went unnoticed. The directory keeps the name matching its contents, and `demo/ollama/` now holds the Ollama stack the name implies.
+
+### Measured
+
+- The benchmark was run end to end against `tyr-admission-controller:0.30.0` and `ollama/ollama:0.12.3` serving `qwen3:0.6b`. Over 20 pairs at 32 maximum output tokens, both arms completed 20/20 requests and **exactly 640 completion tokens each** — `temperature: 0` and a per-pair `seed` make the two arms replay the same decode, which is what makes the comparison a measurement of the proxy rather than of two different completions. Median added latency through Tyr was **+30.09 ms**.
+- Median decode rate was 9.09 tok/s direct against 7.72 tok/s proxied. That gap is the cost of the server sharing a machine with the proxy, which no hosted run would show, so it is a property of this topology and is not a general proxy-overhead figure. Nothing from these runs is committed to `results/`.
+- The stack publishes Ollama on host port **11435**, not the default 11434. The first end-to-end attempt failed with `address already in use` against the verifying machine's own Ollama. Anyone wanting a local inference benchmark is disproportionately likely to be in that state, and failing is the good outcome: binding the default port could have measured the operator's server, with their concurrency settings and their loaded model, while the summary named the pinned one. The container port is unchanged, so Tyr still reaches `http://ollama:11434`.
+
+### Safety
+
+- The local benchmark has no spend guard, so it has a locality guard instead. `--direct-url` and `--moflux-url` must both resolve to a loopback, private, link-local, or single-label address, checked before the first request and **not overridable by any flag** — `verify-publication` fails the release if such a flag appears. A self-hosted server has no price from which to compute a worst-case bill, so the substitution is only sound while the upstream genuinely cannot bill anyone; pointing this benchmark at a metered provider is refused, and that run is `npm run demo:openai`, which enforces a cost ceiling.
+- The locality guard fails closed on addresses it cannot positively classify. A public IPv6 address contains no dot, so the rule admitting single-label container names classified every one of them — a provider's included — as local. IPv6 and dotted-quad literals are now decided entirely by their own range rules and never reach the name-shaped ones; the cost is that an unusually written local address such as an IPv4-mapped `::ffff:7f00:1` is refused rather than admitted.
+- `demo/local-inference.mjs` sends no credential in either arm and reads no `OPENAI_API_KEY`. A self-hosted server has none, and inventing a bearer token would give a benchmark with no secret something to leak.
+- The local benchmark builds its own request body rather than reusing `buildOpenAIRequestBody`. That builder emits `max_completion_tokens` and `reasoning_effort`, which are hosted-OpenAI spellings; Ollama reads `max_tokens` and silently ignores the others, so the output cap would not have been applied and run length would have been set by the model instead of the flag. Stream parsing stays shared — that half really is compatible.
+
+### Unchanged
+
+- The committed `results/` corpus is untouched. No local inference evidence is published: 0.32.0 ships the benchmark and its verification, not a measured claim about what a local proxy costs.
+- The Responses API arm has no local counterpart. Ollama implements only Chat Completions, and `--openai-api=responses` is refused rather than quietly served from the chat surface.
+
+
 ## 0.31.0 - 2026-09-03
 
 ### Added

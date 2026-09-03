@@ -25,9 +25,14 @@ const required = [
   "demo/openai-overload.mjs",
   "demo/openai-overload-lib.mjs",
   "demo/verify-openai-overload.mjs",
+  "demo/openai/compose.yaml",
+  "demo/openai/compose-overload.yaml",
+  "demo/openai/tyr.yaml",
   "demo/ollama/compose.yaml",
-  "demo/ollama/compose-overload.yaml",
   "demo/ollama/tyr.yaml",
+  "demo/local-inference.mjs",
+  "demo/local-inference-lib.mjs",
+  "demo/verify-local-inference.mjs",
 ];
 const ignoredDirectories = new Set([".git", "node_modules", "coverage", ".tmp", "tmp"]);
 const forbiddenNames = new Set([".DS_Store", "Thumbs.db"]);
@@ -359,8 +364,13 @@ if (!pkg.scripts?.["demo:progressive"]?.includes("--provider-api=anthropic") ||
     pkg.scripts?.["demo:membership"] !== "node demo/membership.mjs") {
   findings.push("package.json: progressive, live OpenAI, simulator OpenAI, and membership demo commands are required");
 }
-if (pkg.version !== "0.31.0") {
-  findings.push("package.json: the current benchmark release must be version 0.31.0");
+if (pkg.scripts?.["demo:local"] !== "node demo/local-inference.mjs" ||
+    pkg.scripts?.["demo:local:dry-run"] !== "node demo/local-inference.mjs --dry-run" ||
+    pkg.scripts?.["verify:local"] !== "node demo/verify-local-inference.mjs") {
+  findings.push("package.json: the local inference benchmark commands are required");
+}
+if (pkg.version !== "0.32.0") {
+  findings.push("package.json: the current benchmark release must be version 0.32.0");
 }
 if (
   !pkg.scripts?.["demo:restoration"]?.includes("--restoration-ladder") ||
@@ -409,13 +419,65 @@ for (const required of [
 ]) {
   if (!openaiOverload.includes(required)) findings.push(`demo/openai-overload.mjs: missing overload evidence/safety contract ${required}`);
 }
-for (const rel of ["demo/ollama/compose.yaml", "demo/ollama/compose-overload.yaml", "demo/ollama/tyr.yaml", "demo/moflux/.env.example"]) {
+for (const rel of [
+  "demo/openai/compose.yaml",
+  "demo/openai/compose-overload.yaml",
+  "demo/openai/tyr.yaml",
+  "demo/ollama/compose.yaml",
+  "demo/ollama/tyr.yaml",
+  "demo/moflux/.env.example",
+]) {
   const text = readFileSync(path.join(ROOT, rel), "utf8");
   if (text.includes("OPENAI_API_KEY")) findings.push(`${rel}: live OpenAI API key must stay in the caller process only`);
 }
+
+// The local stack's only upstream must be the Ollama service in its own compose
+// file. A hosted base URL here would put a metered provider behind a benchmark
+// that deliberately has no spend guard.
+const ollamaTyr = readFileSync(path.join(ROOT, "demo/ollama/tyr.yaml"), "utf8");
+if (!/baseUrl:\s*http:\/\/ollama:11434\s*$/m.test(ollamaTyr)) {
+  findings.push("demo/ollama/tyr.yaml: the local stack must serve only the in-compose ollama upstream");
+}
+if (/api\.openai\.com|api\.anthropic\.com/.test(ollamaTyr)) {
+  findings.push("demo/ollama/tyr.yaml: a hosted provider must not be reachable from the unmetered local stack");
+}
 const verifyRunnerNewDemos = readFileSync(path.join(ROOT, "scripts/verify.mjs"), "utf8");
-for (const required of ["sim/verify-openai-responses.mjs", "demo/verify-membership.mjs", "demo/verify-openai-live.mjs", "demo/verify-openai-overload.mjs"]) {
+for (const required of ["sim/verify-openai-responses.mjs", "demo/verify-membership.mjs", "demo/verify-openai-live.mjs", "demo/verify-openai-overload.mjs", "demo/verify-local-inference.mjs"]) {
   if (!verifyRunnerNewDemos.includes(required)) findings.push(`scripts/verify.mjs: missing ${required}`);
+}
+
+// The locality guard is to the local benchmark what the spend guard is to the
+// OpenAI one: the single thing standing between it and an unguarded paid run.
+// It must stay present, non-overridable, and enforced on both upstreams.
+for (const [rel, required] of [
+  ["demo/local-inference-lib.mjs", [
+    "assertLocalUpstream",
+    "isLocalHostname",
+    "not a local address",
+    "buildLocalChatBody",
+    "max_tokens",
+  ]],
+  ["demo/local-inference.mjs", [
+    'assertLocalUpstream(directUrl, "--direct-url")',
+    'assertLocalUpstream(mofluxUrl, "--moflux-url")',
+    "meteredProviderReachable",
+    'guard: "non-overridable"',
+    "warmupPairs",
+    "steadyStateMeasured",
+    "must not be quoted",
+  ]],
+]) {
+  const source = readFileSync(path.join(ROOT, rel), "utf8");
+  for (const token of required) {
+    if (!source.includes(token)) findings.push(`${rel}: missing local-inference safety contract ${token}`);
+  }
+}
+const localInference = readFileSync(path.join(ROOT, "demo/local-inference.mjs"), "utf8");
+if (/allow-nonlocal|allow-remote|skip-locality|force-upstream/.test(localInference)) {
+  findings.push("demo/local-inference.mjs: the locality guard must not be overridable by a flag");
+}
+if (localInference.includes("OPENAI_API_KEY")) {
+  findings.push("demo/local-inference.mjs: an unmetered local benchmark must not read a provider credential");
 }
 
 const openaiApiLib = readFileSync(path.join(ROOT, "demo/openai-api-lib.mjs"), "utf8");

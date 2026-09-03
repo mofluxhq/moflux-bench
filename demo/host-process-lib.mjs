@@ -74,6 +74,43 @@ export function probeHttp(url, timeoutMs = 1200) {
   });
 }
 
+/**
+ * Scrape that reads a body on a connection it does not share with anyone.
+ *
+ * Same reasoning as `probeHttp`, and the same hazard it was written for, but
+ * the consequence here is worse than a bad readiness answer. The presenter
+ * serves both a Tyr container and a host replica on the *same* loopback port at
+ * different points in a run — `127.0.0.1:8101` is `bench-tyr-r1` during the
+ * MoFlux arm and a `arms/replica.mjs` process during a local arm. A pooled
+ * keep-alive socket left over from one of them will happily answer a request
+ * meant for the other, with a perfectly valid `200` and an entirely wrong body.
+ *
+ * A URL therefore cannot identify which server replied, so this refuses to
+ * reuse a connection and callers still assert on what came back.
+ */
+export function fetchTextFresh(url, timeoutMs = 2000) {
+  return new Promise((resolve, reject) => {
+    const parsed = new URL(url);
+    const get = parsed.protocol === "https:" ? httpsGet : httpGet;
+    const request = get(
+      parsed,
+      { agent: false, headers: { connection: "close" } },
+      (response) => {
+        const status = response.statusCode ?? 0;
+        response.setEncoding("utf8");
+        let text = "";
+        response.on("data", (chunk) => { text += chunk; });
+        response.once("end", () => resolve({ status, text }));
+        response.once("error", reject);
+      },
+    );
+    request.setTimeout(timeoutMs, () => {
+      request.destroy(new Error(`HTTP scrape of ${url} timed out after ${timeoutMs}ms`));
+    });
+    request.once("error", reject);
+  });
+}
+
 export const hostChildren = new Set();
 
 export function killChildTree(child, signal = "SIGTERM") {

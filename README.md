@@ -119,6 +119,49 @@ It repeatedly proves four-member convergence, heartbeat revision stability,
 timeout removal, replacement under a new identity/endpoint, topology agreement,
 and monotonic revisioning against Latchflo 0.15.0.
 
+The local inference benchmark is entirely self-hosted, unmetered, and needs no
+API key:
+
+```bash
+npm run demo:local:dry-run   # prints the plan; sends nothing
+npm run demo:local           # 8 direct + 8 Tyr requests against a local server
+```
+
+It starts an Ollama server and one Tyr in front of it from
+`demo/ollama/compose.yaml`, pulls `qwen3:0.6b` into a named volume on first use,
+and replays the same paired, alternating-order design as the OpenAI
+compatibility path — so the two arms differ only by whether the request went
+through the proxy. Override the weights with `--model=` or `MOFLUX_LOCAL_MODEL`;
+anything the pool's `modelPrefixes` admits will do, and a bigger model changes
+how long a run takes rather than what it measures.
+
+Three things about this benchmark are worth stating plainly, because they are
+what make it different from the hosted one rather than a cheaper version of it:
+
+- **There is no spend guard, so there is a locality guard instead.** A
+  self-hosted server has no price to compute a worst-case bill from. What
+  replaces `--max-usd` is a check that `--direct-url` and `--moflux-url` both
+  resolve to a loopback, private, or single-label address, applied before the
+  first request and **not overridable by any flag**. Pointing this benchmark at
+  a metered provider is refused rather than warned about; that run is
+  `npm run demo:openai`, which enforces a cost ceiling.
+- **The proxy and the model share the machine.** Against a hosted provider they
+  contend for nothing. Here Tyr and the inference server compete for the same
+  cores, so `deltas.latencyP50Ms` includes contention that no hosted run would
+  ever show. That is the interesting part, and it is also why a local number
+  must not be quoted as a general proxy-overhead figure.
+- **The earliest pairs are warm-up, and the summary says so.** The first request
+  after the stack starts pays to load the weights into memory, and Tyr's
+  adaptive token estimator needs `minSamples` observations before it corrects
+  its estimate. `caveats.warmupPairs` reports how many pairs that covers.
+  Alternating arm order balances the effect across arms rather than removing it.
+
+The pool in `demo/ollama/tyr.yaml` is pinned to `maxConcurrent: 1` to match
+`OLLAMA_NUM_PARALLEL=1` in the compose file. An admission bound above the
+server's real concurrency would be shedding against imaginary capacity. Like the
+OpenAI compatibility path, this is **not** an overload benchmark — admission
+efficacy under load remains simulator-only.
+
 Two live OpenAI paths are opt-in and budget-capped. The compatibility path stays deliberately tiny:
 
 ```bash
@@ -1356,6 +1399,10 @@ demo/seed-sweep-lib.mjs pure aggregation helpers
 demo/present.mjs       verified single-pair presenter used by the sweep
 demo/run-demo.mjs      full narrated public research walkthrough
 demo/tenant-fairness.mjs authenticated admission-class arms and the restoration ladder
+demo/local-inference.mjs unmetered self-hosted benchmark against a local Ollama server
+demo/local-inference-lib.mjs locality guard, Ollama request body, per-arm aggregation
+demo/ollama/          local inference stack: Ollama + one Tyr, no metered upstream
+demo/openai/          live OpenAI stacks for the compatibility and overload paths
 demo/restoration-contract-lib.mjs Latchflo 0.15.0 per-resource restoration contracts
 demo/restoration-enforceability-lib.mjs what a restoration mechanism guarantees, and its bill
 demo/version-lib.mjs   shared runtime capability gating

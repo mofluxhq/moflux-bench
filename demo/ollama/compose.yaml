@@ -1,12 +1,46 @@
+# Local inference benchmark stack: an Ollama server and one Tyr in front of it.
+#
+# Nothing here reaches a paid provider. `ollama` holds the only model weights
+# and is the only upstream Tyr is configured to talk to, so a run of this stack
+# cannot produce an API bill even if a model name is mistyped.
 services:
-  tyr-openai:
+  ollama:
+    image: ${MOFLUX_OLLAMA_IMAGE:?Set MOFLUX_OLLAMA_IMAGE}
+    restart: "no"
+    environment:
+      # One loaded model, one worker. The benchmark measures admission control
+      # in front of a saturated server, so Ollama must not add a second queue
+      # of its own or unload the model between pairs.
+      OLLAMA_KEEP_ALIVE: "30m"
+      OLLAMA_NUM_PARALLEL: "1"
+      OLLAMA_MAX_LOADED_MODELS: "1"
+    ports:
+      # Deliberately not the host's 11434. Anyone running this benchmark is
+      # likely to already have an Ollama of their own on the default port, and
+      # binding it would either fail to start or, worse, silently measure their
+      # server instead of this pinned one. The container port is unchanged, so
+      # Tyr still reaches it at http://ollama:11434 on the compose network.
+      - "127.0.0.1:11435:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 1s
+      timeout: 5s
+      start_period: 10s
+      retries: 60
+
+  tyr-local:
     image: ${MOFLUX_TYR_IMAGE:?Set MOFLUX_TYR_IMAGE}
     restart: "no"
     user: "${MOFLUX_TYR_USER:-0:0}"
+    depends_on:
+      ollama:
+        condition: service_healthy
     environment:
       TYR_CONFIG_FILE: /etc/tyr/config.yaml
     ports:
-      - "127.0.0.1:18110:8787"
+      - "127.0.0.1:18114:8787"
     volumes:
       - ./tyr.yaml:/etc/tyr/config.yaml:ro
     healthcheck:
@@ -22,3 +56,6 @@ services:
       timeout: 2s
       start_period: 2s
       retries: 30
+
+volumes:
+  ollama-models:
