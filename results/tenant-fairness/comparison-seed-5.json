@@ -1,0 +1,546 @@
+{
+  "seed": 5,
+  "comparison": {
+    "traceHashMatches": true,
+    "upstream429s": {
+      "shared": 0,
+      "ceilings": 0,
+      "protected": 0,
+      "adaptive": 0
+    },
+    "premium": {
+      "shared": {
+        "successRate": 0.8721,
+        "contendedCompleted": 102,
+        "contendedGoodputRps": 4.08,
+        "contendedTtftP95Ms": 2189.3412499999995,
+        "classifiedResponses": 0
+      },
+      "ceilings": {
+        "successRate": 0.5349,
+        "contendedCompleted": 64,
+        "contendedGoodputRps": 2.56,
+        "contendedTtftP95Ms": 2308.8655,
+        "classifiedResponses": 377
+      },
+      "protected": {
+        "successRate": 0.5523,
+        "contendedCompleted": 65,
+        "contendedGoodputRps": 2.6,
+        "contendedTtftP95Ms": 1699.4498750000002,
+        "classifiedResponses": 368
+      },
+      "adaptive": {
+        "successRate": 0.593,
+        "contendedCompleted": 70,
+        "contendedGoodputRps": 2.8,
+        "contendedTtftP95Ms": 2424.803749999999,
+        "classifiedResponses": 370
+      },
+      "protectedVsSharedTtftRatio": 0.7762,
+      "protectedVsCeilingsTtftRatio": 0.7361,
+      "protectedVsCeilingsGoodputRatio": 1.0156,
+      "adaptiveVsProtectedTtftRatio": 1.4268,
+      "adaptiveVsProtectedGoodputRatio": 1.0769,
+      "adaptiveVsSharedGoodputRatio": 0.6863
+    },
+    "noisy": {
+      "shared": {
+        "successRate": 0.229,
+        "contendedCompleted": 6,
+        "contendedGoodputRps": 0.24,
+        "localRejects": 336,
+        "classifiedResponses": 0
+      },
+      "ceilings": {
+        "successRate": 0.3053,
+        "contendedCompleted": 15,
+        "contendedGoodputRps": 0.6,
+        "localRejects": 316,
+        "classifiedResponses": 356
+      },
+      "protected": {
+        "successRate": 0.2672,
+        "contendedCompleted": 16,
+        "contendedGoodputRps": 0.64,
+        "localRejects": 326,
+        "classifiedResponses": 361
+      },
+      "adaptive": {
+        "successRate": 0.229,
+        "contendedCompleted": 18,
+        "contendedGoodputRps": 0.72,
+        "localRejects": 329,
+        "classifiedResponses": 359
+      }
+    }
+  },
+  "adaptiveLending": {
+    "sampleCount": 70,
+    "noisyFloorLent": true,
+    "noisyDemandObservedAfterLending": true,
+    "noisyRestorationPendingObserved": true,
+    "noisyFloorRestored": true,
+    "hardCeilingsPreservedWhileLent": true,
+    "hardCeilingsPreservedAfterRestoration": true,
+    "lentAtMs": 0,
+    "demandObservedAtMs": 6152,
+    "restorationPendingAtMs": 6152,
+    "restoredAtMs": 7171,
+    "restorationLatencyMs": 1019
+  },
+  "adaptiveHandoff": {
+    "handoffPrepared": true,
+    "handoffId": "8bf3f4e1-fc9e-4fef-b6ec-e5573e1359b9",
+    "restorationTargetMatchesNominal": true,
+    "drainGrantCount": 4,
+    "appliedDrainAckCount": 4,
+    "allDrainAcksApplied": true,
+    "handoffCommitted": true,
+    "handoffAborted": false,
+    "preparedAtMs": 1788474457511,
+    "commitAtMs": 1788474458289,
+    "preparedOffsetMs": 5933,
+    "commitOffsetMs": 6711,
+    "sourceGrantCount": 4,
+    "fallbackDeadlineMs": 1788474692068,
+    "leaseAvoidedMs": 233779,
+    "committedBeforeLeaseExpiry": true
+  },
+  "proof": {
+    "passed": true,
+    "checks": {
+      "sameTrace": true,
+      "noSharedUpstream429s": true,
+      "noCeilingsUpstream429s": true,
+      "noProtectedUpstream429s": true,
+      "noAdaptiveUpstream429s": true,
+      "ceilingPremiumClassObserved": true,
+      "ceilingNoisyClassObserved": true,
+      "protectedPremiumClassObserved": true,
+      "protectedNoisyClassObserved": true,
+      "adaptivePremiumClassObserved": true,
+      "adaptiveNoisyClassObserved": true,
+      "protectedPolicyExercised": true,
+      "adaptivePolicyExercised": true,
+      "premiumServedUnderContention": true,
+      "noisyServedUnderContention": true,
+      "noisyMinimumCompletions": true,
+      "adaptiveNoisyFloorLent": true,
+      "adaptiveNoisyDemandObservedAfterLending": true,
+      "adaptiveNoisyFloorRestored": true,
+      "adaptiveHardCeilingsPreservedWhileLent": true,
+      "adaptiveHardCeilingsPreservedAfterRestoration": true,
+      "adaptiveClassHandoffPrepared": true,
+      "adaptiveClassDrainAcksApplied": true,
+      "adaptiveClassHandoffCommitted": true,
+      "adaptiveClassHandoffNotAborted": true,
+      "adaptiveClassHandoffBeatLeaseExpiry": true
+    },
+    "observations": {
+      "premiumTtftImprovedVsShared": false,
+      "premiumTtftImprovedVsProtected": false,
+      "premiumGoodputImprovedVsProtected": true,
+      "restorationPendingObserved": true
+    }
+  },
+  "restorationLadder": {
+    "unlent": {
+      "pool": "sim-unlent",
+      "tyrRestoration": {
+        "status": "measured",
+        "framing": "Admission slots are Tyr-local and can be taken back from a borrower by an expiring deadline (enforced). Upstream token capacity cannot be reclaimed once in flight at the provider: an unlent slice is withheld before lending (allocation-enforced), and everything else is a wall-clock objective. Tyr reports upstream cancellation as unverified and this benchmark never restates it as reclaimed capacity.",
+        "admissionSlots": {
+          "releaseMechanism": "deadline_abandonment",
+          "enforceability": "enforced",
+          "configuredDeadlinesMs": {},
+          "released": 0,
+          "releasedByCause": {
+            "deadline": 0,
+            "manual": 0,
+            "unattributed": 0
+          },
+          "deadlineShare": null
+        },
+        "upstreamCapacity": {
+          "releaseMechanism": "abort_signal",
+          "enforceability": "unverified",
+          "cancellationRequested": 0,
+          "activeAccountingHolds": 0,
+          "reclamation": "unverified"
+        },
+        "pools": [
+          {
+            "pool": "sim-unlent@r1",
+            "admissionSlotReleaseMechanism": "deadline_abandonment",
+            "admissionSlotEnforceability": "enforced",
+            "upstreamReleaseMechanism": "abort_signal",
+            "upstreamEnforceability": "unverified",
+            "configuredClasses": [],
+            "released": 0,
+            "releasedByCause": {
+              "deadline": 0,
+              "manual": 0
+            },
+            "cancellationRequested": 0,
+            "activeAccountingHolds": 0
+          },
+          {
+            "pool": "sim-unlent@r2",
+            "admissionSlotReleaseMechanism": "deadline_abandonment",
+            "admissionSlotEnforceability": "enforced",
+            "upstreamReleaseMechanism": "abort_signal",
+            "upstreamEnforceability": "unverified",
+            "configuredClasses": [],
+            "released": 0,
+            "releasedByCause": {
+              "deadline": 0,
+              "manual": 0
+            },
+            "cancellationRequested": 0,
+            "activeAccountingHolds": 0
+          },
+          {
+            "pool": "sim-unlent@r3",
+            "admissionSlotReleaseMechanism": "deadline_abandonment",
+            "admissionSlotEnforceability": "enforced",
+            "upstreamReleaseMechanism": "abort_signal",
+            "upstreamEnforceability": "unverified",
+            "configuredClasses": [],
+            "released": 0,
+            "releasedByCause": {
+              "deadline": 0,
+              "manual": 0
+            },
+            "cancellationRequested": 0,
+            "activeAccountingHolds": 0
+          },
+          {
+            "pool": "sim-unlent@r4",
+            "admissionSlotReleaseMechanism": "deadline_abandonment",
+            "admissionSlotEnforceability": "enforced",
+            "upstreamReleaseMechanism": "abort_signal",
+            "upstreamEnforceability": "unverified",
+            "configuredClasses": [],
+            "released": 0,
+            "releasedByCause": {
+              "deadline": 0,
+              "manual": 0
+            },
+            "cancellationRequested": 0,
+            "activeAccountingHolds": 0
+          }
+        ]
+      },
+      "latchfloEpisodes": {
+        "status": "measured",
+        "episodes": 2,
+        "resources": [
+          {
+            "resource": "admissionSlots",
+            "releaseMechanism": "lease_safe_handoff",
+            "enforceability": "objective",
+            "sloMs": 15000,
+            "episodes": 2,
+            "sloViolations": 0,
+            "targetTotal": 8,
+            "unlentTotal": 0,
+            "medianDurationMs": 855.5,
+            "maxDurationMs": 1211
+          },
+          {
+            "resource": "upstreamCapacity",
+            "releaseMechanism": "unlent_floor",
+            "enforceability": "unlent_floor",
+            "sloMs": 15000,
+            "episodes": 2,
+            "sloViolations": 0,
+            "targetTotal": 44000,
+            "unlentTotal": 22000,
+            "medianDurationMs": 855.5,
+            "maxDurationMs": 1211
+          }
+        ]
+      },
+      "unlentGauges": {
+        "status": "measured",
+        "admissionClasses": [
+          {
+            "pool": "sim-unlent",
+            "admissionClass": "noisy",
+            "unlentTokens": 18000
+          },
+          {
+            "pool": "sim-unlent",
+            "admissionClass": "premium",
+            "unlentTokens": 4000
+          }
+        ],
+        "capacityGroupMembers": [],
+        "totalUnlentTokens": 22000
+      },
+      "deadlineCost": {
+        "abandoned": 0,
+        "abandonedRate": 0,
+        "perClass": [
+          {
+            "workload": "batch",
+            "abandoned": 0,
+            "success": 33,
+            "logical": 131
+          },
+          {
+            "workload": "interactive",
+            "abandoned": 0,
+            "success": 99,
+            "logical": 172
+          }
+        ],
+        "byOutcome": {
+          "gateway_timeout": 0,
+          "stream_destroyed": 0,
+          "unattributed": 0
+        },
+        "silentTruncationRate": null,
+        "observedDeadlinesMs": [],
+        "admissionClasses": [],
+        "localSlotReleasedAlways": true,
+        "upstreamReclamation": "unverified"
+      },
+      "verdict": {
+        "arm": "moflux-unlent-token-floor",
+        "framing": "Admission slots are Tyr-local and can be taken back from a borrower by an expiring deadline (enforced). Upstream token capacity cannot be reclaimed once in flight at the provider: an unlent slice is withheld before lending (allocation-enforced), and everything else is a wall-clock objective. Tyr reports upstream cancellation as unverified and this benchmark never restates it as reclaimed capacity.",
+        "admissionSlots": {
+          "configuredEnforceability": "objective",
+          "effectiveEnforceability": "objective",
+          "releaseMechanism": "lease_safe_handoff",
+          "observed": true,
+          "deadlinesReleased": 0,
+          "requestsShed": 0
+        },
+        "upstreamCapacity": {
+          "configuredEnforceability": "unlent_floor",
+          "effectiveEnforceability": "unlent_floor",
+          "releaseMechanism": "unlent_floor",
+          "unlentTokens": 22000,
+          "observed": true,
+          "reclamation": "not-claimed"
+        },
+        "cost": {
+          "requestsShed": 0,
+          "shedRate": 0,
+          "tokensWithheldFromBorrowing": 22000,
+          "controllerReportedDeadlineReleases": 0,
+          "clientAttributionGap": 0
+        }
+      }
+    },
+    "deadline": {
+      "pool": "sim-deadline",
+      "tyrRestoration": {
+        "status": "measured",
+        "framing": "Admission slots are Tyr-local and can be taken back from a borrower by an expiring deadline (enforced). Upstream token capacity cannot be reclaimed once in flight at the provider: an unlent slice is withheld before lending (allocation-enforced), and everything else is a wall-clock objective. Tyr reports upstream cancellation as unverified and this benchmark never restates it as reclaimed capacity.",
+        "admissionSlots": {
+          "releaseMechanism": "deadline_abandonment",
+          "enforceability": "enforced",
+          "configuredDeadlinesMs": {
+            "sim-deadline@r1/premium": 2500,
+            "sim-deadline@r2/premium": 2500,
+            "sim-deadline@r3/premium": 2500,
+            "sim-deadline@r4/premium": 2500
+          },
+          "released": 45,
+          "releasedByCause": {
+            "deadline": 45,
+            "manual": 0,
+            "unattributed": 0
+          },
+          "deadlineShare": 1
+        },
+        "upstreamCapacity": {
+          "releaseMechanism": "abort_signal",
+          "enforceability": "unverified",
+          "cancellationRequested": 45,
+          "activeAccountingHolds": 0,
+          "reclamation": "unverified"
+        },
+        "pools": [
+          {
+            "pool": "sim-deadline@r1",
+            "admissionSlotReleaseMechanism": "deadline_abandonment",
+            "admissionSlotEnforceability": "enforced",
+            "upstreamReleaseMechanism": "abort_signal",
+            "upstreamEnforceability": "unverified",
+            "configuredClasses": [
+              "premium"
+            ],
+            "released": 13,
+            "releasedByCause": {
+              "deadline": 13,
+              "manual": 0
+            },
+            "cancellationRequested": 13,
+            "activeAccountingHolds": 0
+          },
+          {
+            "pool": "sim-deadline@r2",
+            "admissionSlotReleaseMechanism": "deadline_abandonment",
+            "admissionSlotEnforceability": "enforced",
+            "upstreamReleaseMechanism": "abort_signal",
+            "upstreamEnforceability": "unverified",
+            "configuredClasses": [
+              "premium"
+            ],
+            "released": 9,
+            "releasedByCause": {
+              "deadline": 9,
+              "manual": 0
+            },
+            "cancellationRequested": 9,
+            "activeAccountingHolds": 0
+          },
+          {
+            "pool": "sim-deadline@r3",
+            "admissionSlotReleaseMechanism": "deadline_abandonment",
+            "admissionSlotEnforceability": "enforced",
+            "upstreamReleaseMechanism": "abort_signal",
+            "upstreamEnforceability": "unverified",
+            "configuredClasses": [
+              "premium"
+            ],
+            "released": 16,
+            "releasedByCause": {
+              "deadline": 16,
+              "manual": 0
+            },
+            "cancellationRequested": 16,
+            "activeAccountingHolds": 0
+          },
+          {
+            "pool": "sim-deadline@r4",
+            "admissionSlotReleaseMechanism": "deadline_abandonment",
+            "admissionSlotEnforceability": "enforced",
+            "upstreamReleaseMechanism": "abort_signal",
+            "upstreamEnforceability": "unverified",
+            "configuredClasses": [
+              "premium"
+            ],
+            "released": 7,
+            "releasedByCause": {
+              "deadline": 7,
+              "manual": 0
+            },
+            "cancellationRequested": 7,
+            "activeAccountingHolds": 0
+          }
+        ]
+      },
+      "latchfloEpisodes": {
+        "status": "measured",
+        "episodes": 2,
+        "resources": [
+          {
+            "resource": "admissionSlots",
+            "releaseMechanism": "lease_safe_handoff",
+            "enforceability": "objective",
+            "sloMs": 15000,
+            "episodes": 2,
+            "sloViolations": 0,
+            "targetTotal": 8,
+            "unlentTotal": 0,
+            "medianDurationMs": 601.5,
+            "maxDurationMs": 676
+          },
+          {
+            "resource": "upstreamCapacity",
+            "releaseMechanism": "unlent_floor",
+            "enforceability": "unlent_floor",
+            "sloMs": 15000,
+            "episodes": 2,
+            "sloViolations": 0,
+            "targetTotal": 44000,
+            "unlentTotal": 22000,
+            "medianDurationMs": 601.5,
+            "maxDurationMs": 676
+          }
+        ]
+      },
+      "unlentGauges": {
+        "status": "measured",
+        "admissionClasses": [
+          {
+            "pool": "sim-deadline",
+            "admissionClass": "noisy",
+            "unlentTokens": 18000
+          },
+          {
+            "pool": "sim-deadline",
+            "admissionClass": "premium",
+            "unlentTokens": 4000
+          }
+        ],
+        "capacityGroupMembers": [],
+        "totalUnlentTokens": 22000
+      },
+      "deadlineCost": {
+        "abandoned": 45,
+        "abandonedRate": 0.1485,
+        "perClass": [
+          {
+            "workload": "batch",
+            "abandoned": 0,
+            "success": 31,
+            "logical": 131
+          },
+          {
+            "workload": "interactive",
+            "abandoned": 45,
+            "success": 77,
+            "logical": 172
+          }
+        ],
+        "byOutcome": {
+          "gateway_timeout": 0,
+          "stream_destroyed": 45,
+          "unattributed": 0
+        },
+        "silentTruncationRate": 1,
+        "observedDeadlinesMs": [
+          2500
+        ],
+        "admissionClasses": [
+          "premium"
+        ],
+        "localSlotReleasedAlways": true,
+        "upstreamReclamation": "unverified"
+      },
+      "verdict": {
+        "arm": "moflux-unlent-plus-slot-deadline",
+        "framing": "Admission slots are Tyr-local and can be taken back from a borrower by an expiring deadline (enforced). Upstream token capacity cannot be reclaimed once in flight at the provider: an unlent slice is withheld before lending (allocation-enforced), and everything else is a wall-clock objective. Tyr reports upstream cancellation as unverified and this benchmark never restates it as reclaimed capacity.",
+        "admissionSlots": {
+          "configuredEnforceability": "objective",
+          "effectiveEnforceability": "enforced",
+          "releaseMechanism": "deadline_abandonment",
+          "observed": true,
+          "deadlinesReleased": 45,
+          "requestsShed": 45
+        },
+        "upstreamCapacity": {
+          "configuredEnforceability": "unlent_floor",
+          "effectiveEnforceability": "unlent_floor",
+          "releaseMechanism": "unlent_floor",
+          "unlentTokens": 22000,
+          "observed": true,
+          "reclamation": "not-claimed"
+        },
+        "cost": {
+          "requestsShed": 45,
+          "shedRate": 0.1485,
+          "tokensWithheldFromBorrowing": 22000,
+          "controllerReportedDeadlineReleases": 45,
+          "clientAttributionGap": 0
+        }
+      }
+    }
+  }
+}
