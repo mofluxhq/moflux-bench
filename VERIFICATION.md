@@ -1,13 +1,13 @@
-# MoFlux Bench 0.33.0 verification
+# MoFlux Bench 0.33.1 verification
 
 Verified 2026-09-03 in this build environment with Node.js 22.16.0 and npm 10.9.2.
 
-This release adds the local-inference contention benchmark introduced by
-`demo/local-contention.mjs`. The benchmark is deliberately separate from the
-0.32.0 local compatibility path: 0.32.0 establishes that Tyr can proxy a local
-Ollama Chat Completions endpoint; 0.33.0 adds the harness needed to test workload
-isolation when interactive and batch traffic contend for the same self-hosted
-inference capacity.
+MoFlux Bench 0.33.0 introduced the local-inference contention benchmark in
+`demo/local-contention.mjs`; 0.33.1 is a correctness patch derived from the first
+real seed on 2026-09-03. It keeps the same workload and runtime pins while fixing
+arrival-time phase attribution, SLO-goodput proof semantics, lending/restoration
+classification, warm-up retry behaviour, and the measured-start floor state.
+The benchmark remains separate from the 0.32.0 local compatibility path.
 
 ## Passed
 
@@ -31,7 +31,7 @@ inference capacity.
 
 ## Local contention benchmark contract
 
-The new benchmark replays one deterministic five-phase trace against three arms:
+The contention benchmark replays one deterministic five-phase trace against three arms:
 
 | Arm | Path | Policy |
 | --- | --- | --- |
@@ -52,9 +52,13 @@ The benchmark owns its acceptance result. The top-level `passed` mirrors
 `localContentionProof` rather than borrowing an unrelated proof object. Per-seed
 gates cover trace validity, actual contention, protected-floor and allocation
 invariants, lending/restoration evidence, lease-gap bounds, and handoff safety.
-Across seeds, H1 and H2 are allowed to fail honestly: MoFlux must materially
-improve interactive service versus direct Ollama and materially increase useful
-batch work versus a static partition to earn those claims.
+Across seeds, H1 and H2 are allowed to fail honestly. H1 requires at least
++0.04 req/s of interactive contention-window SLO goodput over direct Ollama; a
+useful request must succeed with TTFT <= 5 s and completion latency <= 30 s.
+H2 requires at least 1.2x the static arm's batch completions while interactive
+demand is idle. Phase membership uses immutable trace arrival time, so long
+queued requests cannot disappear into a later phase merely because they finish
+late.
 
 ## Evidence boundary
 
@@ -96,6 +100,9 @@ weights cache.
 
 ## Not executed in this build environment
 
+- The user-provided first real seed was used as diagnostic input for 0.33.1,
+  but it failed the 0.33.0 proof and is not publication evidence. No result from
+  that seed is promoted or rewritten as a passing 0.33.1 result.
 - `npm run demo:local:contention:doctor` reached its environment preflight and
   correctly failed because Docker is not installed in this sandbox. Therefore
   no real Ollama/Tyr/Latchflo contention run was executed here, and this

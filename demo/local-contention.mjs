@@ -540,6 +540,40 @@ async function waitForUsableGrant(arm, timeoutMs = 60_000) {
   );
 }
 
+/**
+ * Establishes a clean measured start state after warm-up.
+ *
+ * Warm-up intentionally finishes with interactive traffic. The lending arm may
+ * have released that floor earlier while interactive was idle, so merely
+ * waiting for any usable grant can start the measured trace with
+ * `protectedConcurrent: 0`. The experiment claims a nominal protected floor at
+ * t=0, therefore measurement does not start until Tyr is actually enforcing it.
+ */
+async function waitForInteractiveFloor(arm, timeoutMs = 60_000) {
+  if (!arm.managed) return null;
+  const nominal = nominalClassGrant().interactive;
+  const deadline = Date.now() + timeoutMs;
+  let last = null;
+  while (Date.now() < deadline) {
+    last = await sampleArm(arm, Date.now()).catch(() => null);
+    const interactive = last?.classes?.interactive?.limits;
+    if (
+      last !== null &&
+      last.pool.maxConcurrent >= 1 &&
+      ceilingsAreNominal(last) &&
+      Number(interactive?.protectedConcurrent ?? 0) >= nominal.protectedConcurrent &&
+      Number(interactive?.protectedInFlightTokens ?? 0) >= nominal.protectedInFlightTokens
+    ) {
+      return last;
+    }
+    await sleep(250);
+  }
+  throw new Error(
+    `${arm.id} did not restore the nominal interactive floor before measurement within ${timeoutMs}ms: ` +
+      JSON.stringify(last?.classes?.interactive ?? null),
+  );
+}
+
 // ── warm-up ──────────────────────────────────────────────────────────
 
 const FILLER = "The quick brown fox jumps over the lazy dog. ";
@@ -559,85 +593,105 @@ function warmupPrompt(chars) {
  * purpose — a warm-up that itself contends would be measuring the thing it
  * exists to remove.
  */
-async function warmupArm(arm, seed) {
+async function warmupRequest(arm, seed, workload, index) {
   const url = ARM_URLS[arm.id];
-  const results = [];
-  for (let index = 0; index < OPT.warmupRequestsPerClass; index += 1) {
-    for (const workload of ["interactive", "batch"]) {
-      const isBatch = workload === "batch";
-      const startedAt = performance.now();
-      const response = await fetch(url, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          ...(arm.managed
-            ? {
-                "x-tyr-identity-token": `Bearer ${
-                  isBatch ? identity.tokens.noisy : identity.tokens.premium
-                }`,
-              }
-            : {}),
-        },
-        body: JSON.stringify(
-          buildLocalChatBody({
-            model: OPT.model,
-            prompt: warmupPrompt(
-              isBatch ? WORKLOAD.batchInputChars : WORKLOAD.interactiveInputChars,
-            ),
-            maxOutputTokens: isBatch ? WORKLOAD.batchMaxTokens : WORKLOAD.interactiveMaxTokens,
-            seed: 10_000 + seed * 100 + index,
-            stream: true,
-          }),
-        ),
-      });
-      let usage = null;
-      let chars = 0;
-      if (response.ok && response.body) {
-        const decoder = new TextDecoder();
-        let buffer = "";
-        for await (const chunk of response.body) {
-          buffer += decoder.decode(chunk, { stream: true });
-          let boundary;
-          while ((boundary = buffer.indexOf("\n\n")) !== -1) {
-            const frame = buffer.slice(0, boundary);
-            buffer = buffer.slice(boundary + 2);
-            for (const line of frame.split(/\r?\n/)) {
-              if (!line.startsWith("data:")) continue;
-              const raw = line.slice(5).trim();
-              if (!raw || raw === "[DONE]") continue;
-              let parsed;
-              try {
-                parsed = JSON.parse(raw);
-              } catch {
-                continue;
-              }
-              const observed = observeOpenAIStreamEvent(parsed, "chat-completions");
-              chars += observed.text.length;
-              if (observed.usage) usage = observed.usage;
-            }
+  const isBatch = workload === "batch";
+  const startedAt = performance.now();
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      ...(arm.managed
+        ? {
+            "x-tyr-identity-token": `Bearer ${
+              isBatch ? identity.tokens.noisy : identity.tokens.premium
+            }`,
           }
+        : {}),
+    },
+    body: JSON.stringify(
+      buildLocalChatBody({
+        model: OPT.model,
+        prompt: warmupPrompt(
+          isBatch ? WORKLOAD.batchInputChars : WORKLOAD.interactiveInputChars,
+        ),
+        maxOutputTokens: isBatch ? WORKLOAD.batchMaxTokens : WORKLOAD.interactiveMaxTokens,
+        seed: 10_000 + seed * 100 + index,
+        stream: true,
+      }),
+    ),
+  });
+  let usage = null;
+  let chars = 0;
+  if (response.ok && response.body) {
+    const decoder = new TextDecoder();
+    let buffer = "";
+    for await (const chunk of response.body) {
+      buffer += decoder.decode(chunk, { stream: true });
+      let boundary;
+      while ((boundary = buffer.indexOf("\n\n")) !== -1) {
+        const frame = buffer.slice(0, boundary);
+        buffer = buffer.slice(boundary + 2);
+        for (const line of frame.split(/\r?\n/)) {
+          if (!line.startsWith("data:")) continue;
+          const raw = line.slice(5).trim();
+          if (!raw || raw === "[DONE]") continue;
+          let parsed;
+          try {
+            parsed = JSON.parse(raw);
+          } catch {
+            continue;
+          }
+          const observed = observeOpenAIStreamEvent(parsed, "chat-completions");
+          chars += observed.text.length;
+          if (observed.usage) usage = observed.usage;
         }
-      } else if (!response.ok) {
-        await response.text().catch(() => "");
       }
-      results.push({
-        arm: arm.id,
-        workload,
-        index,
-        status: response.status,
-        ok: response.ok && chars > 0,
-        latencyMs: +(performance.now() - startedAt).toFixed(1),
-        promptTokens: usage?.input ?? null,
-        completionTokens: usage?.output ?? null,
-      });
     }
+  } else if (!response.ok) {
+    await response.text().catch(() => "");
   }
-  const failures = results.filter((entry) => !entry.ok);
-  if (failures.length > 0) {
-    throw new Error(
-      `${arm.id} warm-up had ${failures.length}/${results.length} failures ` +
-        `(first: HTTP ${failures[0].status})`,
-    );
+  return {
+    arm: arm.id,
+    workload,
+    index,
+    status: response.status,
+    ok: response.ok && chars > 0,
+    latencyMs: +(performance.now() - startedAt).toFixed(1),
+    promptTokens: usage?.input ?? null,
+    completionTokens: usage?.output ?? null,
+  };
+}
+
+async function warmupArm(arm, seed) {
+  const results = [];
+  // Interactive runs last so the adaptive arm enters the measured trace with
+  // its owner visibly demanding the floor rather than inheriting a batch-last
+  // warm-up state that has already released it.
+  for (const workload of ["batch", "interactive"]) {
+    for (let index = 0; index < OPT.warmupRequestsPerClass; index += 1) {
+      let result = null;
+      for (let attempt = 1; attempt <= 8; attempt += 1) {
+        result = await warmupRequest(arm, seed, workload, index);
+        if (result.ok) {
+          results.push({ ...result, attempts: attempt });
+          break;
+        }
+        // A managed arm can land exactly in the deliberate grant-expiry gap.
+        // Warm-up is a precondition, not offered load, so retry that local 429
+        // after a usable grant rather than letting lease timing decide whether
+        // the experiment starts. Other failures remain fatal.
+        if (!arm.managed || result.status !== 429 || attempt === 8) break;
+        await waitForUsableGrant(arm);
+        await sleep(250);
+      }
+      if (!result?.ok) {
+        throw new Error(
+          `${arm.id} warm-up could not complete ${workload} ${index + 1}/${OPT.warmupRequestsPerClass} ` +
+            `(last HTTP ${result?.status ?? "unknown"})`,
+        );
+      }
+    }
   }
   return results;
 }
@@ -848,8 +902,9 @@ try {
         const arm = contentionArm(armId);
         console.log(`\nseed ${seed} arm ${armId}: warm-up (${OPT.warmupRequestsPerClass}/class)`);
         const warmup = await warmupArm(arm, seed);
-        // Recorded, not required. See waitForUsableGrant.
-        const startingGrant = arm.managed ? await waitForUsableGrant(arm) : null;
+        // Measurement starts from the nominal interactive floor. This prevents
+        // warm-up ordering from becoming a hidden fourth arm variable.
+        const startingGrant = arm.managed ? await waitForInteractiveFloor(arm) : null;
 
         const startedAt = Date.now();
         const sampler = arm.managed ? startSampler(arm, startedAt) : null;

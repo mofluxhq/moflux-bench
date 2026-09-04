@@ -1,6 +1,23 @@
 # Changelog
 
-## 0.33.0 - 2026-09-04
+## 0.33.1 - 2026-09-03
+
+### Fixed
+
+- Attribute local-contention phase metrics by each request's immutable trace arrival time rather than completion time. Slow local inference can finish minutes after its arrival; completion-time bucketing erased the direct arm's idle/contention samples and made H1 undefined even when the intended contention window was exercised.
+- Define H1 on **interactive SLO goodput** instead of survivor-only TTFT. A contention-window interactive request now counts as useful only when it succeeds with TTFT <= 5 s and completion latency <= 30 s; MoFlux must improve that useful-work rate over direct Ollama by at least 0.04 req/s. Descriptive successful-request TTFT/goodput remain reported but cannot by themselves pass H1.
+- Stop treating already-running borrowed work as capacity creation after a protected floor is restored. The hard invariants remain class ceilings, pool ceilings, floor sums, and the unlent token slice; the adaptive safety check now fails only when observed batch borrowing **grows** after protected interactive demand has returned and its floor is restored.
+- Require restoration only for lending episodes where protected demand actually returned. Capacity may remain lent at end-of-run while its owner stays idle without being misclassified as an unrecovered floor.
+- Exclude lease-gap samples from lending/restoration episode derivation. A moment with no usable grant is a short-lease availability cost, not a policy decision to lend a floor; this prevents the rigid `static` arm from fabricating lending episodes at grant rollover.
+- Make managed-arm warm-up retry attributable local HTTP 429s after a usable grant is present, while keeping non-429 failures fatal. Warm-up is a benchmark precondition and must not fail randomly because it lands in the deliberate short-lease gap.
+- End warm-up with interactive traffic and wait for the nominal interactive protected floor before measured traffic begins. This removes warm-up demand state as a hidden arm-order variable and prevents the MoFlux arm from starting measurement with an already-lent concurrency floor.
+
+### Changed
+
+- Bump MoFlux Bench to 0.33.1. Runtime pins remain Tyr 0.30.0, Latchflo 0.15.0, async-bulkhead-llm 3.17.0, async-bulkhead-ts 1.0.1, Ollama 0.12.3, and `qwen3:0.6b`.
+- Keep the 0.33.0 workload unchanged. These are measurement/proof correctness fixes derived from the first real local-contention seed, not tuning intended to make MoFlux pass.
+
+## 0.33.0 - 2026-09-03
 
 ### Added
 

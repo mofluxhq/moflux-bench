@@ -164,8 +164,9 @@ under local contention is measured by the separate 0.33.0 benchmark below.
 
 ### Local inference under contention
 
-MoFlux Bench 0.33.0 adds a second, separate local benchmark that *is* about
-behaviour under load. `demo/local-contention.mjs` asks one question:
+MoFlux Bench 0.33.0 added a second, separate local benchmark that *is* about
+behaviour under load; 0.33.1 corrects its phase attribution and proof semantics
+without changing the workload. `demo/local-contention.mjs` asks one question:
 
 > When interactive and batch requests contend for the same self-hosted inference
 > capacity, does MoFlux preserve interactive service while still letting batch
@@ -195,12 +196,18 @@ before.
 Its acceptance object is `localContentionProof` and the top-level `passed`
 mirrors that and nothing else. Per seed it gates validity and safety only —
 one trace across arms, warm-up excluded, measurable queueing in the control arm,
-no floor violation, no over-allocation, no unacknowledged handoff. Across seeds
-it gates the hypotheses on medians against pre-registered thresholds: interactive
-tail latency or goodput materially better than unmanaged Ollama (H1), materially
-more batch work than a rigid partition while the interactive floor is idle (H2),
-the protected floor never violated (H3), and no unsafe capacity handoff (H4).
-H1 and H2 can fail, and the harness tests exercise them failing.
+no unlent-floor/class/pool over-allocation, no growth in batch borrowing after
+protected demand has returned and the interactive floor is restored, and no
+unacknowledged handoff. Phase membership is determined by immutable trace arrival
+time, not by when a slow local decode finally completes. Across seeds it gates
+pre-registered hypotheses: H1 requires at least +0.04 req/s of interactive
+contention-window **SLO goodput** over unmanaged Ollama, where a useful request
+must succeed with TTFT <= 5 s and completion latency <= 30 s; H2 requires at
+least 1.2x the static arm's batch completions while interactive demand is idle;
+H3 requires the protected floor never to be violated; H4 requires no unsafe
+capacity handoff or allocation invariant violation. Survivor-only TTFT/goodput
+remain descriptive and cannot by themselves make H1 pass. H1 and H2 can fail,
+and the harness tests exercise them failing.
 
 **This is a different corpus from the 0.32.0 compatibility result and does not
 restate it.** `results/local-inference-compatibility.json` measures a proxy in
