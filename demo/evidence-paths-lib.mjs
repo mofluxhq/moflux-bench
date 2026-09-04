@@ -51,6 +51,8 @@ export const REVIEWED_EVIDENCE = Object.freeze([
   "results/openai-live-compatibility/",
   "results/openai-live-overload-8-seed.json",
   "results/openai-live-overload-8-seed/",
+  "results/local-inference-compatibility.json",
+  "results/local-inference-compatibility/",
 ]);
 
 /** Directory under the results root that holds generated runs. */
