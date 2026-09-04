@@ -33,6 +33,13 @@ const required = [
   "demo/local-inference.mjs",
   "demo/local-inference-lib.mjs",
   "demo/verify-local-inference.mjs",
+  "demo/ollama/compose-contention.yaml",
+  "demo/ollama/tyr-static.yaml",
+  "demo/ollama/tyr-moflux.yaml",
+  "demo/local-contention.mjs",
+  "demo/local-contention-lib.mjs",
+  "demo/verify-local-contention.mjs",
+  "demo/LOCAL-CONTENTION.md",
 ];
 const ignoredDirectories = new Set([".git", "node_modules", "coverage", ".tmp", "tmp"]);
 const forbiddenNames = new Set([".DS_Store", "Thumbs.db"]);
@@ -45,7 +52,10 @@ function walk(dir) {
     if (ignoredDirectories.has(entry.name)) continue;
     const full = path.join(dir, entry.name);
     const rel = path.relative(ROOT, full).split(path.sep).join("/");
-    if (rel === "demo/classes/runtime") continue;
+    // Ephemeral per-run TLS material for the two identity fixtures. Both are
+    // gitignored and both are removed on a clean exit; a crashed run can leave
+    // them behind, and that is a local artifact rather than a release defect.
+    if (rel === "demo/classes/runtime" || rel === "demo/ollama/runtime") continue;
     const stat = lstatSync(full);
     if (stat.isSymbolicLink()) findings.push(`${rel}: symbolic links are not allowed in a release`);
     if (entry.isDirectory()) {
@@ -369,8 +379,23 @@ if (pkg.scripts?.["demo:local"] !== "node demo/local-inference.mjs" ||
     pkg.scripts?.["verify:local"] !== "node demo/verify-local-inference.mjs") {
   findings.push("package.json: the local inference benchmark commands are required");
 }
-if (pkg.version !== "0.32.0") {
-  findings.push("package.json: the current benchmark release must be version 0.32.0");
+// The 0.33.0 contention benchmark. The publication command must keep both the
+// five-seed default and --require-proof: a single seed is not evidence, and a
+// sweep whose acceptance gate is optional is a demonstration.
+const contentionScript = pkg.scripts?.["demo:local:contention"] ?? "";
+for (const required of ["demo/local-contention.mjs", "--seeds=1-5", "--require-proof"]) {
+  if (!contentionScript.includes(required)) {
+    findings.push(`package.json: demo:local:contention is missing ${required}`);
+  }
+}
+if (pkg.scripts?.["demo:local:contention:dry-run"] !== "node demo/local-contention.mjs --dry-run" ||
+    pkg.scripts?.["demo:local:contention:doctor"] !== "node demo/local-contention.mjs --doctor" ||
+    !pkg.scripts?.["demo:local:contention:single"]?.includes("demo/local-contention.mjs") ||
+    pkg.scripts?.["verify:local:contention"] !== "node demo/verify-local-contention.mjs") {
+  findings.push("package.json: the local contention dry-run, doctor, single-seed and verify commands are required");
+}
+if (pkg.version !== "0.33.0") {
+  findings.push("package.json: the current benchmark release must be version 0.33.0");
 }
 if (
   !pkg.scripts?.["demo:restoration"]?.includes("--restoration-ladder") ||
@@ -478,6 +503,75 @@ if (/allow-nonlocal|allow-remote|skip-locality|force-upstream/.test(localInferen
 }
 if (localInference.includes("OPENAI_API_KEY")) {
   findings.push("demo/local-inference.mjs: an unmetered local benchmark must not read a provider credential");
+}
+
+// The contention benchmark's guard is strictly stronger than the compatibility
+// one's: its arm endpoints come from constants, so there is no endpoint flag to
+// override in the first place. That property is the thing being protected here.
+const localContention = readFileSync(path.join(ROOT, "demo/local-contention.mjs"), "utf8");
+const localContentionLib = readFileSync(path.join(ROOT, "demo/local-contention-lib.mjs"), "utf8");
+if (/allow-nonlocal|allow-remote|skip-locality|force-upstream|--direct-url|--moflux-url|--ollama-url/.test(localContention)) {
+  findings.push("demo/local-contention.mjs: arm endpoints are constants and must stay unoverridable");
+}
+if (localContention.includes("OPENAI_API_KEY") || localContention.includes("ANTHROPIC_API_KEY")) {
+  findings.push("demo/local-contention.mjs: an unmetered local benchmark must not read a provider credential");
+}
+for (const required of [
+  "assertLocalUpstream",
+  "meteredProviderReachable",
+  'guard: "non-overridable"',
+  "localContentionProof",
+  "warmupArm",
+  "evidenceLimits",
+]) {
+  if (!localContention.includes(required)) {
+    findings.push(`demo/local-contention.mjs: missing local-contention safety/evidence contract ${required}`);
+  }
+}
+// The claim boundary has to ship with the code, not only with the prose. These
+// are the statements this benchmark is structurally unable to support.
+for (const required of [
+  "gpuPreemption",
+  "gpuUtilization",
+  "kvCacheReclamation",
+  "ollamaSchedulerPreemption",
+  "decodeDeterminism",
+  "not-claimed",
+  "unlent_floor",
+  "HYPOTHESIS_THRESHOLDS",
+  "leaseGapSamples",
+]) {
+  if (!localContentionLib.includes(required)) {
+    findings.push(`demo/local-contention-lib.mjs: missing evidence contract ${required}`);
+  }
+}
+// Its own named proof, and a top-level `passed` that means only that proof.
+// Overloading one benchmark's `passed` with another's gates is a mistake this
+// repository has already made once.
+if (!localContention.includes("passed: proof.passed")) {
+  findings.push("demo/local-contention.mjs: top-level passed must mirror localContentionProof and nothing else");
+}
+for (const rel of ["demo/ollama/tyr-static.yaml", "demo/ollama/tyr-moflux.yaml"]) {
+  const text = readFileSync(path.join(ROOT, rel), "utf8");
+  if (!/baseUrl:\s*http:\/\/ollama:11434\s*$/m.test(text)) {
+    findings.push(`${rel}: the local stack must serve only the in-compose ollama upstream`);
+  }
+  if (/api\.openai\.com|api\.anthropic\.com/.test(text)) {
+    findings.push(`${rel}: a hosted provider must not be reachable from the unmetered local stack`);
+  }
+  if (text.includes("OPENAI_API_KEY")) {
+    findings.push(`${rel}: live OpenAI API key must stay in the caller process only`);
+  }
+}
+const contentionCompose = readFileSync(path.join(ROOT, "demo/ollama/compose-contention.yaml"), "utf8");
+if (contentionCompose.includes("OPENAI_API_KEY")) {
+  findings.push("demo/ollama/compose-contention.yaml: live OpenAI API key must stay in the caller process only");
+}
+if (!/OLLAMA_NUM_PARALLEL: "4"/.test(contentionCompose)) {
+  findings.push("demo/ollama/compose-contention.yaml: the admission bound is pinned to OLLAMA_NUM_PARALLEL=4");
+}
+if (!verifyRunnerNewDemos.includes("demo/verify-local-contention.mjs")) {
+  findings.push("scripts/verify.mjs: missing demo/verify-local-contention.mjs");
 }
 
 const openaiApiLib = readFileSync(path.join(ROOT, "demo/openai-api-lib.mjs"), "utf8");

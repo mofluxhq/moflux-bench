@@ -1,0 +1,144 @@
+# Local contention benchmark stack: one Ollama, one Latchflo, and one Tyr per
+# managed arm.
+#
+# Nothing here reaches a paid provider. `ollama` holds the only model weights
+# and is the only upstream either Tyr is configured to talk to, so a run of this
+# stack cannot produce an API bill even if a model name is mistyped.
+#
+# One Tyr per arm rather than one Tyr with two pools. Tyr routes to a pool by
+# model prefix, so two pools inside one process would force the two arms to send
+# two different model strings — and this benchmark's whole premise is that both
+# workload classes share one model on one server. Separate processes keep the
+# request byte-identical across arms and leave the admission policy as the only
+# variable.
+x-tyr-arm: &tyr-arm
+  image: ${MOFLUX_TYR_IMAGE:?Set MOFLUX_TYR_IMAGE}
+  restart: "no"
+  user: "${MOFLUX_TYR_USER:-0:0}"
+  environment:
+    TYR_CONFIG_FILE: /etc/tyr/config.yaml
+    LATCHFLO_AGENT_BOOTSTRAP_TOKEN: ${LATCHFLO_AGENT_BOOTSTRAP_TOKEN:?Set LATCHFLO_AGENT_BOOTSTRAP_TOKEN}
+    NODE_EXTRA_CA_CERTS: /etc/tyr/benchmark-ca.pem
+  depends_on:
+    ollama:
+      condition: service_healthy
+    latchflo:
+      condition: service_healthy
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  healthcheck:
+    test:
+      - CMD
+      - node
+      - -e
+      - >-
+        fetch('http://127.0.0.1:8787/healthz')
+        .then(response => { if (!response.ok) process.exit(1); })
+        .catch(() => process.exit(1))
+    interval: 500ms
+    timeout: 2s
+    start_period: 2s
+    retries: 60
+
+services:
+  ollama:
+    image: ${MOFLUX_OLLAMA_IMAGE:?Set MOFLUX_OLLAMA_IMAGE}
+    restart: "no"
+    environment:
+      # Four parallel slots, one loaded model. Measured on the reference host,
+      # this server's aggregate decode rate is flat in concurrency: four
+      # concurrent requests finish in roughly four times a single request's
+      # latency. That is what makes the benchmark meaningful — concurrency is a
+      # real, scarce, contended resource here rather than free parallelism — and
+      # it is also why the managed arms pin their admission bound to exactly
+      # this number instead of something larger.
+      OLLAMA_KEEP_ALIVE: "30m"
+      OLLAMA_NUM_PARALLEL: "4"
+      OLLAMA_MAX_LOADED_MODELS: "1"
+    ports:
+      # Deliberately neither the host default 11434 nor 11435. 11434 is very
+      # likely to be an operator's own Ollama, and 11435 belongs to the separate
+      # compatibility stack in compose.yaml, which `--keep-stack` may have left
+      # running. Binding either would risk measuring a different server than the
+      # summary names. The container port is unchanged, so both Tyrs still reach
+      # http://ollama:11434 on the compose network.
+      - "127.0.0.1:11436:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 1s
+      timeout: 5s
+      start_period: 10s
+      retries: 60
+
+  latchflo:
+    image: ${MOFLUX_LATCHFLO_IMAGE:?Set MOFLUX_LATCHFLO_IMAGE}
+    restart: "no"
+    environment:
+      LATCHFLO_HOST: 0.0.0.0
+      LATCHFLO_PORT: "8080"
+      LATCHFLO_DATABASE_PATH: /app/data/latchflo-control-plane.db
+      LATCHFLO_ADMIN_TOKEN: ${LATCHFLO_ADMIN_TOKEN:?Set LATCHFLO_ADMIN_TOKEN}
+      LATCHFLO_AGENT_BOOTSTRAP_TOKEN: ${LATCHFLO_AGENT_BOOTSTRAP_TOKEN:?Set LATCHFLO_AGENT_BOOTSTRAP_TOKEN}
+      # Tight loops on purpose. Latchflo only issues a fresh grant once the
+      # previous lease has expired, so between expiry and the next reconcile a
+      # pool briefly has no grant at all and Tyr admits nothing. That window is
+      # bounded by the reconcile interval plus how fast the agent picks the new
+      # grant up, and this benchmark runs a short lease deliberately (see
+      # CONTENTION_POLICY.lending.grantTtlMs), so both are set as low as the
+      # control plane usefully goes. The run measures the residual gap rather
+      # than assuming it away.
+      LATCHFLO_HEARTBEAT_INTERVAL_MS: "500"
+      LATCHFLO_POLL_INTERVAL_MS: "250"
+      LATCHFLO_AGENT_TIMEOUT_MS: "8000"
+      LATCHFLO_RECONCILE_INTERVAL_MS: "250"
+    ports:
+      - "127.0.0.1:18085:8080"
+    volumes:
+      - contention-latchflo-data:/app/data
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - >-
+          fetch('http://127.0.0.1:8080/readyz')
+          .then(response => { if (!response.ok) process.exit(1); })
+          .catch(() => process.exit(1))
+      interval: 1s
+      timeout: 2s
+      start_period: 3s
+      retries: 45
+
+  tyr-static:
+    <<: *tyr-arm
+    ports: ["127.0.0.1:18115:8787"]
+    volumes:
+      - ./tyr-static.yaml:/etc/tyr/config.yaml:ro
+      - ./runtime/ca.pem:/etc/tyr/benchmark-ca.pem:ro
+      - contention-tyr-static-data:/var/lib/tyr
+
+  tyr-moflux:
+    <<: *tyr-arm
+    ports: ["127.0.0.1:18116:8787"]
+    volumes:
+      - ./tyr-moflux.yaml:/etc/tyr/config.yaml:ro
+      - ./runtime/ca.pem:/etc/tyr/benchmark-ca.pem:ro
+      - contention-tyr-moflux-data:/var/lib/tyr
+
+volumes:
+  # External on purpose, and the runner creates it if it is missing.
+  #
+  # Every run starts from a clean control plane, which means tearing the stack
+  # down with `--volumes` so no grant, agent token, or pool row survives into
+  # the next one. The weights must not be collected by that: they are half a
+  # gigabyte, they are identical every run, and re-pulling them would make a
+  # clean start cost several minutes. A volume compose does not own is a volume
+  # `down --volumes` will not delete.
+  ollama-models:
+    external: true
+    name: moflux-bench-ollama-models
+  contention-latchflo-data:
+  contention-tyr-static-data:
+  contention-tyr-moflux-data:

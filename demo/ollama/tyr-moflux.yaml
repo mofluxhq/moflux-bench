@@ -1,0 +1,136 @@
+version: 1
+
+# Adaptive arm. Identical numeric floors to the static arm; the only difference
+# is that Latchflo's admission-class demand policy may lend an idle protected
+# floor and must restore it when the owner's demand returns.
+#
+# Both arm configs are byte-identical apart from the pool name and instance id.
+# The pool name is what selects the Latchflo capacity group, and therefore the
+# lending policy, so the admission policy is the only variable between arms.
+
+server:
+  port: 8787
+  maxRequestBodyBytes: 1048576
+  maxOutputTokens: 1024
+
+upstreams:
+  # The only upstream. It resolves on the compose network to the `ollama`
+  # service in compose-contention.yaml and has no route off the host, so this
+  # stack cannot reach a paid provider even if a caller sends a hosted model.
+  openai:
+    baseUrl: http://ollama:11434
+
+timeouts:
+  # A saturated local server is slow and highly variable: this benchmark
+  # deliberately offers more work than the machine can decode, so a request can
+  # legitimately sit behind three others. These are looser than the
+  # compatibility stack's so real contention is measured rather than timed out
+  # and recorded as a transport failure.
+  responseHeadersMs: 300000
+  streamIdleMs: 180000
+  clientStallMs: 180000
+
+shutdown:
+  drainTimeoutMs: 30000
+
+# The workload class is carried by signed identity, not by a client header.
+# `x-priority` is untrusted here precisely because the load generator sends it:
+# a benchmark that let the client name its own admission class would be
+# measuring the client.
+priority:
+  trustHeader: false
+
+identity:
+  jwt:
+    jwksUrl: https://host.docker.internal:9011/jwks
+    issuer: https://moflux-bench.local/
+    audience: moflux-bench
+    header: x-tyr-identity-token
+    algorithms: [RS256]
+    claims:
+      subject: sub
+      tenantId: tenant_id
+      applicationId: azp
+      roles: roles
+  roles:
+    invoke: [tyr.invoke]
+    operator: [tyr.operator]
+
+telemetry:
+  metrics:
+    enabled: true
+  audit:
+    enabled: false
+
+pools:
+  - name: local-moflux
+    # Prefixes of the small open-weight families this benchmark is expected to
+    # be pointed at. A model outside them is not silently admitted to this pool.
+    modelPrefixes: [qwen, llama, gemma, phi, mistral, smollm, deepseek, granite]
+    # A tokenizer proxy, not a claim about the served model. No local family's
+    # tokenizer is bundled here, so the pool starts from a GPT-4o estimate and
+    # `adaptiveEstimation` corrects it from the usage the server actually
+    # reports. The runner's warm-up requests exist to pay for that convergence
+    # before any measured request is issued.
+    estimatorModel: gpt-4o
+    # Every numeric limit is granted by Latchflo. Zero here is not a policy, it
+    # is "not yet granted": Tyr does not become ready until the control plane
+    # has handed this pool a usable grant.
+    maxConcurrent: 0
+    maxQueue: 0
+    limitsRevision: 0
+    admissionMode: enforce
+    inFlightTokenBudget: 0
+    defaultOutputReservation: 64
+    adaptiveEstimation:
+      enabled: true
+      smoothing: 0.2
+      minSamples: 5
+      minCorrection: 0.5
+      maxCorrection: 2
+      maxModels: 16
+    progressiveReconciliation:
+      enabled: true
+      updateStepTokens: 64
+      outputSafetyMarginTokens: 64
+    admissionClasses:
+      # Unclassified traffic is batch. Interactive protection has to be earned
+      # by presenting an identity, never granted by default, or a caller with no
+      # token would silently receive the protected floor.
+      defaultClass: batch
+      classes:
+        interactive:
+          protectedConcurrent: 0
+          maxConcurrent: 0
+          protectedInFlightTokens: 0
+          maxInFlightTokens: 0
+        batch:
+          protectedConcurrent: 0
+          maxConcurrent: 0
+          protectedInFlightTokens: 0
+          maxInFlightTokens: 0
+      rules:
+        - admissionClass: interactive
+          tenantIds: [tenant-premium]
+
+controlPlane:
+  type: latchflo
+  url: http://latchflo:8080
+  instanceId: tyr-moflux
+  pools: [local-moflux]
+  bootstrapTokenEnv: LATCHFLO_AGENT_BOOTSTRAP_TOKEN
+  agentTokenFile: /var/lib/tyr/latchflo-agent.token
+  # Matched to the control plane's reconcile interval: a short grant lease
+  # means the agent has to pick a replacement grant up quickly, and this is
+  # the interval that bounds how long the pool sits without one.
+  retryIntervalMs: 250
+  retryMaxIntervalMs: 2000
+  requestTimeoutMs: 3000
+  metadata:
+    region: local
+    zone: local-contention
+    version: 0.30.0
+    endpoint: http://tyr-moflux:8787
+    labels:
+      environment: benchmark
+      scenario: local-contention

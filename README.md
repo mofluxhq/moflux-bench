@@ -159,8 +159,57 @@ what make it different from the hosted one rather than a cheaper version of it:
 The pool in `demo/ollama/tyr.yaml` is pinned to `maxConcurrent: 1` to match
 `OLLAMA_NUM_PARALLEL=1` in the compose file. An admission bound above the
 server's real concurrency would be shedding against imaginary capacity. Like the
-OpenAI compatibility path, this is **not** an overload benchmark — admission
-efficacy under load remains simulator-only.
+OpenAI compatibility path, this is **not** an overload benchmark. Workload-isolation
+under local contention is measured by the separate 0.33.0 benchmark below.
+
+### Local inference under contention
+
+MoFlux Bench 0.33.0 adds a second, separate local benchmark that *is* about
+behaviour under load. `demo/local-contention.mjs` asks one question:
+
+> When interactive and batch requests contend for the same self-hosted inference
+> capacity, does MoFlux preserve interactive service while still letting batch
+> traffic use otherwise-idle capacity?
+
+```bash
+npm run demo:local:contention:dry-run    # prints the plan and arm order; sends nothing
+npm run demo:local:contention:single     # one seed, development
+npm run demo:local:contention            # five seeds with --require-proof
+```
+
+Three arms replay one immutable, five-phase trace against one Ollama container
+serving one model: `direct` (no admission control, Ollama's own FIFO queue),
+`static` (fixed per-class protected floors, never lent), and `moflux` (identical
+floors, lent while idle and restored on demand). `static` and `moflux` partition
+identical capacity and differ only in whether Latchflo's
+`admissionClassDemandPolicy` is enabled, so any difference between them has
+exactly one candidate cause.
+
+The workload class is carried by signed identity rather than a client header,
+and the trace contains a deliberate interval in which interactive demand is
+absent — a control plane cannot lend a floor it never observes idle. That is why
+`load/trace-lib.mjs` grew an optional second interactive arrival window
+(trace version 3); without it every historical trace still hashes exactly as
+before.
+
+Its acceptance object is `localContentionProof` and the top-level `passed`
+mirrors that and nothing else. Per seed it gates validity and safety only —
+one trace across arms, warm-up excluded, measurable queueing in the control arm,
+no floor violation, no over-allocation, no unacknowledged handoff. Across seeds
+it gates the hypotheses on medians against pre-registered thresholds: interactive
+tail latency or goodput materially better than unmanaged Ollama (H1), materially
+more batch work than a rigid partition while the interactive floor is idle (H2),
+the protected floor never violated (H3), and no unsafe capacity handoff (H4).
+H1 and H2 can fail, and the harness tests exercise them failing.
+
+**This is a different corpus from the 0.32.0 compatibility result and does not
+restate it.** `results/local-inference-compatibility.json` measures a proxy in
+front of an *unsaturated* server, one request at a time, and its deltas are
+explicitly not quotable. Read `demo/LOCAL-CONTENTION.md` for the workload
+parameters, the measured control-plane behaviour the design is built around, and
+the full list of claims this evidence may not be used to support — no GPU
+preemption, no GPU utilization, no KV-cache reclamation, no scheduler
+preemption, and no generalization from `qwen3:0.6b` on a CPU-only container.
 
 Two live OpenAI paths are opt-in and budget-capped. The compatibility path stays deliberately tiny:
 
@@ -1401,7 +1450,10 @@ demo/run-demo.mjs      full narrated public research walkthrough
 demo/tenant-fairness.mjs authenticated admission-class arms and the restoration ladder
 demo/local-inference.mjs unmetered self-hosted benchmark against a local Ollama server
 demo/local-inference-lib.mjs locality guard, Ollama request body, per-arm aggregation
-demo/ollama/          local inference stack: Ollama + one Tyr, no metered upstream
+demo/local-contention.mjs unmetered workload-isolation benchmark under local contention
+demo/local-contention-lib.mjs arm partitions, capacity invariants, localContentionProof
+demo/LOCAL-CONTENTION.md contention benchmark: arms, phases, acceptance, claim boundary
+demo/ollama/          local inference stacks: compatibility, and contention with Latchflo
 demo/openai/          live OpenAI stacks for the compatibility and overload paths
 demo/restoration-contract-lib.mjs Latchflo 0.15.0 per-resource restoration contracts
 demo/restoration-enforceability-lib.mjs what a restoration mechanism guarantees, and its bill

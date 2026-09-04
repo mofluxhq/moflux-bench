@@ -133,6 +133,64 @@ A quotable proxy-overhead figure needs warm-up excluded from the aggregation,
 many more post-warm-up pairs, a reported spread, and recorded output hashes
 proving the arms decoded identically. None of those hold here.
 
+## Local inference contention
+
+`results/local-inference-contention.json` is the reviewed publication target for a
+five-seed `npm run demo:local:contention` run promoted with
+`npm run evidence:publish -- --as=local-inference-contention`. It is intentionally
+absent until a publication-quality run is explicitly promoted; 0.33.0 ships the
+harness and proof contract without manufacturing a workload-isolation result.
+
+**This is a separate corpus from `local-inference-compatibility.json` above and
+does not replace or reinterpret it.** The compatibility corpus measures a proxy
+in front of an unsaturated server and establishes nothing about workload
+protection. This one measures admission behaviour when interactive and batch
+traffic contend for one saturated local server.
+
+Three arms — `direct` (no admission control), `static` (fixed protected floors,
+never lent), and `moflux` (identical floors, lent while idle and restored on
+demand) — replay one immutable five-phase trace per seed against
+`ollama/ollama:0.12.3` serving `qwen3:0.6b`, with Tyr 0.30.0 and Latchflo
+0.15.0 managing the two partitioned arms. Arm order is rotated and reversed
+across seeds so no arm sits in one position.
+
+The summary carries its own acceptance object, `localContentionProof`, and the
+top-level `passed` mirrors that and nothing else. Per seed the gates are
+validity and safety only and are absolute; the H1/H2 performance hypotheses are
+evaluated across seeds on medians against thresholds pre-registered in
+`HYPOTHESIS_THRESHOLDS`, and both can fail. Every failed gate records its
+observed value, its threshold, and why the gate exists.
+
+Two properties of the run are recorded because they shape what it can show, and
+both were measured rather than assumed:
+
+- **Lending and restoration are asymmetric in Latchflo 0.15.0.** Raising a
+  protected floor requires the borrower to drain, so it takes the acknowledged
+  handoff path and commits without waiting for the grant lease. Lowering one
+  strands nobody, needs no drain, and is deferred to the next grant issuance —
+  which happens only after the lease expires. The benchmark therefore runs a
+  15-second lease rather than the 240-second lease the tenant-fairness scenario
+  uses; at 240 seconds a released floor is correctly computed and never applied
+  inside a run of this length.
+- **A short lease costs a brief ungranted window at each expiry.** Latchflo
+  issues the replacement only after the old grant is gone, so the pool
+  momentarily holds nothing and Tyr admits nothing. `leaseGapSamples` and
+  `leaseGapShare` report it per run, a gate fails the run if it grows past 10%
+  of samples, and both managed arms carry the identical lease so it is never a
+  variable between them.
+
+An aborted capacity handoff is recorded as the safe outcome it is — the control
+plane declining a reallocation whose preconditions lapsed — and priced as slower
+restoration. Only a commit whose drain grants were never acknowledged counts
+against the safety gate.
+
+`evidenceLimits` travels inside every summary. This corpus may not be used to
+claim GPU preemption, GPU utilization, KV-cache reclamation, Ollama scheduler
+preemption, upstream request reclamation, identical decoded text across arms,
+production-scale performance, or generalization from `qwen3:0.6b` on a CPU-only
+containerised server. The measured layer is admission: which requests Tyr let
+through, when, and what the caller then experienced.
+
 ## Published evidence status
 
 `video-seed-sweep.json` and `video-seed-sweep/` hold the reviewed five-seed

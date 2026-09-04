@@ -74,6 +74,20 @@ const CONFIG = Object.freeze({
   batchSizeSigma: num("batch-size-sigma", 0),
   interactiveMaxTokens: num("interactive-max-tokens", 400),
 
+  /**
+   * Optional second interactive arrival window.
+   *
+   * Only a workload with a genuinely quiet interactive window can exercise
+   * lending: a control plane cannot lend a floor it never observes idle. These
+   * default to the historical single-window schedule, and the trace stays
+   * version 1 or 2 — byte-identical — until `--interactive-resume-rps` is set.
+   */
+  interactiveStartMs: num("interactive-start-ms", 0),
+  interactiveDurationMs: num("interactive-duration-ms", num("duration-ms", 60000)),
+  interactiveResumeStartMs: num("interactive-resume-start-ms", 0),
+  interactiveResumeDurationMs: num("interactive-resume-duration-ms", 0),
+  interactiveResumeRps: num("interactive-resume-rps", 0),
+
   batchStartMs: num("batch-start-ms", 20000),
   batchDurationMs: num("batch-duration-ms", 25000),
   batchRps: num("batch-rps", 6),
@@ -103,6 +117,26 @@ const CONFIG = Object.freeze({
   drainIdleMs: num("drain-idle-ms", 20000),
   drainMaxMs: num("drain-max-ms", 180000),
   windowMs: num("window-ms", 30000),
+  /**
+   * Sampling temperature, sent only when set.
+   *
+   * Omitted by default so the request body stays byte-identical to every
+   * previous release against the provider simulator, which has no temperature
+   * to honour. A real self-hosted server does, and one left at its own default
+   * makes a seeded replay less reproducible than it could be, so the local
+   * benchmarks set it to 0 explicitly.
+   */
+  temperature: args.has("temperature") ? Number(args.get("temperature")) : null,
+  /**
+   * Include every completion's offset, latency and TTFT in the summary.
+   *
+   * Off by default. `phaseSamples` is one record per completed request and the
+   * simulator sweeps complete thousands per class per arm, so emitting it
+   * unconditionally would inflate every existing summary — including reviewed
+   * ones — for the benefit of runs that do not read it. A run that needs
+   * whole-run distributions rather than the pre-cut phase windows asks for it.
+   */
+  emitPhaseSamples: bool("emit-phase-samples", false),
   traceFile: str("trace-file", ""),
   traceOut: str("trace-out", ""),
   out: str("out", ""),
@@ -115,6 +149,27 @@ if (CONFIG.interactiveTargets.length === 0 || CONFIG.batchTargets.length === 0) 
 }
 if (!["openai", "anthropic"].includes(CONFIG.providerApi)) {
   throw new Error("--provider-api must be openai or anthropic");
+}
+if (CONFIG.temperature !== null && !Number.isFinite(CONFIG.temperature)) {
+  throw new Error("--temperature must be a finite number when it is set");
+}
+if (CONFIG.interactiveResumeRps > 0) {
+  const firstEndMs = CONFIG.interactiveStartMs + CONFIG.interactiveDurationMs;
+  if (CONFIG.interactiveResumeStartMs < firstEndMs) {
+    // Overlapping windows would not be a second phase, they would be one higher
+    // rate expressed twice — and the quiet interval a lending policy needs in
+    // order to observe an idle floor would silently not exist.
+    throw new Error(
+      `--interactive-resume-start-ms (${CONFIG.interactiveResumeStartMs}) must be at or after the ` +
+        `end of the first interactive window (${firstEndMs})`,
+    );
+  }
+  if (
+    CONFIG.interactiveResumeDurationMs <= 0 ||
+    CONFIG.interactiveResumeStartMs >= CONFIG.durationMs
+  ) {
+    throw new Error("the interactive resume window must have positive duration inside the run");
+  }
 }
 const PROVIDER_PATH = CONFIG.providerApi === "anthropic"
   ? "/v1/messages"
@@ -167,6 +222,16 @@ for (const cls of classes) {
     transportError: 0,
     exhausted: 0, // gave up after maxAttempts
     outputTokens: 0,
+    /**
+     * Prompt tokens the server reported, summed over successful requests.
+     *
+     * Only ever set from a final usage frame. Output tokens fall back to a
+     * character estimate when usage is absent; input tokens deliberately do
+     * not, because there is no client-side observation to estimate them from
+     * and a guess would look exactly like a measurement.
+     */
+    inputTokens: 0,
+    inputTokensReported: 0,
     localRejectReasons: {},
     localRejectPools: {},
     localRejectConstraints: {},
@@ -342,6 +407,28 @@ function phaseWindows(s) {
   // They are counted separately so idle + contended + drain equals the class's
   // total successes, and the split can be checked rather than trusted.
   const drained = s.phaseSamples.filter((x) => x.offsetMs >= endMs);
+  // A second interactive window splits the post-batch span into the two
+  // phases a contention benchmark is actually about: one in which the
+  // interactive floor is idle and borrowable, and one in which its owner has
+  // come back for it. `contended` still spans both, unchanged, so nothing that
+  // already reads this object has to know about the split.
+  const resumeMs = CONFIG.interactiveResumeRps > 0 ? CONFIG.interactiveResumeStartMs : null;
+  const phased =
+    resumeMs !== null && resumeMs > boundaryMs && resumeMs < endMs
+      ? {
+          resumeMs,
+          /** Batch running against an idle interactive floor. */
+          borrow: describe(
+            s.phaseSamples.filter((x) => inRange(x, boundaryMs, resumeMs)),
+            resumeMs - boundaryMs,
+          ),
+          /** Both classes offered simultaneously: the critical overlap. */
+          contention: describe(
+            s.phaseSamples.filter((x) => inRange(x, resumeMs, endMs)),
+            endMs - resumeMs,
+          ),
+        }
+      : {};
   return {
     boundaryMs,
     endMs,
@@ -350,6 +437,7 @@ function phaseWindows(s) {
       s.phaseSamples.filter((x) => inRange(x, boundaryMs, endMs)),
       Math.max(0, endMs - boundaryMs),
     ),
+    ...phased,
     /** Completed after the offered-load window closed. */
     drainCompleted: drained.length,
   };
@@ -431,6 +519,7 @@ async function issue(entry) {
     // Version-2 traces carry a size per request; version-1 traces fall back to
     // the class constant, so an old trace replays byte-identically.
     max_tokens: entry.maxTokens ?? (isBatch ? CONFIG.batchMaxTokens : CONFIG.interactiveMaxTokens),
+    ...(Number.isFinite(CONFIG.temperature) ? { temperature: CONFIG.temperature } : {}),
     messages: [
       {
         role: "user",
@@ -691,6 +780,7 @@ async function issue(entry) {
         // that as a retryable transport failure, not an unhandled rejection.
         let ttftMs = null;
         let outputTokens = 0;
+        let inputTokens = null;
         touch("streaming");
         if (response.body) {
           const decoder = new TextDecoder();
@@ -731,6 +821,11 @@ async function issue(entry) {
               ) {
                 outputTokens = parsed.usage.output_tokens;
               }
+              if (Number.isFinite(parsed?.usage?.prompt_tokens)) {
+                inputTokens = parsed.usage.prompt_tokens;
+              } else if (Number.isFinite(parsed?.usage?.input_tokens)) {
+                inputTokens = parsed.usage.input_tokens;
+              }
               progress.outputTokens = outputTokens;
               progress.updatedAt = Date.now();
             }
@@ -739,6 +834,10 @@ async function issue(entry) {
         s.success += 1;
         markSuccess(cls);
         s.outputTokens += outputTokens;
+        if (Number.isFinite(inputTokens)) {
+          s.inputTokens += inputTokens;
+          s.inputTokensReported += 1;
+        }
         record(cls, performance.now() - logicalStart, ttftMs ?? performance.now() - logicalStart);
         return;
       } catch {
@@ -1157,6 +1256,10 @@ for (const cls of classes) {
         : +(s.firstSuccessAtMs - s.firstAttemptAtMs).toFixed(1),
     /** The run split at batch arrival. See phaseWindows(). */
     windows: phaseWindows(s),
+    // Every completion, in arrival order, when the caller asked for them. The
+    // windows above are pre-cut at fixed trace offsets; this is what a reader
+    // needs to compute a distribution the windows do not already carry.
+    ...(CONFIG.emitPhaseSamples ? { phaseSamples: s.phaseSamples } : {}),
     retryHints: {
       received: s.retryHints.received,
       applied: s.retryHints.applied,
@@ -1169,6 +1272,9 @@ for (const cls of classes) {
       ),
     },
     outputTokens: Math.round(s.outputTokens),
+    /** Prompt tokens, and how many successes actually reported one. */
+    inputTokens: Math.round(s.inputTokens),
+    inputTokensReported: s.inputTokensReported,
     latencyMs: {
       p50: +percentile(latencies, 0.5).toFixed(1),
       p95: +percentile(latencies, 0.95).toFixed(1),

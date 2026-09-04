@@ -58,6 +58,60 @@ export function sizeDistribution(config) {
   return config.sizeDistribution === "lognormal" ? "lognormal" : "uniform";
 }
 
+/**
+ * The interactive class's arrival windows.
+ *
+ * A version-1 or version-2 trace has exactly one, spanning the whole run, which
+ * is what `batchStartMs` alone can express: interactive traffic that is always
+ * present and batch traffic that joins it.
+ *
+ * A contention benchmark needs the other shape. To lend an idle protected floor
+ * a control plane must first observe one, so the workload has to contain a
+ * window in which interactive demand is genuinely absent while batch traffic
+ * runs — and then a window in which it returns. That is two interactive
+ * windows, not one, and no arrangement of a single rate produces it.
+ *
+ * `interactiveResumeRps` is what selects the shape. When it is unset or zero
+ * this returns the single historical window and every draw downstream is
+ * unchanged, so a uniform version-1 trace still hashes exactly as it did.
+ */
+export function interactiveWindows(config) {
+  const startMs = Number(config.interactiveStartMs ?? 0);
+  const durationMs = Number(
+    config.interactiveDurationMs ?? Math.max(0, config.durationMs - startMs),
+  );
+  const windows = [{ label: "interactive", startMs, durationMs, rps: config.interactiveRps }];
+  if (Number(config.interactiveResumeRps ?? 0) > 0) {
+    windows.push({
+      label: "interactive-resume",
+      startMs: Number(config.interactiveResumeStartMs ?? 0),
+      durationMs: Number(config.interactiveResumeDurationMs ?? 0),
+      rps: Number(config.interactiveResumeRps),
+    });
+  }
+  return windows;
+}
+
+/** True when the configuration uses the multi-window interactive schedule. */
+export function hasInteractiveResume(config) {
+  return Number(config?.interactiveResumeRps ?? 0) > 0;
+}
+
+/**
+ * Trace format version for a configuration.
+ *
+ * 1 — uniform sizes, one interactive window.
+ * 2 — per-request lognormal sizes.
+ * 3 — a second interactive arrival window.
+ *
+ * Version 3 wins over 2 because it is the more recent addition and its
+ * validator handles both; a version-3 trace may carry lognormal sizes.
+ */
+export function traceVersion(config) {
+  if (hasInteractiveResume(config)) return 3;
+  return sizeDistribution(config) === "lognormal" ? 2 : 1;
+}
+
 /** Per-class size bounds, derived from the class median and the spread. */
 export function sizeBounds(config, cls) {
   const isBatch = cls === "batch";
@@ -84,6 +138,19 @@ export function traceWorkload(config) {
           interactiveSizeSigma: config.interactiveSizeSigma,
           batchSizeSigma: config.batchSizeSigma,
         };
+  // Emitted only for a version-3 configuration, so the recorded workload of a
+  // version-1 or version-2 trace — and therefore its hash — is untouched.
+  const phased = hasInteractiveResume(config)
+    ? {
+        interactiveStartMs: Number(config.interactiveStartMs ?? 0),
+        interactiveDurationMs: Number(
+          config.interactiveDurationMs ?? Math.max(0, config.durationMs - (config.interactiveStartMs ?? 0)),
+        ),
+        interactiveResumeStartMs: Number(config.interactiveResumeStartMs ?? 0),
+        interactiveResumeDurationMs: Number(config.interactiveResumeDurationMs ?? 0),
+        interactiveResumeRps: Number(config.interactiveResumeRps),
+      }
+    : {};
   return {
     durationMs: config.durationMs,
     seed: config.seed,
@@ -98,20 +165,35 @@ export function traceWorkload(config) {
     maxAttempts: config.maxAttempts,
     backoffBaseMs: config.backoffBaseMs,
     ...heterogeneous,
+    ...phased,
   };
 }
 
-function classEntries(config, cls) {
+/**
+ * Arrivals for one class, or for one window of the interactive class.
+ *
+ * `window` is `null` for batch and for the historical single-window interactive
+ * schedule; passing one selects a named window whose arrival stream and request
+ * ids are derived from that name. Naming the stream is what keeps the addition
+ * additive: the resume window draws from `interactive-resume:arrivals`, which
+ * no earlier trace ever consumed, so not one existing draw shifts position.
+ */
+function classEntries(config, cls, window = null) {
   const isBatch = cls === "batch";
-  const startMs = isBatch ? config.batchStartMs : 0;
-  const durationMs = isBatch ? config.batchDurationMs : config.durationMs;
-  const rps = isBatch ? config.batchRps : config.interactiveRps;
+  const label = window?.label ?? cls;
+  const startMs = window ? window.startMs : isBatch ? config.batchStartMs : 0;
+  const durationMs = window
+    ? window.durationMs
+    : isBatch
+      ? config.batchDurationMs
+      : config.durationMs;
+  const rps = window ? window.rps : isBatch ? config.batchRps : config.interactiveRps;
   const endMs = Math.min(config.durationMs, startMs + durationMs);
   if (!(rps > 0) || !(durationMs > 0) || startMs >= endMs) return [];
 
   const heterogeneous = sizeDistribution(config) === "lognormal";
   const bounds = heterogeneous ? sizeBounds(config, cls) : null;
-  const arrivalRand = mulberry32(streamSeed(config.seed, `${cls}:arrivals`));
+  const arrivalRand = mulberry32(streamSeed(config.seed, `${label}:arrivals`));
   let atMs = startMs;
   let index = 0;
   const entries = [];
@@ -119,7 +201,7 @@ function classEntries(config, cls) {
     atMs += gapMs(arrivalRand, rps);
     if (atMs >= endMs) break;
     index += 1;
-    const id = `${cls}-${index}`;
+    const id = `${label}-${index}`;
     const requestRand = mulberry32(streamSeed(config.seed, id));
     const retryJitter = [];
     const targetSlots = [];
@@ -153,15 +235,22 @@ function classEntries(config, cls) {
 export function buildTrace(config) {
   const workload = traceWorkload(config);
   const entries = [
-    ...classEntries(config, "interactive"),
+    // Windows are passed explicitly rather than defaulted so the single-window
+    // case still calls the historical code path with `window === null`.
+    ...(hasInteractiveResume(config)
+      ? interactiveWindows(config).flatMap((window) =>
+          classEntries(config, "interactive", window),
+        )
+      : classEntries(config, "interactive")),
     ...classEntries(config, "batch"),
   ].sort((a, b) => a.arrivalMs - b.arrivalMs || a.class.localeCompare(b.class) || a.id.localeCompare(b.id));
 
   const trace = {
-    // Version 2 carries per-request sizes. A uniform trace stays at version 1
-    // and hashes exactly as before, so results recorded against v1 remain
+    // Version 2 carries per-request sizes and version 3 a second interactive
+    // arrival window. A uniform single-window trace stays at version 1 and
+    // hashes exactly as before, so results recorded against v1 remain
     // reproducible rather than merely archived.
-    version: sizeDistribution(config) === "lognormal" ? 2 : 1,
+    version: traceVersion(config),
     workload,
     planned: {
       interactive: entries.filter((entry) => entry.class === "interactive").length,
@@ -184,7 +273,7 @@ export function traceHash(trace) {
 }
 
 export function validateTrace(trace, config) {
-  const expectedVersion = sizeDistribution(config) === "lognormal" ? 2 : 1;
+  const expectedVersion = traceVersion(config);
   if (!trace || !Array.isArray(trace.entries)) {
     throw new Error("trace must be a benchmark trace with entries");
   }
@@ -214,7 +303,25 @@ export function validateTrace(trace, config) {
         throw new Error(`trace entry ${entry.id ?? "unknown"} is missing ${key}`);
       }
     }
-    if (expectedVersion === 2) {
+    if (expectedVersion === 3 && entry.class === "interactive") {
+      // Every interactive arrival has to fall inside a window the configuration
+      // actually declares. Without this, a trace whose quiet window was filled
+      // in by an edit would replay as an ordinary contended run and the
+      // benchmark would report lending that the workload never made possible.
+      const windows = interactiveWindows(config).filter((window) => window.rps > 0);
+      const inSomeWindow = windows.some(
+        (window) =>
+          entry.arrivalMs >= window.startMs &&
+          entry.arrivalMs < Math.min(config.durationMs, window.startMs + window.durationMs),
+      );
+      if (!inSomeWindow) {
+        throw new Error(
+          `trace entry ${entry.id ?? "unknown"} arrives at ${entry.arrivalMs}ms, outside every ` +
+            "configured interactive window",
+        );
+      }
+    }
+    if (expectedVersion === 2 || (expectedVersion === 3 && sizeDistribution(config) === "lognormal")) {
       const bounds = sizeBounds(config, entry.class);
       for (const [key, range] of [
         ["inputChars", bounds.inputChars],

@@ -30,6 +30,7 @@ const tests = [
   ["demo/verify-membership.mjs", 30_000],
   ["demo/verify-openai-live.mjs", 30_000],
   ["demo/verify-local-inference.mjs", 30_000],
+  ["demo/verify-local-contention.mjs", 60_000],
   ["demo/verify-openai-overload.mjs", 30_000],
   ["demo/verify-openai-overload-sweep.mjs", 30_000],
   ["demo/verify-queue-policy.mjs", 30_000],
