@@ -803,6 +803,7 @@ export function capacityInvariantViolations(samples, { unlentProtectedTokens } =
    */
   const leaseGaps = [];
   let previousBatchBorrowed = null;
+  let protectedDemandBorrowBaseline = null;
 
   for (const sample of samples) {
     const offsetMs = Number(sample?.offsetMs ?? 0);
@@ -813,6 +814,7 @@ export function capacityInvariantViolations(samples, { unlentProtectedTokens } =
       // A lease gap breaks continuity in the sampled borrower count; do not
       // infer a new admission across a period in which no grant was observable.
       previousBatchBorrowed = null;
+      protectedDemandBorrowBaseline = null;
       continue;
     }
     let inFlightSum = 0;
@@ -899,30 +901,58 @@ export function capacityInvariantViolations(samples, { unlentProtectedTokens } =
     }
     // A borrower admitted while capacity was lent can remain in flight after
     // the floor is restored. That is non-preemptive restoration, not capacity
-    // creation. The safety question the sampled state can answer is narrower:
-    // did *new* batch borrowing visibly grow after interactive demand returned
-    // and its concurrency floor was already restored?
+    // creation. New borrowing can also be legitimate while the protected floor
+    // is whole when another class still has capacity explicitly released. The
+    // safety question the sampled state can answer is therefore narrower: did
+    // batch borrowing grow beyond the grandfathered borrowers plus capacity
+    // that is *currently* released by non-interactive classes while protected
+    // interactive demand is active?
     const interactive = classSample(sample, "interactive");
     const batch = classSample(sample, "batch");
     const interactiveFloor = Number(interactive?.limits?.protectedConcurrent ?? 0);
     const interactiveDemanding =
-      interactive?.demandState === "demanding" ||
-      interactive?.restorationPending === true ||
-      Number(interactive?.recentAdmissions ?? 0) > 0 ||
-      Number(interactive?.recentRejections ?? 0) > 0;
+      interactive?.demandState === "demanding" || interactive?.restorationPending === true;
     const batchBorrowed = Number(batch?.borrowedConcurrent ?? 0);
-    if (
-      previousBatchBorrowed !== null &&
-      interactiveDemanding &&
-      interactiveFloor >= nominal.interactive.protectedConcurrent &&
-      batchBorrowed > previousBatchBorrowed
-    ) {
-      violations.borrowedGrowthAfterRestoration.push({
-        offsetMs,
-        observed: { previous: previousBatchBorrowed, current: batchBorrowed },
-        threshold: "must not increase after protected demand returns and the floor is restored",
-        reason: "batch borrowing visibly grew after interactive restoration",
-      });
+    const nonInteractiveReleasedConcurrent = Object.keys(nominal)
+      .filter((admissionClass) => admissionClass !== "interactive")
+      .reduce(
+        (sum, admissionClass) =>
+          sum + Number(classSample(sample, admissionClass)?.releasedConcurrent ?? 0),
+        0,
+      );
+    const protectedDemandActive =
+      interactiveDemanding && interactiveFloor >= nominal.interactive.protectedConcurrent;
+
+    if (protectedDemandActive) {
+      if (protectedDemandBorrowBaseline === null) {
+        // Borrowers already present when the floor becomes whole are
+        // grandfathered. Without preemption the sampled state cannot prove
+        // where they came from, only whether borrowing subsequently grows.
+        protectedDemandBorrowBaseline = batchBorrowed;
+      }
+      const allowedBorrowed = protectedDemandBorrowBaseline + nonInteractiveReleasedConcurrent;
+      if (
+        previousBatchBorrowed !== null &&
+        batchBorrowed > previousBatchBorrowed &&
+        batchBorrowed > allowedBorrowed
+      ) {
+        violations.borrowedGrowthAfterRestoration.push({
+          offsetMs,
+          observed: {
+            previous: previousBatchBorrowed,
+            current: batchBorrowed,
+            grandfathered: protectedDemandBorrowBaseline,
+            nonInteractiveReleasedConcurrent,
+          },
+          threshold: `<= ${allowedBorrowed} while protected demand is active`,
+          reason:
+            "batch borrowing grew beyond grandfathered borrowers and contemporaneously released non-interactive capacity",
+        });
+      }
+    } else {
+      // Once protected demand is idle again, lending is allowed to resume. A
+      // later demand episode gets a fresh grandfathered baseline.
+      protectedDemandBorrowBaseline = null;
     }
     previousBatchBorrowed = batchBorrowed;
   }

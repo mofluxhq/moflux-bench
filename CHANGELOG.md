@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.33.2 - 2026-09-04
+
+### Fixed
+
+- Refine the local-contention H4 borrowing invariant so a restored interactive floor does not reserve capacity another class has explicitly released. The 0.33.1 real seed exposed a false positive where batch `borrowedConcurrent` moved from 0 to 1 after the interactive floor was whole, but that request was backed by batch's own still-released one-slot floor. The proof now establishes a grandfathered borrower baseline for each active protected-demand episode and permits additional borrowing only up to contemporaneously released non-interactive concurrency; growth beyond that allowance still fails H4.
+- Stop using recent-admission/rejection counters as a proxy for current protected demand in this invariant. H4 now keys off the applied demand/restoration state, so stale activity counters cannot permanently suppress legitimate lending after the protected workload becomes idle again.
+
+### Changed
+
+- Bump MoFlux Bench to 0.33.2. The local-contention workload, SLO thresholds, runtime pins, and 0.33.1 phase/restoration fixes are unchanged; this patch only corrects H4 attribution.
+
 ## 0.33.1 - 2026-09-03
 
 ### Fixed

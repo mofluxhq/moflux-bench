@@ -165,8 +165,8 @@ under local contention is measured by the separate 0.33.0 benchmark below.
 ### Local inference under contention
 
 MoFlux Bench 0.33.0 added a second, separate local benchmark that *is* about
-behaviour under load; 0.33.1 corrects its phase attribution and proof semantics
-without changing the workload. `demo/local-contention.mjs` asks one question:
+behaviour under load; 0.33.1 corrects its phase attribution and proof semantics,
+and 0.33.2 fixes H4 attribution for borrowing backed by another class's explicitly released capacity. Neither patch changes the workload. `demo/local-contention.mjs` asks one question:
 
 > When interactive and batch requests contend for the same self-hosted inference
 > capacity, does MoFlux preserve interactive service while still letting batch
