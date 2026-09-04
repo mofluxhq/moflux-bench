@@ -1,0 +1,269 @@
+{
+  "schemaVersion": 1,
+  "benchmark": "local-inference-compatibility",
+  "generatedAt": "2026-09-03T23:55:39.058Z",
+  "purpose": "Self-hosted compatibility and proxy-overhead baseline against a local inference server; not an overload-efficacy benchmark.",
+  "runtime": {
+    "tyr": "0.30.0",
+    "ollama": "0.12.3",
+    "model": "qwen3:0.6b",
+    "openaiApi": "chat-completions",
+    "endpoint": "/v1/chat/completions"
+  },
+  "locality": {
+    "guard": "non-overridable",
+    "directUpstream": "127.0.0.1:11435",
+    "mofluxUpstream": "127.0.0.1:18114",
+    "meteredProviderReachable": false,
+    "note": "This benchmark has no spend guard because no upstream it is permitted to reach can bill. Both URLs are checked against the locality rule before the first request."
+  },
+  "arms": {
+    "direct": {
+      "requests": 8,
+      "success": 8,
+      "failures": 0,
+      "successRate": 1,
+      "ttftMs": {
+        "p50": 171.2,
+        "p95": 2033.29
+      },
+      "latencyMs": {
+        "p50": 5501.65,
+        "p95": 6733.16
+      },
+      "promptTokens": 216,
+      "completionTokens": 512,
+      "decodeTokensPerSecondP50": 12
+    },
+    "moflux": {
+      "requests": 8,
+      "success": 8,
+      "failures": 0,
+      "successRate": 1,
+      "ttftMs": {
+        "p50": 270.03,
+        "p95": 628.44
+      },
+      "latencyMs": {
+        "p50": 5167.19,
+        "p95": 6086.68
+      },
+      "promptTokens": 216,
+      "completionTokens": 512,
+      "decodeTokensPerSecondP50": 12.85
+    }
+  },
+  "deltas": {
+    "ttftP50Ms": 98.83,
+    "latencyP50Ms": -334.46,
+    "steadyState": true
+  },
+  "caveats": {
+    "warmupPairs": 5,
+    "note": "Weight loading and Tyr's adaptive token estimator both inflate the earliest pairs. Alternating arm order balances that across arms rather than removing it; a run with requestsPerArm near warmupPairs is measuring warm-up. The proxy and the model also share this machine's cores, so latencyP50Ms includes contention a hosted run would not."
+  },
+  "acceptance": {
+    "passed": true,
+    "directAllSucceeded": true,
+    "mofluxAllSucceeded": true,
+    "localityGuardPassed": true,
+    "steadyStateMeasured": true
+  },
+  "records": [
+    {
+      "arm": "direct",
+      "pair": 1,
+      "ok": true,
+      "status": 200,
+      "headersMs": 2032.42,
+      "ttftMs": 2033.29,
+      "latencyMs": 6733.16,
+      "promptTokens": 27,
+      "completionTokens": 64,
+      "outputChars": 269
+    },
+    {
+      "arm": "moflux",
+      "pair": 1,
+      "ok": true,
+      "status": 200,
+      "headersMs": 269.79,
+      "ttftMs": 270.03,
+      "latencyMs": 4783.6,
+      "promptTokens": 27,
+      "completionTokens": 64,
+      "outputChars": 259
+    },
+    {
+      "arm": "moflux",
+      "pair": 2,
+      "ok": true,
+      "status": 200,
+      "headersMs": 355.55,
+      "ttftMs": 355.75,
+      "latencyMs": 6086.68,
+      "promptTokens": 27,
+      "completionTokens": 64,
+      "outputChars": 269
+    },
+    {
+      "arm": "direct",
+      "pair": 2,
+      "ok": true,
+      "status": 200,
+      "headersMs": 227.6,
+      "ttftMs": 227.76,
+      "latencyMs": 6248.96,
+      "promptTokens": 27,
+      "completionTokens": 64,
+      "outputChars": 272
+    },
+    {
+      "arm": "direct",
+      "pair": 3,
+      "ok": true,
+      "status": 200,
+      "headersMs": 168.03,
+      "ttftMs": 168.18,
+      "latencyMs": 5093.92,
+      "promptTokens": 27,
+      "completionTokens": 64,
+      "outputChars": 260
+    },
+    {
+      "arm": "moflux",
+      "pair": 3,
+      "ok": true,
+      "status": 200,
+      "headersMs": 155.26,
+      "ttftMs": 155.44,
+      "latencyMs": 4546.81,
+      "promptTokens": 27,
+      "completionTokens": 64,
+      "outputChars": 262
+    },
+    {
+      "arm": "moflux",
+      "pair": 4,
+      "ok": true,
+      "status": 200,
+      "headersMs": 628.29,
+      "ttftMs": 628.44,
+      "latencyMs": 5171.66,
+      "promptTokens": 27,
+      "completionTokens": 64,
+      "outputChars": 259
+    },
+    {
+      "arm": "direct",
+      "pair": 4,
+      "ok": true,
+      "status": 200,
+      "headersMs": 206.76,
+      "ttftMs": 206.91,
+      "latencyMs": 4553.97,
+      "promptTokens": 27,
+      "completionTokens": 64,
+      "outputChars": 257
+    },
+    {
+      "arm": "direct",
+      "pair": 5,
+      "ok": true,
+      "status": 200,
+      "headersMs": 171.03,
+      "ttftMs": 171.2,
+      "latencyMs": 5900.56,
+      "promptTokens": 27,
+      "completionTokens": 64,
+      "outputChars": 276
+    },
+    {
+      "arm": "moflux",
+      "pair": 5,
+      "ok": true,
+      "status": 200,
+      "headersMs": 272.39,
+      "ttftMs": 272.52,
+      "latencyMs": 4599.57,
+      "promptTokens": 27,
+      "completionTokens": 64,
+      "outputChars": 262
+    },
+    {
+      "arm": "moflux",
+      "pair": 6,
+      "ok": true,
+      "status": 200,
+      "headersMs": 269.16,
+      "ttftMs": 269.35,
+      "latencyMs": 5806.55,
+      "promptTokens": 27,
+      "completionTokens": 64,
+      "outputChars": 258
+    },
+    {
+      "arm": "direct",
+      "pair": 6,
+      "ok": true,
+      "status": 200,
+      "headersMs": 170.04,
+      "ttftMs": 170.16,
+      "latencyMs": 5501.65,
+      "promptTokens": 27,
+      "completionTokens": 64,
+      "outputChars": 274
+    },
+    {
+      "arm": "direct",
+      "pair": 7,
+      "ok": true,
+      "status": 200,
+      "headersMs": 624.68,
+      "ttftMs": 624.88,
+      "latencyMs": 5965.42,
+      "promptTokens": 27,
+      "completionTokens": 64,
+      "outputChars": 254
+    },
+    {
+      "arm": "moflux",
+      "pair": 7,
+      "ok": true,
+      "status": 200,
+      "headersMs": 187.27,
+      "ttftMs": 187.4,
+      "latencyMs": 5167.19,
+      "promptTokens": 27,
+      "completionTokens": 64,
+      "outputChars": 264
+    },
+    {
+      "arm": "moflux",
+      "pair": 8,
+      "ok": true,
+      "status": 200,
+      "headersMs": 361.78,
+      "ttftMs": 361.91,
+      "latencyMs": 5380.06,
+      "promptTokens": 27,
+      "completionTokens": 64,
+      "outputChars": 251
+    },
+    {
+      "arm": "direct",
+      "pair": 8,
+      "ok": true,
+      "status": 200,
+      "headersMs": 136.54,
+      "ttftMs": 136.72,
+      "latencyMs": 5123.38,
+      "promptTokens": 27,
+      "completionTokens": 64,
+      "outputChars": 251
+    }
+  ],
+  "runs": [],
+  "publishedAt": "2026-09-04T00:00:53.580Z",
+  "publishedFrom": "results/runs/local-inference-compatibility/20260903T235358Z"
+}

@@ -89,6 +89,50 @@ restore proof, lease time avoided, and restoration latency separately from
 performance observations. These runs are generated
 evidence and are not automatically promoted into the reviewed corpus.
 
+## Local inference compatibility
+
+`results/local-inference-compatibility.json` holds a single `npm run demo:local`
+run promoted with `npm run evidence:publish -- --as=local-inference-compatibility`.
+It records Tyr 0.30.0 in front of `ollama/ollama:0.12.3` serving `qwen3:0.6b`
+over 8 alternating-order pairs, both arms on loopback.
+
+**This corpus is a compatibility result only. Do not quote its deltas.** What it
+establishes is that every request succeeded (16/16 HTTP 200 across both arms),
+that token accounting matched exactly between arms (216 prompt / 512 completion
+each), that Ollama honoured `max_tokens` (every request stopped at the 64-token
+cap), and that the non-overridable locality guard held with no metered provider
+reachable.
+
+What it does not establish is proxy overhead, for four reasons recorded here so
+the numbers in the file are not read as a measurement:
+
+- `deltas.steadyState` is `true`, but the flag only asserts
+  `requestsPerArm > warmupPairs`. Warm-up pairs are **not** excluded from the
+  aggregation, so 5 of these 8 pairs feed the very deltas the flag appears to
+  vouch for.
+- `deltas.latencyP50Ms` is negative (-334.46 ms): the proxied arm reads as
+  faster than direct, which is not a physically meaningful overhead figure. The
+  paired spread is ±878 ms at n=8, so the interval comfortably spans zero.
+- The dominant effect is within-pair ordering, which alternation balances but
+  does not remove: the request that runs second in a pair is ~700 ms faster on
+  average, and the sign of each pair's delta tracks arm order almost perfectly.
+- `decodeTokensPerSecondP50` favours the proxied arm (12.85 vs 12.00 tok/s) on
+  the same server, so it is measuring the same ordering artifact rather than the
+  proxy/model CPU contention it is meant to expose.
+
+Two further caveats apply to reading the file itself. `ttftMs.p95` and
+`latencyMs.p95` are the maximum observation at n=8 under nearest-rank, not a
+tail statistic — `direct.ttftMs.p95` of 2033.29 ms is precisely pair 1's weight
+load. And per-arm decode determinism is **unverified**: the arms share a prompt,
+a seed and `temperature: 0`, but `outputChars` differs between arms in 7 of the
+8 pairs, so the two arms did not replay identical text. The equal
+`completionTokens` totals do not evidence otherwise — they are forced by every
+request hitting the output cap.
+
+A quotable proxy-overhead figure needs warm-up excluded from the aggregation,
+many more post-warm-up pairs, a reported spread, and recorded output hashes
+proving the arms decoded identically. None of those hold here.
+
 ## Published evidence status
 
 `video-seed-sweep.json` and `video-seed-sweep/` hold the reviewed five-seed
