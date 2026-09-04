@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.33.0 - 2026-09-04
+
+### Added
+
+- Add `demo/local-contention.mjs` (`npm run demo:local:contention`), a local-inference **workload-isolation** benchmark. Three arms — `direct` straight to Ollama, `static` with fixed per-class protected floors, and `moflux` with identical floors that Latchflo may lend while idle and must restore on demand — replay one immutable five-phase trace against one Ollama container serving one model. `static` and `moflux` partition identical capacity and differ only in whether `admissionClassDemandPolicy` is enabled, so a difference between them has exactly one candidate cause.
+- Add `demo/local-contention-lib.mjs`: arm descriptors, the Latchflo pool definitions for both managed arms, per-class metric aggregation, capacity-invariant checking against sampled applied grants, lending/restoration episode derivation, and the benchmark's own `localContentionProof`. Every gate carries its observed value, its threshold, and the reason it exists.
+- Add `demo/ollama/compose-contention.yaml` with one Ollama, one Latchflo, and one Tyr per managed arm, plus `demo/ollama/tyr-static.yaml` and `demo/ollama/tyr-moflux.yaml`. One Tyr per arm rather than one Tyr with two pools: Tyr routes to a pool by model prefix, so two pools in one process would force the arms to send different model strings, and the premise of the benchmark is that both workload classes share one model on one server.
+- Add an optional second interactive arrival window to `load/trace-lib.mjs` (trace version 3, `--interactive-resume-*`). A control plane cannot lend a floor it never observes idle, so the workload has to contain an interval in which interactive demand is genuinely absent while batch runs. The addition draws from its own named RNG stream, so every version-1 and version-2 trace still hashes byte-identically — verified against the committed `results/tenant-fairness/` and `results/video-seed-sweep/` corpora.
+- Add `borrow` and `contention` phase sub-windows to the load generator's per-class summary when the resume window is configured, plus per-class `inputTokens`/`inputTokensReported` and an opt-in `--temperature`. The temperature flag is omitted by default so the request body stays byte-identical to previous releases against the provider simulator, which has no temperature to honour.
+- Add `demo/verify-local-contention.mjs` and `demo/LOCAL-CONTENTION.md`. The tests cover the locality guard, remote-endpoint rejection, trace determinism including the preserved historical hashes, arm configuration, protected-floor and capacity-invariant arithmetic, lending episodes, handoff classification, metric aggregation, proof pass **and fail** behaviour, evidence serialization, publication registration, and CLI validation — against fixtures, with no Docker and no weights.
+- Register `results/local-inference-contention.json` and `results/local-inference-contention/` as reviewed-evidence paths, deliberately separate from `local-inference-compatibility`. The 0.32.0 corpus measures compatibility on an unsaturated server; publishing this one over it would replace evidence for one claim with evidence for a different one under a name that still said the old thing.
+
+### Changed
+
+- Bump MoFlux Bench to 0.33.0. Licensed runs stay on Tyr 0.30.0, Latchflo 0.15.0, async-bulkhead-llm 3.17.0, async-bulkhead-ts 1.0.1, and Ollama 0.12.3 with `qwen3:0.6b`.
+- The contention benchmark's locality guard is strictly stronger than the compatibility benchmark's: its arm endpoints are derived from constants on loopback, so there is no endpoint flag to override at all. `verify:publication` fails the release if a `--direct-url`-style flag or a provider credential appears in it.
+
+### Measured
+
+- **Concurrency on this server is genuinely scarce, and that was measured before the benchmark was designed.** On the reference host — 8 CPUs available to Docker, no GPU passthrough — `qwen3:0.6b` decodes at a roughly constant aggregate rate regardless of load: 10.5 tok/s at one concurrent request, 10.6 at two, 10.0 at three, 12.5 at four, with four concurrent requests taking about four times as long as one. Admitting a batch request really does cost an interactive one, which is the precondition for any isolation result to mean anything, and it is also why nothing here transfers to a GPU-backed server with real batching.
+- **Lending and restoration are not symmetric in Latchflo 0.15.0, and the benchmark is built around the measured behaviour rather than the documented intent.** Raising a protected floor requires the borrower to give capacity back, so the allocator stages an acknowledged handoff and commits without waiting for the grant lease. Lowering one strands nobody, needs no drain, skips the handoff path entirely, and is deferred to the next grant issuance — which happens only after the current lease expires. At the 240-second lease the tenant-fairness scenario uses, a released interactive floor was correctly computed by the controller and **never once applied**, across 94 samples of a 160-second run. The benchmark therefore runs a 15-second lease, and phase 3 is 35 seconds so a lend has room to land.
+- **A short lease costs a brief ungranted window at every expiry.** Latchflo issues the replacement grant only after the old one is gone, so the pool momentarily holds nothing and Tyr admits nothing. Measured at a 15-second lease, that was 8 of 219 idle samples. The run reports it as `leaseGapSamples`/`leaseGapShare`, a gate fails the run past 10% of samples, Latchflo's reconcile and poll intervals are tightened to 250 ms to shrink it, and both managed arms carry the identical lease so it is never a variable between them.
+- With the interactive floor lent, batch was observed holding all four slots (`borrowedConcurrent: 4`) while the applied grant retained exactly the 1,200-token unlent slice — the `unlent_floor` mechanism withholding allocation rather than reclaiming anything. Restoration after interactive demand returned was observed in the data plane at 458 ms.
+
+### Fixed
+
+- Keep `npm run demo:local:contention:doctor` side-effect free. An earlier draft called `ensureDemoEnv` before Docker preflight, so even a doctor run that immediately reported “Docker unavailable” created `demo/moflux/.env`; `verify:publication` then correctly refused the working tree. The doctor path now checks prerequisites without creating or migrating the local env file, matching the 0.32.0 compatibility benchmark's no-write preflight behaviour.
+- Classify an aborted admission-class handoff as the safe outcome it is. An abort is the control plane declining a reallocation whose preconditions lapsed — an expired source lease, changed membership, a rejected drain grant — and nothing is handed over. An earlier draft of the analysis counted it as an unsafe handoff, which would have failed H4 on runs where the control plane behaved correctly; a short lease produces aborts routinely. It is now priced as slower restoration, with its reasons recorded, and only a commit whose drain grants were never acknowledged counts against the safety gate.
+
+### Safety
+
+- The contention benchmark has no spend guard for the same reason the compatibility one does not: a self-hosted server has no price from which to compute a worst-case bill. The locality guard covers every arm endpoint, the Ollama upstream, and the control plane, runs before the first request, and cannot be disabled — there is no flag to disable. No provider credential is read or sent.
+- The stack publishes Ollama on **11436**, neither the host default 11434 nor the 11435 the compatibility stack uses, so a `--keep-stack` leftover cannot be measured while the summary names the pinned server.
+- The model volume is declared external so every run can tear the stack down with `--volumes` — a clean control plane with no grant, agent token, or pool row inherited — without collecting half a gigabyte of weights along with it.
+
+### Unchanged
+
+- `results/local-inference-compatibility.json` is untouched and keeps saying exactly what it said: a compatibility result whose deltas are not quotable. This release adds a second corpus; it does not rewrite the first as if it had proved workload protection.
+
 ## 0.32.0 - 2026-09-03
 
 ### Added

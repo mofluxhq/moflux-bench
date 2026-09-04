@@ -53,6 +53,13 @@ export const REVIEWED_EVIDENCE = Object.freeze([
   "results/openai-live-overload-8-seed/",
   "results/local-inference-compatibility.json",
   "results/local-inference-compatibility/",
+  // Deliberately a separate corpus from local-inference-compatibility above.
+  // The 0.32.0 result is a compatibility measurement on an unsaturated server;
+  // this one is a workload-isolation measurement under contention. Publishing
+  // the second over the first would replace evidence for one claim with
+  // evidence for a different one under a name that still says the old thing.
+  "results/local-inference-contention.json",
+  "results/local-inference-contention/",
 ]);
 
 /** Directory under the results root that holds generated runs. */
