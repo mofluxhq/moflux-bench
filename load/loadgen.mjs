@@ -316,9 +316,19 @@ function markSuccess(cls) {
   if (s.firstSuccessAtMs === null) s.firstSuccessAtMs = +offsetMs().toFixed(1);
 }
 
-function record(cls, latencyMs, ttftMs) {
+function record(cls, arrivalMs, latencyMs, ttftMs) {
   const s = stats[cls];
-  const sample = { t: Date.now(), offsetMs: +offsetMs().toFixed(1), latencyMs, ttftMs };
+  const completedAtMs = +offsetMs().toFixed(1);
+  const sample = {
+    t: Date.now(),
+    // `offsetMs` remains the completion offset for backward compatibility with
+    // callers that used phaseSamples before trace-arrival attribution existed.
+    offsetMs: completedAtMs,
+    arrivalMs: Number.isFinite(arrivalMs) ? +Number(arrivalMs).toFixed(1) : null,
+    completedAtMs,
+    latencyMs,
+    ttftMs,
+  };
   s.samples.push(sample);
   s.phaseSamples.push(sample);
 }
@@ -341,15 +351,16 @@ function percentile(values, p) {
 }
 
 /**
- * Splits one class's completions at the configured batch arrival.
+ * Splits one class's successful requests by their immutable trace arrival.
  *
- * The boundary is the configured `batchStartMs`, not an observed first
- * arrival: an observed boundary lands differently in each arm and would make
- * the two windows incomparable across a paired run.
+ * The boundary is the configured `batchStartMs`, not an observed completion:
+ * under real contention a request can finish minutes after the phase that
+ * offered it. Bucketing by completion time makes a slow control arm appear to
+ * have offered no work in the very window whose queueing we are measuring.
  *
- * Reads `phaseSamples`, which is never pruned. Deriving this from the rolling
- * `samples` array would lose the idle window entirely on any run longer than
- * `windowMs`, and would report zero idle goodput rather than failing.
+ * Reads `phaseSamples`, which is never pruned. `offsetMs` remains completion
+ * time for backward compatibility; `arrivalMs` is authoritative for phase
+ * membership when present.
  */
 /** Realised per-request sizes for this class, from the replayed trace. */
 function sizeSummary(cls) {
@@ -392,7 +403,11 @@ function phaseWindows(s) {
   const boundaryMs = CONFIG.batchStartMs;
   const endMs = CONFIG.durationMs;
   if (!Number.isFinite(boundaryMs) || boundaryMs <= 0 || boundaryMs >= endMs) return null;
-  const inRange = (x, from, to) => x.offsetMs >= from && x.offsetMs < to;
+  const phaseOffset = (x) =>
+    Number.isFinite(Number(x?.arrivalMs)) ? Number(x.arrivalMs) : Number(x?.offsetMs ?? 0);
+  const completedOffset = (x) =>
+    Number.isFinite(Number(x?.completedAtMs)) ? Number(x.completedAtMs) : Number(x?.offsetMs ?? 0);
+  const inRange = (x, from, to) => phaseOffset(x) >= from && phaseOffset(x) < to;
   const describe = (bucket, spanMs) => ({
     completed: bucket.length,
     goodputRps: spanMs > 0 ? +(bucket.length / (spanMs / 1000)).toFixed(3) : null,
@@ -401,12 +416,11 @@ function phaseWindows(s) {
     ttftP50Ms: percentile(bucket.map((x) => x.ttftMs), 0.5),
     ttftP95Ms: percentile(bucket.map((x) => x.ttftMs), 0.95),
   });
-  // Requests admitted before the offered-load window closes can complete after
-  // it. Those completions belong to neither phase — including them would
-  // inflate the contended window's goodput with work the window did not offer.
-  // They are counted separately so idle + contended + drain equals the class's
-  // total successes, and the split can be checked rather than trusted.
-  const drained = s.phaseSamples.filter((x) => x.offsetMs >= endMs);
+  // Diagnostic only: a request can belong to an arrival phase and still finish
+  // after the offered-load window closes. `drainCompleted` therefore overlaps
+  // the arrival-attributed phase counts; it is a tail indicator, not a fourth
+  // mutually-exclusive phase.
+  const drained = s.phaseSamples.filter((x) => completedOffset(x) >= endMs);
   // A second interactive window splits the post-batch span into the two
   // phases a contention benchmark is actually about: one in which the
   // interactive floor is idle and borrowable, and one in which its owner has
@@ -838,7 +852,7 @@ async function issue(entry) {
           s.inputTokens += inputTokens;
           s.inputTokensReported += 1;
         }
-        record(cls, performance.now() - logicalStart, ttftMs ?? performance.now() - logicalStart);
+        record(cls, entry.arrivalMs, performance.now() - logicalStart, ttftMs ?? performance.now() - logicalStart);
         return;
       } catch {
         if (runAbort.signal.aborted) return;

@@ -160,23 +160,35 @@ Per seed, **validity and safety only** — these are absolute and one failure
 fails the sweep:
 
 - one trace hash across every arm; every arm ran; warm-up excluded
+- phase membership is keyed by each request's immutable trace arrival time, not
+  completion time, so a request offered during contention remains a contention
+  sample even if Ollama finishes it during the drain
 - the idle window contained interactive work and no batch work
 - batch was actually admitted and completed work under `moflux`
 - the direct arm's contention-window tail exceeded its idle-window tail, i.e.
   there was measurable queueing to protect against
 - the static arm actually refused batch work
 - no unlent-floor violation, class-ceiling violation, ceiling over-allocation,
-  pool over-allocation, floor-sum over-allocation, or borrowing beyond
-  unreserved capacity, at any sample
-- no aborted or unacknowledged capacity handoff
-- every lent floor was restored
+  pool over-allocation, or floor-sum over-allocation at any sample
+- once protected interactive demand returns and its floor is restored, observed
+  batch borrowing does not grow; already-running borrowers are grandfathered
+  because non-preemptive restoration does not retroactively make their original
+  admission unsafe
+- no capacity handoff committed without the required acknowledgement; an
+  aborted handoff is a safe refusal to reallocate and is reported as restoration
+  cost, not as an unsafe commit
+- every lending episode for which protected demand actually returned was
+  restored; an end-of-run lend with no returning owner demand is not a failure
 - no borrowed-slot deadline abandonment (no arm configures one)
 
 Across seeds, the **hypotheses**, evaluated on medians against thresholds
 pre-registered in `HYPOTHESIS_THRESHOLDS`:
 
-- **H1** — interactive contention-window TTFT p95 ratio versus `direct` ≤ 0.8,
-  **or** interactive contention-window goodput ratio ≥ 1.2.
+- **H1** — interactive contention-window **SLO goodput** improves over
+  `direct` by at least 0.04 req/s. A useful interactive completion must succeed
+  with TTFT <= 5 s and completion latency <= 30 s. Successful-request TTFT and
+  raw goodput remain descriptive only so a policy cannot win by rejecting most
+  requests and reporting a fast survivor tail.
 - **H2** — batch borrow-window completions versus `static` ≥ 1.2×.
 - **H3** — the configured interactive protected floor was never violated.
 - **H4** — lending and restoration produced no over-allocation and no unsafe

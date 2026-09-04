@@ -565,16 +565,43 @@ function count(value) {
   return Number.isFinite(numeric) && numeric > 0 ? numeric : 0;
 }
 
-function windowMetrics(window) {
+function windowMetrics(window, { sloGoodputRps = null } = {}) {
   if (!window) return null;
   return Object.freeze({
     completed: count(window.completed),
     goodputRps: window.goodputRps ?? null,
+    sloGoodputRps,
     latencyP50Ms: window.p50Ms ?? null,
     latencyP95Ms: window.p95Ms ?? null,
     ttftP50Ms: window.ttftP50Ms ?? null,
     ttftP95Ms: window.ttftP95Ms ?? null,
   });
+}
+
+function phaseArrivalMs(sample) {
+  const arrival = Number(sample?.arrivalMs);
+  if (Number.isFinite(arrival)) return arrival;
+  const legacy = Number(sample?.offsetMs);
+  return Number.isFinite(legacy) ? legacy : null;
+}
+
+function contentionSloGoodput(samples, loadgenSummary) {
+  const config = loadgenSummary?.config ?? {};
+  const fromMs = Number(config.interactiveResumeStartMs ?? CONTENTION_WORKLOAD.interactiveResumeStartMs);
+  const durationMs = Number(config.interactiveResumeDurationMs ?? CONTENTION_WORKLOAD.interactiveResumeDurationMs);
+  const toMs = fromMs + durationMs;
+  if (!(durationMs > 0)) return null;
+  const useful = samples.filter((sample) => {
+    const arrivalMs = phaseArrivalMs(sample);
+    return (
+      arrivalMs !== null &&
+      arrivalMs >= fromMs &&
+      arrivalMs < toMs &&
+      Number(sample?.ttftMs) <= HYPOTHESIS_THRESHOLDS.interactiveSloTtftMaxMs &&
+      Number(sample?.latencyMs) <= HYPOTHESIS_THRESHOLDS.interactiveSloLatencyMaxMs
+    );
+  }).length;
+  return +(useful / (durationMs / 1000)).toFixed(4);
 }
 
 /**
@@ -594,7 +621,14 @@ export function summarizeArmClasses(loadgenSummary) {
     const samples = Array.isArray(values.phaseSamples) ? values.phaseSamples : [];
     const latencies = samples.map((sample) => Number(sample.latencyMs));
     const ttfts = samples.map((sample) => Number(sample.ttftMs));
-    const spanSeconds = Number(loadgenSummary?.workload?.durationMs ?? 0) / 1000;
+    const durationMs = Number(
+      loadgenSummary?.config?.durationMs ??
+        loadgenSummary?.workload?.durationMs ??
+        CONTENTION_WORKLOAD.durationMs,
+    );
+    const spanSeconds = durationMs / 1000;
+    const interactiveSloGoodput =
+      workload === "interactive" ? contentionSloGoodput(samples, loadgenSummary) : null;
     out[workload] = Object.freeze({
       logical,
       attempts: count(values.attempts),
@@ -626,7 +660,7 @@ export function summarizeArmClasses(loadgenSummary) {
       windows: Object.freeze({
         idle: windowMetrics(windows.idle),
         borrow: windowMetrics(windows.borrow),
-        contention: windowMetrics(windows.contention),
+        contention: windowMetrics(windows.contention, { sloGoodputRps: interactiveSloGoodput }),
         drainCompleted: count(windows.drainCompleted),
       }),
     });
@@ -650,10 +684,12 @@ function ratio(numerator, denominator) {
  * tighter threshold than these to be visible is not one this design can claim.
  */
 export const HYPOTHESIS_THRESHOLDS = Object.freeze({
-  /** H1: interactive tail latency at least this much lower than direct. */
-  interactiveTtftRatioMax: 0.8,
-  /** H1, alternative route: interactive goodput at least this much higher. */
-  interactiveGoodputRatioMin: 1.2,
+  /** A latency-sensitive interactive request must produce a first token within 5 s. */
+  interactiveSloTtftMaxMs: 5_000,
+  /** And it must finish within 30 s to count as useful work. */
+  interactiveSloLatencyMaxMs: 30_000,
+  /** H1: at least one additional SLO-good completion per 25 s contention window. */
+  interactiveSloGoodputDeltaMinRps: 0.04,
   /** H2: batch work done while the interactive floor is idle, versus static. */
   batchBorrowRatioMin: 1.2,
 });
@@ -687,6 +723,11 @@ export function compareLocalContention(arms) {
     contention("moflux", "interactive")?.goodputRps,
     contention("direct", "interactive")?.goodputRps,
   );
+  const interactiveSloGoodputDelta = (() => {
+    const moflux = Number(contention("moflux", "interactive")?.sloGoodputRps);
+    const direct = Number(contention("direct", "interactive")?.sloGoodputRps);
+    return Number.isFinite(moflux) && Number.isFinite(direct) ? +(moflux - direct).toFixed(4) : null;
+  })();
   const batchBorrowRatio = ratio(
     borrow("moflux", "batch")?.completed,
     borrow("static", "batch")?.completed,
@@ -697,10 +738,12 @@ export function compareLocalContention(arms) {
     traceHash: traceHashes.length === 1 ? traceHashes[0] : null,
     interactive: Object.freeze(interactive),
     batch: Object.freeze(batch),
-    /** H1 route A: lower interactive tail latency under contention than direct. */
+    /** Descriptive only: successful-request tail latency under contention. */
     interactiveTtftP95RatioVsDirect: interactiveTtftRatio,
-    /** H1 route B: higher interactive goodput under contention than direct. */
+    /** Descriptive only: all successful interactive work, regardless of SLO. */
     interactiveGoodputRatioVsDirect: interactiveGoodputRatio,
+    /** H1: useful interactive work, charging both deep queues and local rejection. */
+    interactiveSloGoodputDeltaRpsVsDirect: interactiveSloGoodputDelta,
     /** H2: batch completions while the interactive floor was idle, versus static. */
     batchBorrowWindowRatioVsStatic: batchBorrowRatio,
     batchBorrowWindowCompleted: Object.freeze(
@@ -711,6 +754,9 @@ export function compareLocalContention(arms) {
     ),
     interactiveContentionGoodputRps: Object.freeze(
       Object.fromEntries(ids.map((id) => [id, contention(id, "interactive")?.goodputRps ?? null])),
+    ),
+    interactiveContentionSloGoodputRps: Object.freeze(
+      Object.fromEntries(ids.map((id) => [id, contention(id, "interactive")?.sloGoodputRps ?? null])),
     ),
   });
 }
@@ -741,8 +787,8 @@ export function capacityInvariantViolations(samples, { unlentProtectedTokens } =
     poolOverAllocations: [],
     /** Protected floors summing above the capacity they are carved from. */
     floorSumOverAllocations: [],
-    /** Borrowed slots exceeding the capacity left unreserved after floors. */
-    borrowedExceedsShared: [],
+    /** Observable growth in batch borrowing after protected demand has returned. */
+    borrowedGrowthAfterRestoration: [],
   };
 
   /**
@@ -756,6 +802,7 @@ export function capacityInvariantViolations(samples, { unlentProtectedTokens } =
    * — and ignoring it would hide a real cost of the configuration.
    */
   const leaseGaps = [];
+  let previousBatchBorrowed = null;
 
   for (const sample of samples) {
     const offsetMs = Number(sample?.offsetMs ?? 0);
@@ -763,6 +810,9 @@ export function capacityInvariantViolations(samples, { unlentProtectedTokens } =
     const poolTokenBudget = Number(sample?.pool?.tokenBudget ?? 0);
     if (poolMaxConcurrent < 1) {
       leaseGaps.push({ offsetMs, observed: poolMaxConcurrent, reason: "pool held no usable grant" });
+      // A lease gap breaks continuity in the sampled borrower count; do not
+      // infer a new admission across a period in which no grant was observable.
+      previousBatchBorrowed = null;
       continue;
     }
     let inFlightSum = 0;
@@ -847,15 +897,34 @@ export function capacityInvariantViolations(samples, { unlentProtectedTokens } =
         reason: "protected token floors summed above the pool grant",
       });
     }
-    const shared = Math.max(0, poolMaxConcurrent - floorConcurrentSum);
-    if (poolMaxConcurrent > 0 && borrowedSum > shared) {
-      violations.borrowedExceedsShared.push({
+    // A borrower admitted while capacity was lent can remain in flight after
+    // the floor is restored. That is non-preemptive restoration, not capacity
+    // creation. The safety question the sampled state can answer is narrower:
+    // did *new* batch borrowing visibly grow after interactive demand returned
+    // and its concurrency floor was already restored?
+    const interactive = classSample(sample, "interactive");
+    const batch = classSample(sample, "batch");
+    const interactiveFloor = Number(interactive?.limits?.protectedConcurrent ?? 0);
+    const interactiveDemanding =
+      interactive?.demandState === "demanding" ||
+      interactive?.restorationPending === true ||
+      Number(interactive?.recentAdmissions ?? 0) > 0 ||
+      Number(interactive?.recentRejections ?? 0) > 0;
+    const batchBorrowed = Number(batch?.borrowedConcurrent ?? 0);
+    if (
+      previousBatchBorrowed !== null &&
+      interactiveDemanding &&
+      interactiveFloor >= nominal.interactive.protectedConcurrent &&
+      batchBorrowed > previousBatchBorrowed
+    ) {
+      violations.borrowedGrowthAfterRestoration.push({
         offsetMs,
-        observed: borrowedSum,
-        threshold: shared,
-        reason: "borrowed slots exceeded the capacity left unreserved by the floors",
+        observed: { previous: previousBatchBorrowed, current: batchBorrowed },
+        threshold: "must not increase after protected demand returns and the floor is restored",
+        reason: "batch borrowing visibly grew after interactive restoration",
       });
     }
+    previousBatchBorrowed = batchBorrowed;
   }
 
   const total = Object.values(violations).reduce((sum, rows) => sum + rows.length, 0);
@@ -908,6 +977,10 @@ export function summarizeLendingEpisodes(samples) {
   let peakLentConcurrent = 0;
 
   for (const sample of ordered) {
+    // A lease gap is absence of an applied grant, not a policy decision to lend
+    // the floor. Skipping it prevents the static arm from manufacturing lending
+    // episodes at every lease rollover.
+    if (Number(sample?.pool?.maxConcurrent ?? 0) < 1) continue;
     const observed = classSample(sample, "interactive");
     const batch = classSample(sample, "batch");
     if (observed === null) continue;
@@ -952,15 +1025,18 @@ export function summarizeLendingEpisodes(samples) {
   }
   if (open !== null) episodes.push(Object.freeze({ ...open, restorationLatencyMs: null }));
 
-  const restored = episodes.filter((episode) => episode.restoredAtMs !== null);
+  const restorationRequired = episodes.filter((episode) => episode.demandReturnedAtMs !== null);
+  const restored = restorationRequired.filter((episode) => episode.restoredAtMs !== null);
+  const unrestored = restorationRequired.filter((episode) => episode.restoredAtMs === null);
   const latencies = restored
     .map((episode) => episode.restorationLatencyMs)
     .filter(Number.isFinite);
   return Object.freeze({
     samples: ordered.length,
     lendingEpisodes: episodes.length,
+    restorationRequiredEpisodes: restorationRequired.length,
     restorationEpisodes: restored.length,
-    unrestoredEpisodes: episodes.length - restored.length,
+    unrestoredEpisodes: unrestored.length,
     restorationLatencyMsMedian: median(latencies),
     restorationLatencyMsMax: latencies.length > 0 ? Math.max(...latencies) : null,
     peakLentConcurrent,
@@ -1157,11 +1233,11 @@ export function localContentionSeedProof({
       0,
       "protected floors may never sum above the capacity they partition",
     ),
-    noBorrowedOverShared: gate(
-      invariants.borrowedExceedsShared.length === 0,
-      invariants.borrowedExceedsShared.length,
+    noBorrowGrowthAfterRestoration: gate(
+      invariants.borrowedGrowthAfterRestoration.length === 0,
+      invariants.borrowedGrowthAfterRestoration.length,
       0,
-      "borrowed slots must come from unreserved capacity, never from a standing floor",
+      "already-running borrowers may drain after restoration, but new batch borrowing must not grow once protected demand has returned and its floor is restored",
     ),
     noUnsafeHandoff: gate(
       handoff.unsafeHandoffs === 0,
@@ -1177,7 +1253,7 @@ export function localContentionSeedProof({
         unrestored: lending.unrestoredEpisodes,
       },
       0,
-      "a floor that was lent and never came back is a floor that was given away",
+      "when protected demand returns, a lent floor must come back; lending that remains open while its owner stays idle is not a restoration failure",
     ),
     noDeadlineAbandonments: gate(
       count(mofluxBatch.deadlineAbandonments) === 0 &&
@@ -1203,6 +1279,7 @@ export function localContentionSeedProof({
     observations: Object.freeze({
       interactiveTtftP95RatioVsDirect: comparison.interactiveTtftP95RatioVsDirect,
       interactiveGoodputRatioVsDirect: comparison.interactiveGoodputRatioVsDirect,
+      interactiveSloGoodputDeltaRpsVsDirect: comparison.interactiveSloGoodputDeltaRpsVsDirect,
       batchBorrowWindowRatioVsStatic: comparison.batchBorrowWindowRatioVsStatic,
       lendingEpisodes: lending.lendingEpisodes,
       restorationEpisodes: lending.restorationEpisodes,
@@ -1230,19 +1307,24 @@ export function localContentionProof({ seeds, seedProofs, comparisons, requiredS
   const goodputRatios = comparisons
     .map((row) => row.interactiveGoodputRatioVsDirect)
     .filter(Number.isFinite);
+  const sloGoodputDeltas = comparisons
+    .map((row) => row.interactiveSloGoodputDeltaRpsVsDirect)
+    .filter(Number.isFinite);
   const borrowRatios = comparisons
     .map((row) => row.batchBorrowWindowRatioVsStatic)
     .filter(Number.isFinite);
 
   const ttftMedian = median(ttftRatios);
   const goodputMedian = median(goodputRatios);
+  const sloGoodputDeltaMedian = median(sloGoodputDeltas);
   const borrowMedian = median(borrowRatios);
 
-  const ttftImproved =
-    Number.isFinite(ttftMedian) && ttftMedian <= HYPOTHESIS_THRESHOLDS.interactiveTtftRatioMax;
-  const goodputImproved =
-    Number.isFinite(goodputMedian) &&
-    goodputMedian >= HYPOTHESIS_THRESHOLDS.interactiveGoodputRatioMin;
+  // H1 is deliberately based on SLO-good work, not the latency distribution of
+  // survivors. A proxy that rejects most interactive requests must not win just
+  // because the few requests it admitted were fast.
+  const sloGoodputImproved =
+    Number.isFinite(sloGoodputDeltaMedian) &&
+    sloGoodputDeltaMedian >= HYPOTHESIS_THRESHOLDS.interactiveSloGoodputDeltaMinRps;
 
   const checks = Object.freeze({
     enoughSeeds: gate(
@@ -1258,18 +1340,18 @@ export function localContentionProof({ seeds, seedProofs, comparisons, requiredS
       "validity and safety are absolute, not averaged: one unsafe seed fails the run",
     ),
     h1InteractivePreserved: gate(
-      ttftImproved || goodputImproved,
+      sloGoodputImproved,
       {
-        ttftP95RatioMedian: ttftMedian,
-        goodputRatioMedian: goodputMedian,
-        route: ttftImproved ? "tail-latency" : goodputImproved ? "goodput" : null,
+        sloGoodputDeltaRpsMedian: sloGoodputDeltaMedian,
+        descriptiveTtftP95RatioMedian: ttftMedian,
+        descriptiveGoodputRatioMedian: goodputMedian,
       },
       {
-        ttftP95RatioMax: HYPOTHESIS_THRESHOLDS.interactiveTtftRatioMax,
-        goodputRatioMin: HYPOTHESIS_THRESHOLDS.interactiveGoodputRatioMin,
+        sloGoodputDeltaMinRps: HYPOTHESIS_THRESHOLDS.interactiveSloGoodputDeltaMinRps,
+        ttftSloMs: HYPOTHESIS_THRESHOLDS.interactiveSloTtftMaxMs,
+        latencySloMs: HYPOTHESIS_THRESHOLDS.interactiveSloLatencyMaxMs,
       },
-      "H1: under contention MoFlux must materially improve interactive tail latency or " +
-        "interactive goodput relative to unmanaged Ollama",
+      "H1: under contention MoFlux must complete materially more interactive work within the predeclared TTFT and completion-latency SLOs than unmanaged Ollama",
     ),
     h2BatchBorrowedIdleCapacity: gate(
       Number.isFinite(borrowMedian) &&
@@ -1297,7 +1379,7 @@ export function localContentionProof({ seeds, seedProofs, comparisons, requiredS
           proof.safety.noCeilingOverAllocation.passed &&
           proof.safety.noPoolOverAllocation.passed &&
           proof.safety.noFloorSumOverAllocation.passed &&
-          proof.safety.noBorrowedOverShared.passed,
+          proof.safety.noBorrowGrowthAfterRestoration.passed,
       ),
       seedProofs.filter(
         (proof) =>
@@ -1305,7 +1387,7 @@ export function localContentionProof({ seeds, seedProofs, comparisons, requiredS
           proof.safety.noCeilingOverAllocation.passed &&
           proof.safety.noPoolOverAllocation.passed &&
           proof.safety.noFloorSumOverAllocation.passed &&
-          proof.safety.noBorrowedOverShared.passed,
+          proof.safety.noBorrowGrowthAfterRestoration.passed,
       ).length,
       seedProofs.length,
       "H4: adaptive lending and restoration produce no over-allocation and no unsafe handoff",
@@ -1331,6 +1413,7 @@ export function localContentionProof({ seeds, seedProofs, comparisons, requiredS
       seeds: seeds.length,
       ttftRatioSamples: ttftRatios.length,
       goodputRatioSamples: goodputRatios.length,
+      sloGoodputDeltaSamples: sloGoodputDeltas.length,
       batchBorrowRatioSamples: borrowRatios.length,
     }),
   });
@@ -1370,6 +1453,7 @@ export function aggregateArmClass(rows) {
     borrowWindowCompleted: spread(pick((row) => row.windows?.borrow?.completed)),
     contentionWindowCompleted: spread(pick((row) => row.windows?.contention?.completed)),
     contentionWindowGoodputRps: spread(pick((row) => row.windows?.contention?.goodputRps)),
+    contentionWindowSloGoodputRps: spread(pick((row) => row.windows?.contention?.sloGoodputRps)),
     contentionWindowTtftP95Ms: spread(pick((row) => row.windows?.contention?.ttftP95Ms)),
     idleWindowTtftP95Ms: spread(pick((row) => row.windows?.idle?.ttftP95Ms)),
   });

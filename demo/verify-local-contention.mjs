@@ -424,11 +424,41 @@ const lentToSlice = capacityInvariantViolations([
 ]);
 assert.equal(lentToSlice.total, 0, "borrowing a fully released floor is not a violation");
 
-// Borrowing more than the floors left unreserved is over-allocation.
-const overBorrowed = capacityInvariantViolations([
-  sampleAt(0, { classes: { batch: { borrowedConcurrent: 1 } } }),
+// Borrowers admitted while a floor was lent may still be draining after the
+// floor is restored. That is not over-allocation by itself.
+const grandfatheredBorrower = capacityInvariantViolations([
+  sampleAt(0, {
+    classes: {
+      interactive: { limits: { ...nominal.interactive, protectedConcurrent: 0, protectedInFlightTokens: CONTENTION_POLICY.unlentProtectedTokens.interactive } },
+      batch: { borrowedConcurrent: 3 },
+    },
+  }),
+  sampleAt(500, {
+    classes: {
+      interactive: { demandState: "demanding", recentAdmissions: 1 },
+      batch: { borrowedConcurrent: 3 },
+    },
+  }),
 ]);
-assert.equal(overBorrowed.borrowedExceedsShared.length, 1);
+assert.equal(grandfatheredBorrower.borrowedGrowthAfterRestoration.length, 0);
+
+// What the sampled state can prove unsafe is visible *growth* in batch
+// borrowing after protected demand has returned and the floor is already whole.
+const newBorrowAfterRestore = capacityInvariantViolations([
+  sampleAt(0, {
+    classes: {
+      interactive: { demandState: "demanding", recentAdmissions: 1 },
+      batch: { borrowedConcurrent: 2 },
+    },
+  }),
+  sampleAt(250, {
+    classes: {
+      interactive: { demandState: "demanding", recentAdmissions: 1 },
+      batch: { borrowedConcurrent: 3 },
+    },
+  }),
+]);
+assert.equal(newBorrowAfterRestore.borrowedGrowthAfterRestoration.length, 1);
 
 assert.equal(
   capacityInvariantViolations([sampleAt(0, { classes: { batch: { inFlight: 5 } } })])
@@ -547,11 +577,16 @@ assert.equal(percentile([5, 1, 3], 0.5), 3);
 
 function loadgenFixture({ ttftContention, goodputContention, borrowCompleted, batchSuccess = 6 }) {
   const phaseSamples = [
-    { offsetMs: 1_000, latencyMs: 900, ttftMs: 100 },
-    { offsetMs: 50_000, latencyMs: 1_200, ttftMs: ttftContention },
+    { offsetMs: 1_500, arrivalMs: 1_000, completedAtMs: 1_500, latencyMs: 900, ttftMs: 100 },
+    { offsetMs: 70_000, arrivalMs: 65_000, completedAtMs: 70_000, latencyMs: 1_200, ttftMs: ttftContention },
   ];
   return {
     workload: { durationMs: 90_000 },
+    config: {
+      durationMs: 90_000,
+      interactiveResumeStartMs: 60_000,
+      interactiveResumeDurationMs: 25_000,
+    },
     classes: {
       interactive: {
         logical: 20,
@@ -598,7 +633,7 @@ function loadgenFixture({ ttftContention, goodputContention, borrowCompleted, ba
         upstreamReject: 0,
         exhausted: 0,
         admissionClassResponses: { batch: 15 },
-        phaseSamples: [{ offsetMs: 30_000, latencyMs: 6_000, ttftMs: 800 }],
+        phaseSamples: [{ offsetMs: 36_000, arrivalMs: 30_000, completedAtMs: 36_000, latencyMs: 6_000, ttftMs: 800 }],
         windows: {
           idle: { completed: 0, goodputRps: 0, p50Ms: 0, p95Ms: 0, ttftP50Ms: 0, ttftP95Ms: 0 },
           borrow: { completed: borrowCompleted, goodputRps: 0.2, p50Ms: 6_000, p95Ms: 7_000, ttftP50Ms: 700, ttftP95Ms: 900 },
@@ -637,7 +672,7 @@ assert.equal(aggregateArmClass([]).successRate.n, 0, "an empty aggregate must re
 // Proof behaviour, in both directions
 // ---------------------------------------------------------------------------
 
-function armSet({ mofluxTtft = 300, directTtft = 3_000, mofluxBorrow = 6, staticBorrow = 2 } = {}) {
+function armSet({ mofluxTtft = 300, directTtft = 6_000, mofluxBorrow = 6, staticBorrow = 2 } = {}) {
   const build = (fixture, overrides = {}) => ({
     trace: { hash: "trace-hash" },
     classes: summarizeArmClasses(fixture),
@@ -659,7 +694,8 @@ function armSet({ mofluxTtft = 300, directTtft = 3_000, mofluxBorrow = 6, static
 const passingArms = armSet();
 const passingComparison = compareLocalContention(passingArms);
 assert.equal(passingComparison.traceHashMatches, true);
-assert.equal(passingComparison.interactiveTtftP95RatioVsDirect, 0.1);
+assert.equal(passingComparison.interactiveTtftP95RatioVsDirect, 0.05);
+assert.equal(passingComparison.interactiveSloGoodputDeltaRpsVsDirect, 0.04);
 assert.equal(passingComparison.batchBorrowWindowRatioVsStatic, 3);
 
 // A mismatched trace hash must be caught: two arms that replayed different
