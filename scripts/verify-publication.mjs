@@ -394,8 +394,8 @@ if (pkg.scripts?.["demo:local:contention:dry-run"] !== "node demo/local-contenti
     pkg.scripts?.["verify:local:contention"] !== "node demo/verify-local-contention.mjs") {
   findings.push("package.json: the local contention dry-run, doctor, single-seed and verify commands are required");
 }
-if (pkg.version !== "0.33.1") {
-  findings.push("package.json: the current benchmark release must be version 0.33.1");
+if (pkg.version !== "0.33.2") {
+  findings.push("package.json: the current benchmark release must be version 0.33.2");
 }
 if (
   !pkg.scripts?.["demo:restoration"]?.includes("--restoration-ladder") ||

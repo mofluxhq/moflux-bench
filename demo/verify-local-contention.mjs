@@ -442,6 +442,27 @@ const grandfatheredBorrower = capacityInvariantViolations([
 ]);
 assert.equal(grandfatheredBorrower.borrowedGrowthAfterRestoration.length, 0);
 
+// A whole interactive floor does not reserve capacity another class has
+// explicitly released. This is the shape observed by the first 0.33.1 real
+// seed: batch moved from 0 -> 1 while its own one-slot floor was still
+// released. Counting that as stealing the restored interactive floor is a
+// false positive.
+const growthBackedByReleasedCapacity = capacityInvariantViolations([
+  sampleAt(0, {
+    classes: {
+      interactive: { demandState: "demanding" },
+      batch: { borrowedConcurrent: 0, releasedConcurrent: 1 },
+    },
+  }),
+  sampleAt(250, {
+    classes: {
+      interactive: { demandState: "demanding" },
+      batch: { borrowedConcurrent: 1, releasedConcurrent: 1 },
+    },
+  }),
+]);
+assert.equal(growthBackedByReleasedCapacity.borrowedGrowthAfterRestoration.length, 0);
+
 // What the sampled state can prove unsafe is visible *growth* in batch
 // borrowing after protected demand has returned and the floor is already whole.
 const newBorrowAfterRestore = capacityInvariantViolations([

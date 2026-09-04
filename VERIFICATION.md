@@ -1,17 +1,21 @@
-# MoFlux Bench 0.33.1 verification
+# MoFlux Bench 0.33.2 verification
 
-Verified 2026-09-03 in this build environment with Node.js 22.16.0 and npm 10.9.2.
+Verified 2026-09-04 in this build environment with Node.js 22.16.0 and npm 10.9.2.
 
 MoFlux Bench 0.33.0 introduced the local-inference contention benchmark in
-`demo/local-contention.mjs`; 0.33.1 is a correctness patch derived from the first
-real seed on 2026-09-03. It keeps the same workload and runtime pins while fixing
-arrival-time phase attribution, SLO-goodput proof semantics, lending/restoration
-classification, warm-up retry behaviour, and the measured-start floor state.
+`demo/local-contention.mjs`; 0.33.1 corrected phase/proof semantics from the first
+real seed, and 0.33.2 corrects a remaining H4 attribution false positive exposed
+by the next seed-1 rerun. The workload, SLO thresholds, and runtime pins remain
+unchanged. H4 now distinguishes new borrowing backed by another class's explicitly
+released capacity from new borrowing that would consume restored protected capacity.
 The benchmark remains separate from the 0.32.0 local compatibility path.
 
 ## Passed
 
 - `npm run check`: syntax check passed for 99 JavaScript modules.
+- `npm run verify:local:contention`: passed, including a regression fixture for the
+  0.33.1 H4 false positive where batch borrowing is backed by its own explicitly
+  released concurrency rather than by the restored interactive floor.
 - All 46 component verifiers listed by `scripts/verify.mjs` passed. The suite was
   executed in groups in this build environment so the outer command runner did
   not terminate the long integration sequence; this included
@@ -100,9 +104,9 @@ weights cache.
 
 ## Not executed in this build environment
 
-- The user-provided first real seed was used as diagnostic input for 0.33.1,
-  but it failed the 0.33.0 proof and is not publication evidence. No result from
-  that seed is promoted or rewritten as a passing 0.33.1 result.
+- The user-provided real seed runs were used as diagnostic input for 0.33.1 and
+  0.33.2, but neither is publication evidence. No diagnostic result is promoted
+  or rewritten as a passing 0.33.2 result.
 - `npm run demo:local:contention:doctor` reached its environment preflight and
   correctly failed because Docker is not installed in this sandbox. Therefore
   no real Ollama/Tyr/Latchflo contention run was executed here, and this
