@@ -343,11 +343,29 @@ function pruneWindows(now = Date.now()) {
   }
 }
 
+/**
+ * Nearest-rank percentile, or `null` when there is nothing to take one of.
+ *
+ * Returning `0` for an empty distribution — which this did until 0.34.0 — makes
+ * "no request completed" indistinguishable from "every request completed
+ * instantly", and the two are opposite results. A contention window in which
+ * the interactive class was rejected on every attempt reported `ttftP95Ms: 0`
+ * and read as the best latency in the run.
+ *
+ * A count stays a count and a rate stays a rate: zero completions really is
+ * zero goodput. It is only the shape of a distribution that is missing rather
+ * than zero when there are no observations.
+ */
 function percentile(values, p) {
-  if (values.length === 0) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
-  const idx = Math.min(sorted.length - 1, Math.floor(p * sorted.length));
-  return sorted[idx];
+  const finite = values.filter((value) => Number.isFinite(value)).sort((a, b) => a - b);
+  if (finite.length === 0) return null;
+  const idx = Math.min(finite.length - 1, Math.floor(p * finite.length));
+  return finite[idx];
+}
+
+/** `+value.toFixed(digits)` that keeps a missing distribution missing. */
+function roundOrNull(value, digits = 1) {
+  return Number.isFinite(value) ? +value.toFixed(digits) : null;
 }
 
 /**
@@ -408,6 +426,9 @@ function phaseWindows(s) {
   const completedOffset = (x) =>
     Number.isFinite(Number(x?.completedAtMs)) ? Number(x.completedAtMs) : Number(x?.offsetMs ?? 0);
   const inRange = (x, from, to) => phaseOffset(x) >= from && phaseOffset(x) < to;
+  // `completed` and `goodputRps` are counts over a known span and stay numeric
+  // even at zero. The four percentiles are `null` when the bucket is empty:
+  // an unserved window is missing latency data, not fast latency.
   const describe = (bucket, spanMs) => ({
     completed: bucket.length,
     goodputRps: spanMs > 0 ? +(bucket.length / (spanMs / 1000)).toFixed(3) : null,
@@ -962,6 +983,12 @@ function renderMetrics() {
   const L = (cls) => `{arm="${arm}",seed="${seed}",class="${promLabel(cls)}"}`;
 
   const rows = (pick) => classes.map((cls) => [L(cls), pick(stats[cls], cls)]);
+  /** Like `rows`, but drops any class whose value is missing rather than zero. */
+  const observedRows = (pick) =>
+    classes
+      .map((cls) => [L(cls), pick(stats[cls], cls)])
+      .filter(([, value]) => Number.isFinite(value))
+      .map(([labels, value]) => [labels, value.toFixed(1)]);
 
   emit("counter", "bench_logical_requests_total", "Logical requests issued.", rows((s) => s.logical));
   emit("counter", "bench_attempts_total", "HTTP attempts including retries.", rows((s) => s.attempts));
@@ -1025,17 +1052,20 @@ function renderMetrics() {
     [0.95, "p95"],
     [0.99, "p99"],
   ]) {
+    // A class with no completions in the rolling window has no percentile, and
+    // a scrape that published 0 there would teach a dashboard the same lie the
+    // summary used to tell. The series is omitted for that class instead.
     emit(
       "gauge",
       `bench_latency_${label}_ms`,
-      `Rolling ${CONFIG.windowMs}ms ${label} end-to-end latency.`,
-      rows((s) => percentile(s.samples.map((x) => x.latencyMs), p).toFixed(1)),
+      `Rolling ${CONFIG.windowMs}ms ${label} end-to-end latency. Absent for a class with no completions in the window.`,
+      observedRows((s) => percentile(s.samples.map((x) => x.latencyMs), p)),
     );
     emit(
       "gauge",
       `bench_ttft_${label}_ms`,
-      `Rolling ${CONFIG.windowMs}ms ${label} time to first token.`,
-      rows((s) => percentile(s.samples.map((x) => x.ttftMs), p).toFixed(1)),
+      `Rolling ${CONFIG.windowMs}ms ${label} time to first token. Absent for a class with no completions in the window.`,
+      observedRows((s) => percentile(s.samples.map((x) => x.ttftMs), p)),
     );
   }
 
@@ -1289,15 +1319,16 @@ for (const cls of classes) {
     /** Prompt tokens, and how many successes actually reported one. */
     inputTokens: Math.round(s.inputTokens),
     inputTokensReported: s.inputTokensReported,
+    // `null`, not `0`, when the class completed nothing: see `percentile`.
     latencyMs: {
-      p50: +percentile(latencies, 0.5).toFixed(1),
-      p95: +percentile(latencies, 0.95).toFixed(1),
-      p99: +percentile(latencies, 0.99).toFixed(1),
+      p50: roundOrNull(percentile(latencies, 0.5)),
+      p95: roundOrNull(percentile(latencies, 0.95)),
+      p99: roundOrNull(percentile(latencies, 0.99)),
     },
     ttftMs: {
-      p50: +percentile(ttfts, 0.5).toFixed(1),
-      p95: +percentile(ttfts, 0.95).toFixed(1),
-      p99: +percentile(ttfts, 0.99).toFixed(1),
+      p50: roundOrNull(percentile(ttfts, 0.5)),
+      p95: roundOrNull(percentile(ttfts, 0.95)),
+      p99: roundOrNull(percentile(ttfts, 0.99)),
     },
   };
 }

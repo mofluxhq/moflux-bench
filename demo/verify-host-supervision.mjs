@@ -18,7 +18,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -259,6 +259,32 @@ try {
       await terminateHostChild(child);
     }
     console.log("  ok  listen-marker readiness is independent of HTTP response parsing");
+  }
+
+  // ── 11. persistent child diagnostics capture output without leaking argv ──
+  {
+    const logFile = path.join(temp, "persistent-child.log");
+    const secret = "super-secret-credential";
+    const script = writeScript(
+      "persistent-output.mjs",
+      [
+        'console.log("diagnostic stdout marker");',
+        'console.error("diagnostic stderr marker");',
+        'process.exit(9);',
+      ].join("\n") + "\n",
+    );
+    const child = launchNode("persistent-output", script, [secret], { logFile });
+    await new Promise((resolve) => child.once("close", resolve));
+    const persisted = readFileSync(logFile, "utf8");
+    assert.match(persisted, /diagnostic stdout marker/, persisted);
+    assert.match(persisted, /diagnostic stderr marker/, persisted);
+    assert.match(persisted, /# startedAt:/, persisted);
+    assert.doesNotMatch(
+      persisted,
+      new RegExp(secret),
+      "persistent diagnostics must not copy potentially sensitive argv into the log header",
+    );
+    console.log("  ok  persistent child diagnostics retain stdout/stderr without copying argv");
   }
 
   console.log("\nPASS  host process supervision reports why a startup failed");

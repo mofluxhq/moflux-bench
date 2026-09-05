@@ -394,8 +394,8 @@ if (pkg.scripts?.["demo:local:contention:dry-run"] !== "node demo/local-contenti
     pkg.scripts?.["verify:local:contention"] !== "node demo/verify-local-contention.mjs") {
   findings.push("package.json: the local contention dry-run, doctor, single-seed and verify commands are required");
 }
-if (pkg.version !== "0.33.2") {
-  findings.push("package.json: the current benchmark release must be version 0.33.2");
+if (pkg.version !== "0.34.0") {
+  findings.push("package.json: the current benchmark release must be version 0.34.0");
 }
 if (
   !pkg.scripts?.["demo:restoration"]?.includes("--restoration-ladder") ||
@@ -540,10 +540,46 @@ for (const required of [
   "unlent_floor",
   "HYPOTHESIS_THRESHOLDS",
   "leaseGapSamples",
+  // 0.34.0 instrumentation. Each of these exists because its absence let the
+  // benchmark publish a misleading number, so their removal is a regression
+  // rather than a simplification.
+  "summarizeDemandTransitions",
+  "criticalWindowDigest",
+  "classDemandActivity",
+  "classEncroachment",
+  "restorationRequiredEpisodes",
+  "passiveReturnEpisodes",
+  "occupancyRestorationLatencyMsMedian",
+  "borrowGrowthAfterDemandReturn",
+  "h4aNoUnsafeCapacityTransfer",
+  "h4bNoBorrowingAfterProtectedDemandReturn",
 ]) {
   if (!localContentionLib.includes(required)) {
     findings.push(`demo/local-contention-lib.mjs: missing evidence contract ${required}`);
   }
+}
+// Missing is not zero. A percentile over an empty bucket must be null, or a
+// window in which every request was rejected reads as the fastest in the run.
+const loadgenSource = readFileSync(path.join(ROOT, "load/loadgen.mjs"), "utf8");
+if (!/function percentile\([^)]*\)\s*\{[^}]*return null;/s.test(loadgenSource)) {
+  findings.push(
+    "load/loadgen.mjs: percentile must return null for an empty distribution, not 0",
+  );
+}
+// A warm-up failure has to be diagnosable, and a summary has to stay publishable.
+const identityLib = readFileSync(path.join(ROOT, "demo/identity-fixture-lib.mjs"), "utf8");
+for (const required of ["IDENTITY_TOKEN_TTL_SECONDS", "IDENTITY_REFRESH_SKEW_SECONDS", "tokenFingerprint", "credentialState"]) {
+  if (!identityLib.includes(required)) {
+    findings.push(`demo/identity-fixture-lib.mjs: missing credential-lifetime contract ${required}`);
+  }
+}
+for (const required of ["warmupDiagnostic", "managedArmWarmupFailures", "credentialState", "identity.refresh("]) {
+  if (!localContention.includes(required)) {
+    findings.push(`demo/local-contention.mjs: missing warm-up diagnostic contract ${required}`);
+  }
+}
+if (/token:\s*bearer|bearerToken|fullToken/.test(localContention)) {
+  findings.push("demo/local-contention.mjs: a diagnostic must never serialize a bearer token");
 }
 // Its own named proof, and a top-level `passed` that means only that proof.
 // Overloading one benchmark's `passed` with another's gates is a mistake this

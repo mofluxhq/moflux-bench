@@ -165,8 +165,12 @@ under local contention is measured by the separate 0.33.0 benchmark below.
 ### Local inference under contention
 
 MoFlux Bench 0.33.0 added a second, separate local benchmark that *is* about
-behaviour under load; 0.33.1 corrects its phase attribution and proof semantics,
-and 0.33.2 fixes H4 attribution for borrowing backed by another class's explicitly released capacity. Neither patch changes the workload. `demo/local-contention.mjs` asks one question:
+behaviour under load; 0.33.1 corrected its phase attribution and proof
+semantics, 0.33.2 fixed H4 attribution for borrowing backed by another class's
+explicitly released capacity, and **0.34.0 makes the benchmark trustworthy
+enough to decide whether the restoration policy needs changing**. None of them
+changes the workload, the capacity policy, the SLO thresholds, the grant TTL, or
+the seed count. `demo/local-contention.mjs` asks one question:
 
 > When interactive and batch requests contend for the same self-hosted inference
 > capacity, does MoFlux preserve interactive service while still letting batch
@@ -196,18 +200,82 @@ before.
 Its acceptance object is `localContentionProof` and the top-level `passed`
 mirrors that and nothing else. Per seed it gates validity and safety only —
 one trace across arms, warm-up excluded, measurable queueing in the control arm,
-no unlent-floor/class/pool over-allocation, no growth in batch borrowing after
-protected demand has returned and the interactive floor is restored, and no
-unacknowledged handoff. Phase membership is determined by immutable trace arrival
-time, not by when a slow local decode finally completes. Across seeds it gates
-pre-registered hypotheses: H1 requires at least +0.04 req/s of interactive
-contention-window **SLO goodput** over unmanaged Ollama, where a useful request
-must succeed with TTFT <= 5 s and completion latency <= 30 s; H2 requires at
-least 1.2x the static arm's batch completions while interactive demand is idle;
-H3 requires the protected floor never to be violated; H4 requires no unsafe
-capacity handoff or allocation invariant violation. Survivor-only TTFT/goodput
-remain descriptive and cannot by themselves make H1 pass. H1 and H2 can fail,
-and the harness tests exercise them failing.
+no unlent-floor/class/pool over-allocation, no new borrowing of a protected
+floor after its owner has come back for it, and no unacknowledged handoff. Phase
+membership is determined by immutable trace arrival time, not by when a slow
+local decode finally completes. Across seeds it gates pre-registered
+hypotheses: H1 requires at least +0.04 req/s of interactive contention-window
+**SLO goodput** over unmanaged Ollama, where a useful request must succeed with
+TTFT <= 5 s and completion latency <= 30 s; H2 requires at least 1.2x the static
+arm's batch completions while interactive demand is idle; H3 requires the
+protected floor never to be violated; **H4a** requires no unsafe capacity
+transfer and **H4b** requires no new borrowing after protected demand returns.
+Survivor-only TTFT/goodput remain descriptive and cannot by themselves make H1
+pass. H1 and H2 can fail, and the harness tests exercise them failing.
+
+#### What 0.34.0 changed about the evidence
+
+Every item here is instrumentation, benchmark semantics, or reliability. The
+experiment is deliberately unchanged so the corrected instrumentation evaluates
+the same thing.
+
+- **A failed load-generator arm is now diagnosable after the process is gone.** Each local-contention arm persists stdout/stderr to `<arm>-seed-<n>.loadgen.log` beside its JSON output. A non-zero exit includes the bounded child-output tail plus the repo-relative log path in the benchmark error instead of reducing every failure to `exit 1`. The log header does not copy argv, because managed-arm argv contains identity credentials.
+- **Demand transitions are first-class evidence.** Each managed arm's summary
+  carries every observed demand-state change for both classes, plus a
+  `demandReturn` timeline that reconciles three clocks — the immutable trace,
+  the load generator's own reject/admission records, and the 250 ms `/stats`
+  sampler — onto one origin via a measured `loadgenSkewMs`. From the summary
+  alone a reader can now answer when interactive demand resumed at the
+  generator, when Tyr first decided anything about it, when the benchmark marked
+  the class active, whether its capacity was lent at that instant, how much the
+  other class held, whether any new borrowing followed, and when restoration
+  began. A deduplicated per-sample digest of the 50–70 s interval ships with it.
+- **Restoration episodes are accounted correctly.** A restoration-required
+  episode now means capacity was lent, its owner returned while it was still
+  lent, and the controller therefore had something to restore. Demand return is
+  detected from the controller's demand state and from *rejections*, not only
+  from admissions — the previous rule was blind in exactly the case restoration
+  exists for, because a class returning to a fully-borrowed pool is refused on
+  every attempt and is never admitted. Passive returns (a lease rolling a floor
+  back with nobody asking) are counted separately and are never reported as
+  restorations. Each episode carries both `restorationLatencyMs` for the grant
+  and `occupancyRestorationLatencyMs` for the moment the owner could actually
+  use its floor; on a non-preemptive policy those differ by the borrowers'
+  remaining decode and quoting only the first prices restoration at nothing.
+- **Empty distributions are `null`, not `0`.** A window in which every request
+  was rejected used to report `ttftP95Ms: 0`, which reads as the fastest window
+  in the run. Counts and rates stay numeric — zero completions really is zero
+  goodput — and ratios built from a missing distribution are `null`.
+- **H4 is split.** `h4a` is capacity-transfer safety (no ceiling, pool or
+  floor-sum over-allocation, no unlent-slice breach, no handoff committed
+  without acknowledgement). `h4b` is timing (no new borrowing after protected
+  demand returns, grandfathered borrowers may drain but a slot they give back
+  may not be refilled, restoration-required episodes converge). An
+  acknowledged-and-aborted-safe handoff is no longer described as unsafe because
+  borrow growth happened at a suspect instant. `hypotheses.h4` remains as the
+  conjunction for one release.
+- **Post-demand borrowing is measured against the nominal partition.** Tyr's
+  `borrowedConcurrent` is occupancy above a class's *applied* floor, and a class
+  whose own floor has been lent away while idle reports its first legitimate
+  request as borrowing. That produced a false H4 failure at 29.896 s on the
+  0.33.2 seed 4, inside the phase in which batch is supposed to be using idle
+  capacity. Encroachment is now occupancy above a class's own *nominal* floor,
+  which is the only occupancy that can be coming out of another class's reserve.
+- **Managed-arm warm-up authentication is diagnosable.** The identity fixture
+  re-mints its JWTs on access as they approach expiry instead of minting once
+  per process; a five-seed sweep runs for over an hour and 0.33.2's died in seed
+  5 on an expired one-hour token. Every warm-up failure now records seed, arm,
+  workload class, request index, attempt, HTTP status, a bounded response body,
+  whether a token was present, its fingerprint, issue and expiry times, elapsed
+  benchmark time, and whether credentials were refreshed for that attempt. A 401
+  is retried exactly once behind a forced re-mint, and both attempts are
+  recorded. Bearer tokens are never written to a summary.
+
+Schema compatibility: `hypotheses.h4` and the seed-level
+`safety.noBorrowGrowthAfterRestoration` key remain as aliases for one release.
+Latency and TTFT percentile fields that previously read `0` on an empty window
+now read `null`, which is a deliberate and breaking change to a misleading
+value.
 
 **This is a different corpus from the 0.32.0 compatibility result and does not
 restate it.** `results/local-inference-compatibility.json` measures a proxy in

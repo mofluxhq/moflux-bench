@@ -48,6 +48,7 @@ import {
 } from "./evidence-paths-lib.mjs";
 import {
   assertHostPortFree,
+  childOutputTail,
   fetchWithTimeout,
   launchNode,
   sleep,
@@ -76,6 +77,7 @@ import {
   contentionArm,
   contentionPoolDefinition,
   contentionRestorationClaim,
+  criticalWindowDigest,
   localContentionProof,
   localContentionSeedProof,
   median,
@@ -83,6 +85,7 @@ import {
   scenarioId,
   summarizeArmClasses,
   summarizeClassHandoffSafety,
+  summarizeDemandTransitions,
   summarizeLendingEpisodes,
 } from "./local-contention-lib.mjs";
 import { assertLocalUpstream, buildLocalChatBody } from "./local-inference-lib.mjs";
@@ -226,6 +229,9 @@ try {
   console.error(`\n${error instanceof Error ? error.message : String(error)}`);
   process.exit(1);
 }
+
+/** Process-relative origin for the `elapsedBenchmarkMs` field in diagnostics. */
+const BENCHMARK_STARTED_AT = performance.now();
 
 const WORKLOAD = Object.freeze({ ...CONTENTION_WORKLOAD, durationMs: OPT.durationMs });
 const ORDER_PLAN = armOrderPlan(OPT.seeds, OPT.arms);
@@ -593,21 +599,75 @@ function warmupPrompt(chars) {
  * purpose — a warm-up that itself contends would be measuring the thing it
  * exists to remove.
  */
-async function warmupRequest(arm, seed, workload, index) {
+/**
+ * Everything a warm-up failure has to be able to say, and nothing it may.
+ *
+ * 0.33.2's five-seed sweep died in seed 5 on `moflux warm-up could not complete
+ * batch 1/5 (last HTTP 401)` and that string is the whole of what it recorded.
+ * It named neither the credential, nor its age, nor what the server said, so
+ * the failure was indistinguishable between an expired benchmark token, a Tyr
+ * that had lost its JWKS, a control plane that had rotated its agent identity,
+ * and a genuine authorization bug — and the sweep had to be re-run to find out.
+ * It was in fact the first: the fixture minted once at t=0 with a one-hour
+ * expiry, and seed 5's warm-up ran at 64 minutes.
+ *
+ * The token is never included. A fingerprint and an expiry answer every
+ * question a diagnostic needs to ask about a credential, and a benchmark
+ * summary is a publishable artifact.
+ */
+function warmupDiagnostic({
+  seed,
+  arm,
+  workload,
+  index,
+  attempt,
+  status,
+  body,
+  error,
+  identityName,
+  credentialBefore,
+  credentialRefreshed,
+  elapsedBenchmarkMs,
+  latencyMs,
+}) {
+  return {
+    seed,
+    arm: arm.id,
+    pool: arm.pool,
+    workloadClass: workload,
+    warmupRequestIndex: index + 1,
+    warmupRequestsPerClass: OPT.warmupRequestsPerClass,
+    attempt,
+    httpStatus: status ?? null,
+    // Bounded: a provider error body is evidence, an unbounded one is a log bomb.
+    responseBody: typeof body === "string" && body.length > 0 ? body.slice(0, 500) : null,
+    transportError: error ?? null,
+    authTokenPresent: arm.managed,
+    identity: identityName,
+    credential: credentialBefore,
+    credentialRefreshedForThisAttempt: credentialRefreshed === true,
+    elapsedBenchmarkMs: Math.round(elapsedBenchmarkMs),
+    latencyMs: latencyMs ?? null,
+  };
+}
+
+async function warmupRequest(arm, seed, workload, index, { attempt = 1, refreshed = false } = {}) {
   const url = ARM_URLS[arm.id];
   const isBatch = workload === "batch";
+  const identityName = isBatch ? "noisy" : "premium";
+  // Read through the accessor at request time. The fixture re-mints when a
+  // token is approaching expiry, which is what a sweep longer than one token
+  // lifetime needs and what 0.33.2 did not have.
+  const bearer = arm.managed ? identity.tokens[identityName] : null;
+  const credentialBefore = arm.managed ? identity.credentialState(identityName) : null;
   const startedAt = performance.now();
-  const response = await fetch(url, {
+  let response;
+  try {
+    response = await fetch(url, {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      ...(arm.managed
-        ? {
-            "x-tyr-identity-token": `Bearer ${
-              isBatch ? identity.tokens.noisy : identity.tokens.premium
-            }`,
-          }
-        : {}),
+      ...(arm.managed ? { "x-tyr-identity-token": `Bearer ${bearer}` } : {}),
     },
     body: JSON.stringify(
       buildLocalChatBody({
@@ -620,9 +680,37 @@ async function warmupRequest(arm, seed, workload, index) {
         stream: true,
       }),
     ),
-  });
+    });
+  } catch (error) {
+    return {
+      arm: arm.id,
+      workload,
+      index,
+      status: null,
+      ok: false,
+      latencyMs: +(performance.now() - startedAt).toFixed(1),
+      promptTokens: null,
+      completionTokens: null,
+      diagnostic: warmupDiagnostic({
+        seed,
+        arm,
+        workload,
+        index,
+        attempt,
+        status: null,
+        body: null,
+        error: error instanceof Error ? error.message : String(error),
+        identityName,
+        credentialBefore,
+        credentialRefreshed: refreshed,
+        elapsedBenchmarkMs: performance.now() - BENCHMARK_STARTED_AT,
+        latencyMs: +(performance.now() - startedAt).toFixed(1),
+      }),
+    };
+  }
   let usage = null;
   let chars = 0;
+  let failureBody = null;
   if (response.ok && response.body) {
     const decoder = new TextDecoder();
     let buffer = "";
@@ -649,19 +737,51 @@ async function warmupRequest(arm, seed, workload, index) {
       }
     }
   } else if (!response.ok) {
-    await response.text().catch(() => "");
+    // Kept rather than discarded: the body is where Tyr says whether the token
+    // was expired, unverifiable, or simply not entitled to the pool.
+    failureBody = await response.text().catch(() => "");
   }
+  const ok = response.ok && chars > 0;
+  const latencyMs = +(performance.now() - startedAt).toFixed(1);
   return {
     arm: arm.id,
     workload,
     index,
     status: response.status,
-    ok: response.ok && chars > 0,
-    latencyMs: +(performance.now() - startedAt).toFixed(1),
+    ok,
+    latencyMs,
     promptTokens: usage?.input ?? null,
     completionTokens: usage?.output ?? null,
+    diagnostic: ok
+      ? null
+      : warmupDiagnostic({
+          seed,
+          arm,
+          workload,
+          index,
+          attempt,
+          status: response.status,
+          body:
+            failureBody ??
+            (response.ok ? "streamed 0 characters with HTTP 200" : null),
+          error: null,
+          identityName,
+          credentialBefore,
+          credentialRefreshed: refreshed,
+          elapsedBenchmarkMs: performance.now() - BENCHMARK_STARTED_AT,
+          latencyMs,
+        }),
   };
 }
+
+/**
+ * Every warm-up attempt that did not succeed, across the whole sweep.
+ *
+ * Carried into the summary whether or not the run went on to finish, because a
+ * sweep that recovered from an authentication failure and one that never had
+ * one are different runs and the evidence has to say which this was.
+ */
+const warmupDiagnostics = [];
 
 async function warmupArm(arm, seed) {
   const results = [];
@@ -671,24 +791,52 @@ async function warmupArm(arm, seed) {
   for (const workload of ["batch", "interactive"]) {
     for (let index = 0; index < OPT.warmupRequestsPerClass; index += 1) {
       let result = null;
+      let refreshed = false;
       for (let attempt = 1; attempt <= 8; attempt += 1) {
-        result = await warmupRequest(arm, seed, workload, index);
+        result = await warmupRequest(arm, seed, workload, index, { attempt, refreshed });
         if (result.ok) {
-          results.push({ ...result, attempts: attempt });
+          results.push({ ...result, attempts: attempt, credentialRefreshed: refreshed });
           break;
         }
+        if (result.diagnostic) warmupDiagnostics.push(result.diagnostic);
         // A managed arm can land exactly in the deliberate grant-expiry gap.
         // Warm-up is a precondition, not offered load, so retry that local 429
         // after a usable grant rather than letting lease timing decide whether
-        // the experiment starts. Other failures remain fatal.
-        if (!arm.managed || result.status !== 429 || attempt === 8) break;
-        await waitForUsableGrant(arm);
-        await sleep(250);
+        // the experiment starts.
+        if (arm.managed && result.status === 429 && attempt < 8) {
+          await waitForUsableGrant(arm);
+          await sleep(250);
+          continue;
+        }
+        // A 401 is retried exactly once, and only after forcing a new
+        // credential, so the retry is a hypothesis being tested rather than a
+        // loop that papers over the failure: if a freshly minted token is also
+        // refused, the problem is not credential lifetime and the run must say
+        // so rather than keep trying. Both attempts are already recorded.
+        if (arm.managed && (result.status === 401 || result.status === 403) && !refreshed) {
+          const before = identity.credentialState(
+            workload === "batch" ? "noisy" : "premium",
+          );
+          const after = identity.refresh(
+            workload === "batch" ? "noisy" : "premium",
+            `http-${result.status}-during-warmup`,
+          );
+          console.warn(
+            `${arm.id} warm-up ${workload} ${index + 1} got HTTP ${result.status}; ` +
+              `credential ${before.fingerprint} (expired=${before.expired}) replaced by ` +
+              `${after.fingerprint}, retrying once`,
+          );
+          refreshed = true;
+          continue;
+        }
+        break;
       }
       if (!result?.ok) {
+        const diagnostic = result?.diagnostic ?? null;
         throw new Error(
           `${arm.id} warm-up could not complete ${workload} ${index + 1}/${OPT.warmupRequestsPerClass} ` +
-            `(last HTTP ${result?.status ?? "unknown"})`,
+            `(last HTTP ${result?.status ?? "unknown"})\n` +
+            `warm-up diagnostic: ${JSON.stringify(diagnostic, null, 2)}`,
         );
       }
     }
@@ -700,6 +848,8 @@ async function warmupArm(arm, seed) {
 
 function runLoadgen({ seed, arm, traceFile, outFile }) {
   rmSync(outFile, { force: true });
+  const diagnosticsFile = outFile.replace(/\.json$/u, ".loadgen.log");
+  rmSync(diagnosticsFile, { force: true });
   const target = `http://127.0.0.1:${arm.port}`;
   const child = launchNode("loadgen", "load/loadgen.mjs", [
     `--targets=${target}`,
@@ -749,11 +899,18 @@ function runLoadgen({ seed, arm, traceFile, outFile }) {
     `--trace-file=${traceFile}`,
     "--metrics-port=0",
     `--out=${outFile}`,
-  ]);
+  ], { logFile: diagnosticsFile });
   return new Promise((resolve, reject) => {
     child.once("close", (code, signal) => {
       if (code !== 0) {
-        reject(new Error(`load generator failed for ${arm.id} (${signal ?? `exit ${code}`})`));
+        const persisted = repoRelative(diagnosticsFile, ROOT);
+        const logError = child.outputLogError ? `; diagnostic log error: ${child.outputLogError}` : "";
+        reject(
+          new Error(
+            `load generator failed for ${arm.id} (${signal ?? `exit ${code}`})` +
+              `${childOutputTail(child)}; full output: ${persisted}${logError}`,
+          ),
+        );
         return;
       }
       if (!existsSync(outFile)) {
@@ -831,6 +988,9 @@ try {
   spawnSync("openssl", ["version"], { encoding: "utf8" });
 
   await assertHostPortFree(CONTENTION_IDENTITY_PORT, { label: "identity fixture" });
+  // The fixture re-mints on access rather than handing out one token for the
+  // life of the process. A five-seed sweep takes over an hour and 0.33.2's did
+  // not finish because of exactly that: see identity-fixture-lib.mjs.
   identity = await startIdentityFixture(IDENTITY_RUNTIME, { port: CONTENTION_IDENTITY_PORT });
 
   if (OPT.doctor) {
@@ -947,17 +1107,44 @@ try {
           const invariants = capacityInvariantViolations(sampled.samples);
           const lending = summarizeLendingEpisodes(sampled.samples);
           const controlPlane = await collectControlPlaneEvidence(arm, loadgenSummary, startedAt);
-          evidence[armId] = { invariants, lending, ...controlPlane };
+          // The cross-source timeline of the 60 s demand return, reconciled
+          // onto the sampler's clock. This is what makes the run diagnosable
+          // from the summary rather than from a 600 KB per-seed capacity file.
+          const demandReturn = summarizeDemandTransitions({
+            samples: sampled.samples,
+            trace,
+            loadgenSummary,
+            workload: WORKLOAD,
+            startedAtEpochMs: startedAt,
+          });
+          const criticalWindow = criticalWindowDigest(sampled.samples, {
+            fromMs: WORKLOAD.interactiveResumeStartMs - 10_000,
+            toMs: WORKLOAD.interactiveResumeStartMs + 10_000,
+          });
+          // `demandTransitions` is lifted out of `invariants` rather than
+          // copied: it is evidence about demand rather than a violation list,
+          // and carrying it twice would roughly double the summary for no
+          // additional information.
+          const { demandTransitions, ...invariantViolations } = invariants;
+          evidence[armId] = {
+            invariants: invariantViolations,
+            demandTransitions,
+            lending,
+            demandReturn,
+            criticalWindow,
+            ...controlPlane,
+          };
           writeFileSync(
             path.join(runOutputDir, `${armId}-capacity-seed-${seed}.json`),
-            `${JSON.stringify({ seed, arm: armId, samples: sampled.samples, invariants, lending, controlPlane }, null, 2)}\n`,
+            `${JSON.stringify({ seed, arm: armId, samples: sampled.samples, invariants, lending, demandReturn, criticalWindow, controlPlane }, null, 2)}\n`,
           );
         }
 
         const classes = arms[armId].classes;
         console.log(
           `seed ${seed} arm ${armId}: interactive ${classes.interactive.success}/${classes.interactive.logical} ` +
-            `(ttft p95 ${classes.interactive.ttftMs.p95}ms), batch ${classes.batch.success}/${classes.batch.logical}, ` +
+            `(ttft p95 ${classes.interactive.ttftMs.p95 ?? "no samples"}${classes.interactive.ttftMs.p95 === null ? "" : "ms"}), ` +
+            `batch ${classes.batch.success}/${classes.batch.logical}, ` +
             `rejections ${classes.interactive.rejectedAdmissions + classes.batch.rejectedAdmissions}`,
         );
         if (OPT.pauseMs > 0) await sleep(OPT.pauseMs);
@@ -986,7 +1173,9 @@ try {
       console.log(
         `seed ${seed}: interactive contention ttft p95 ratio ${comparison.interactiveTtftP95RatioVsDirect} ` +
           `(moflux/direct), batch borrow ratio ${comparison.batchBorrowWindowRatioVsStatic} (moflux/static), ` +
-          `lend=${mofluxEvidence.lending.lendingEpisodes} restore=${mofluxEvidence.lending.restorationEpisodes}, ` +
+          `lend=${mofluxEvidence.lending.lendingEpisodes} needRestore=${mofluxEvidence.lending.restorationRequiredEpisodes} ` +
+          `restored=${mofluxEvidence.lending.restorationEpisodes} ` +
+          `occupancyRestoreMs=${mofluxEvidence.lending.occupancyRestorationLatencyMsMedian}, ` +
           `seed proof=${proof.passed ? "pass" : "FAIL"}`,
       );
       if (!proof.passed) {
@@ -1135,10 +1324,64 @@ if (OPT.doctor) {
       seedsWithLending: lendingRows.filter((row) => row.lendingEpisodes > 0).length,
       seedsWithRestoration: lendingRows.filter((row) => row.restorationEpisodes > 0).length,
       lendingEpisodesTotal: lendingRows.reduce((sum, row) => sum + row.lendingEpisodes, 0),
+      /**
+       * The four categories a lending episode can end in, kept apart.
+       *
+       * 0.33.2 reported eight lending episodes, zero restoration-required
+       * episodes and a null restoration latency, which read as "lending never
+       * needed restoring" and was an artifact of detecting demand return
+       * through admissions the returning class was never granted. These four
+       * counts must always sum to `lendingEpisodesTotal`.
+       */
+      restorationRequiredEpisodesTotal: lendingRows.reduce(
+        (sum, row) => sum + row.restorationRequiredEpisodes,
+        0,
+      ),
       restorationEpisodesTotal: lendingRows.reduce((sum, row) => sum + row.restorationEpisodes, 0),
+      unrestoredEpisodesTotal: lendingRows.reduce((sum, row) => sum + row.unrestoredEpisodes, 0),
+      /** A floor that came back with nobody asking for it. Not a restoration. */
+      passiveReturnEpisodesTotal: lendingRows.reduce(
+        (sum, row) => sum + row.passiveReturnEpisodes,
+        0,
+      ),
+      openAtEndOfRunEpisodesTotal: lendingRows.reduce(
+        (sum, row) => sum + row.openAtEndOfRunEpisodes,
+        0,
+      ),
+      restorationSloMs: CONTENTION_POLICY.lending.restorationSloMs,
+      /** How long the controller took to reissue the grant. */
       restorationLatencyMsMedian: median(
         lendingRows.map((row) => row.restorationLatencyMsMedian).filter(Number.isFinite),
       ),
+      restorationSloBreachesTotal: lendingRows.reduce(
+        (sum, row) => sum + row.restorationSloBreaches,
+        0,
+      ),
+      /**
+       * How long the protected class waited before it could actually use the
+       * restored floor. On a non-preemptive policy this is bounded by the
+       * borrowers' remaining decode, not by the controller, and quoting only
+       * the grant-side number above would price restoration at nothing.
+       */
+      occupancyRestorationLatencyMsMedian: median(
+        lendingRows
+          .map((row) => row.occupancyRestorationLatencyMsMedian)
+          .filter(Number.isFinite),
+      ),
+      occupancyRestorationSloBreachesTotal: lendingRows.reduce(
+        (sum, row) => sum + row.occupancyRestorationSloBreaches,
+        0,
+      ),
+      restorationLatencyNote:
+        "restorationLatencyMsMedian is the grant coming back. " +
+        "occupancyRestorationLatencyMsMedian is the protected class being able to use it. " +
+        "The two differ by however long the borrowers already in flight take to finish, " +
+        "because no arm here preempts an admitted upstream request.",
+      /** The cross-source 60 s timeline, per seed, in the sampler's timebase. */
+      demandReturn: rows.map((row) => ({
+        seed: row.seed,
+        ...(row.evidence?.moflux?.demandReturn ?? {}),
+      })),
       peakLentConcurrent: lendingRows.reduce(
         (peak, row) => Math.max(peak, row.peakLentConcurrent ?? 0),
         0,
@@ -1164,6 +1407,29 @@ if (OPT.doctor) {
         rows.map((row) => row.comparison.batchBorrowWindowRatioVsStatic).filter(Number.isFinite),
       ),
       perSeed: rows.map((row) => ({ seed: row.seed, ...row.comparison, interactive: undefined, batch: undefined })),
+    },
+    /**
+     * Managed-arm warm-up failures, whether or not the run recovered.
+     *
+     * Empty is the expected value and is itself evidence. A non-empty list with
+     * `credentialRefreshedForThisAttempt` set on the succeeding attempt says
+     * the sweep hit a credential problem and recovered from it, which is a
+     * different run from one that never hit it, and the summary has to be able
+     * to tell them apart.
+     */
+    diagnostics: {
+      managedArmWarmupFailures: warmupDiagnostics,
+      warmupFailureCount: warmupDiagnostics.length,
+      identityCredentialTtlSeconds: identity?.tokenTtlSeconds ?? null,
+      identityCredentialRefreshSkewSeconds: identity?.refreshSkewSeconds ?? null,
+      identityCredentials: identity
+        ? Object.fromEntries(
+            ["premium", "noisy", "operator"].map((name) => [name, identity.credentialState(name)]),
+          )
+        : null,
+      note:
+        "Credentials are minted by demo/identity-fixture-lib.mjs and re-minted on access as " +
+        "they approach expiry. Fingerprints and expiries are recorded; bearer tokens never are.",
     },
     localContentionProof: proof,
     // Mirrors this benchmark's own proof and nothing else. A shared `passed`
