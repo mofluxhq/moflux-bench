@@ -25,6 +25,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { get as httpGet } from "node:http";
 import { get as httpsGet } from "node:https";
+import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -164,7 +165,17 @@ export function childOutputTail(child) {
   return `; last output: ${tail}`;
 }
 
-export function launchNode(label, script, argv, { echo = false } = {}) {
+function appendPersistentOutput(child, stream, chunk) {
+  if (!child.outputLogFile) return;
+  try {
+    appendFileSync(child.outputLogFile, `${stream}: ${String(chunk)}`);
+    if (!String(chunk).endsWith("\n")) appendFileSync(child.outputLogFile, "\n");
+  } catch (error) {
+    child.outputLogError ??= error instanceof Error ? error.message : String(error);
+  }
+}
+
+export function launchNode(label, script, argv, { echo = false, logFile = null } = {}) {
   const child = spawn(process.execPath, [path.join(ROOT, script), ...argv], {
     cwd: ROOT,
     stdio: ["ignore", "pipe", "pipe"],
@@ -173,14 +184,25 @@ export function launchNode(label, script, argv, { echo = false } = {}) {
   child.label = label;
   child.recentOutput = [];
   child.startedAt = Date.now();
+  child.outputLogFile = logFile ? path.resolve(logFile) : null;
+  child.outputLogError = null;
+  if (child.outputLogFile) {
+    mkdirSync(path.dirname(child.outputLogFile), { recursive: true });
+    writeFileSync(
+      child.outputLogFile,
+      `# ${label}\n# script: ${path.join(ROOT, script)}\n# startedAt: ${new Date(child.startedAt).toISOString()}\n`,
+    );
+  }
   child.stdout.setEncoding("utf8");
   child.stdout.on("data", (chunk) => {
     recordOutput(child, "stdout", chunk);
+    appendPersistentOutput(child, "stdout", chunk);
     if (echo) process.stdout.write(`${DIM}[${label}] ${chunk}${OFF}`);
   });
   child.stderr.setEncoding("utf8");
   child.stderr.on("data", (chunk) => {
     recordOutput(child, "stderr", chunk);
+    appendPersistentOutput(child, "stderr", chunk);
     process.stderr.write(`${RED}[${label}] ${chunk}${OFF}`);
   });
   hostChildren.add(child);

@@ -139,7 +139,8 @@ proving the arms decoded identically. None of those hold here.
 five-seed `npm run demo:local:contention` run promoted with
 `npm run evidence:publish -- --as=local-inference-contention`. It is intentionally
 absent until a publication-quality run is explicitly promoted; 0.33.0 ships the
-harness and proof contract without manufacturing a workload-isolation result.
+harness and proof contract without manufacturing a workload-isolation result,
+and 0.34.0 corrects its instrumentation without manufacturing one either.
 
 **This is a separate corpus from `local-inference-compatibility.json` above and
 does not replace or reinterpret it.** The compatibility corpus measures a proxy
@@ -182,7 +183,22 @@ both were measured rather than assumed:
 An aborted capacity handoff is recorded as the safe outcome it is — the control
 plane declining a reallocation whose preconditions lapsed — and priced as slower
 restoration. Only a commit whose drain grants were never acknowledged counts
-against the safety gate.
+against the safety gate. From 0.34.0 that gate is `h4a`; borrowing at the wrong
+time is `h4b`, and a run that fails one no longer reports the other's name.
+
+Two restoration latencies are reported and they are not the same number.
+`restorationLatencyMs` is the controller reissuing the grant.
+`occupancyRestorationLatencyMs` is the protected class being able to *use* its
+floor, which on a non-preemptive policy is bounded by the borrowers' remaining
+decode rather than by the control plane. A summary quoting only the first is
+describing the controller rather than the caller, and any restoration figure
+taken from this corpus must say which of the two it is.
+
+Percentiles over a window with no completions read `null`, not `0`. A contention
+window in which every interactive request was rejected has no TTFT p95, and
+before 0.34.0 it reported `0` — which read as the fastest window in the run.
+Counts, rates and goodput remain numeric at zero, because zero completions is a
+measurement rather than an absence.
 
 `evidenceLimits` travels inside every summary. This corpus may not be used to
 claim GPU preemption, GPU utilization, KV-cache reclamation, Ollama scheduler

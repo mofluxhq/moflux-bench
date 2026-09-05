@@ -565,16 +565,40 @@ function count(value) {
   return Number.isFinite(numeric) && numeric > 0 ? numeric : 0;
 }
 
+/**
+ * A finite number, or `null`. Used wherever a value may legitimately be absent.
+ *
+ * `0` and "missing" are different claims and the summary must not conflate
+ * them. Before 0.34.0 a window in which every request was rejected reported
+ * `ttftP95Ms: 0`, which reads as the fastest window in the run.
+ */
+function observed(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+/**
+ * One phase window, with counts and rates kept numeric and distributions kept
+ * honest.
+ *
+ * `completed: 0` really is zero completions and `goodputRps: 0` really is zero
+ * useful work per second — both are measurements. The four percentiles are
+ * `null` at zero completions, and are forced to `null` even if an upstream
+ * summary supplied a zero, so a summary produced by an older load generator
+ * cannot reintroduce the lie through this path.
+ */
 function windowMetrics(window, { sloGoodputRps = null } = {}) {
   if (!window) return null;
+  const completed = count(window.completed);
+  const distribution = (value) => (completed > 0 ? observed(value) : null);
   return Object.freeze({
-    completed: count(window.completed),
-    goodputRps: window.goodputRps ?? null,
+    completed,
+    goodputRps: observed(window.goodputRps),
     sloGoodputRps,
-    latencyP50Ms: window.p50Ms ?? null,
-    latencyP95Ms: window.p95Ms ?? null,
-    ttftP50Ms: window.ttftP50Ms ?? null,
-    ttftP95Ms: window.ttftP95Ms ?? null,
+    latencyP50Ms: distribution(window.p50Ms),
+    latencyP95Ms: distribution(window.p95Ms),
+    ttftP50Ms: distribution(window.ttftP50Ms),
+    ttftP95Ms: distribution(window.ttftP95Ms),
   });
 }
 
@@ -635,6 +659,8 @@ export function summarizeArmClasses(loadgenSummary) {
       success,
       successRate: logical > 0 ? +(success / logical).toFixed(4) : null,
       goodputRps: spanSeconds > 0 ? +(success / spanSeconds).toFixed(4) : null,
+      // `percentile` is already null-on-empty; the class carries `success` so a
+      // reader can tell a missing distribution from a fast one.
       ttftMs: Object.freeze({
         p50: percentile(ttfts, 0.5),
         p95: percentile(ttfts, 0.95),
@@ -668,10 +694,17 @@ export function summarizeArmClasses(loadgenSummary) {
   return Object.freeze(out);
 }
 
+/**
+ * A ratio, or `null` when either side is missing.
+ *
+ * A ratio built from an absent latency distribution is not zero and not
+ * infinite; it is undefined, and the only honest way to carry it is `null`.
+ * `bottom <= 0` is refused for the same reason a division by zero is.
+ */
 function ratio(numerator, denominator) {
-  const top = Number(numerator);
-  const bottom = Number(denominator);
-  if (!Number.isFinite(top) || !Number.isFinite(bottom) || bottom <= 0) return null;
+  const top = observed(numerator);
+  const bottom = observed(denominator);
+  if (top === null || bottom === null || bottom <= 0) return null;
   return +(top / bottom).toFixed(4);
 }
 
@@ -766,6 +799,78 @@ function classSample(sample, admissionClass) {
 }
 
 /**
+ * The three demand states this benchmark reasons about, and what each means.
+ *
+ * `idle` is the only one under which a floor may be lent, so it is the only one
+ * the safety argument treats as "nobody is asking for this capacity". Latchflo
+ * 0.15.0 reports `demanding`, `protected` and `idle`; `protected` is the state
+ * of a class that is still holding its floor but is not currently pressing on
+ * it, and collapsing it into `idle` would let a demand episode fragment at
+ * every lull and re-baseline its grandfathered borrowers each time.
+ */
+export const DEMAND_STATES = Object.freeze(["idle", "protected", "demanding"]);
+
+/**
+ * Whether a class is asking for its protected capacity at this sample, and the
+ * single piece of evidence that settled it.
+ *
+ * The predicate deliberately does **not** rest on admissions. 0.33.2 measured
+ * demand as `inFlight > 0 || recentAdmissions > 0`, which is unobservable in
+ * precisely the case restoration exists for: when borrowers hold the whole
+ * pool, the returning owner is rejected on every attempt and is never admitted
+ * and never in flight. Across the four completed 0.33.2 seeds that produced
+ * eight lending episodes and zero restoration-required episodes, while the
+ * sampled series plainly showed interactive being refused for twenty-five
+ * seconds. A rejection is demand; so is the controller's own demand state.
+ *
+ * Ordering is by evidential strength, not by convenience: a caller reading
+ * `reason` should get the strongest thing that was true, so `admission` beats
+ * `rejection` beats the controller's opinion.
+ */
+export function classDemandActivity(observed) {
+  if (observed === null || observed === undefined) {
+    return Object.freeze({ active: false, reason: "no-sample", state: null });
+  }
+  const state = typeof observed.demandState === "string" ? observed.demandState : null;
+  const inFlight = Number(observed.inFlight ?? 0);
+  const recentAdmissions = Number(observed.recentAdmissions ?? 0);
+  const recentRejections = Number(observed.recentRejections ?? 0);
+  const restorationPending = observed.restorationPending === true;
+  const decide = (active, reason) => Object.freeze({ active, reason, state });
+  if (inFlight > 0) return decide(true, "in-flight");
+  if (recentAdmissions > 0) return decide(true, "admission");
+  if (recentRejections > 0) return decide(true, "rejection");
+  if (restorationPending) return decide(true, "restoration-pending");
+  if (state !== null && state !== "idle") return decide(true, `controller-state:${state}`);
+  return decide(false, state === null ? "no-controller-view" : `controller-state:${state}`);
+}
+
+/**
+ * How much of another class's nominal floor a class is currently occupying.
+ *
+ * This replaces the sampled `borrowedConcurrent` field as the basis for the
+ * post-demand-return safety argument, and the seed-4 false positive at 29.896 s
+ * is the reason. `borrowedConcurrent` is Tyr's "in flight above my own
+ * *applied* floor", and a class's applied floor drops to zero when its own
+ * floor has been lent out while it was idle. Batch's very first request of the
+ * borrow phase therefore reported `borrowedConcurrent: 0 -> 1` while occupying
+ * nothing but the single slot batch owns outright, and the invariant read that
+ * as batch taking capacity from a protected interactive floor that was in fact
+ * whole, untouched, and three slots wide.
+ *
+ * Measured against the *nominal* partition the question is well posed. The
+ * floors sum to the physical ceiling, so occupancy above a class's own nominal
+ * floor is exactly the occupancy that must be coming out of some other class's
+ * reserved capacity — whoever lent it and whenever the applied grant catches up.
+ */
+export function classEncroachment(sample, admissionClass, nominal = nominalClassGrant()) {
+  const observed = classSample(sample, admissionClass);
+  if (observed === null) return 0;
+  const floor = Number(nominal[admissionClass]?.protectedConcurrent ?? 0);
+  return Math.max(0, Number(observed.inFlight ?? 0) - floor);
+}
+
+/**
  * Capacity invariants checked against every `/stats` sample of the lending arm.
  *
  * These are the H3/H4 questions, and they are asked of the data plane rather
@@ -787,8 +892,11 @@ export function capacityInvariantViolations(samples, { unlentProtectedTokens } =
     poolOverAllocations: [],
     /** Protected floors summing above the capacity they are carved from. */
     floorSumOverAllocations: [],
-    /** Observable growth in batch borrowing after protected demand has returned. */
-    borrowedGrowthAfterRestoration: [],
+    /**
+     * H4b: batch occupancy of interactive's nominal floor grew after protected
+     * interactive demand returned, beyond what was already in flight.
+     */
+    borrowGrowthAfterDemandReturn: [],
   };
 
   /**
@@ -802,8 +910,21 @@ export function capacityInvariantViolations(samples, { unlentProtectedTokens } =
    * — and ignoring it would hide a real cost of the configuration.
    */
   const leaseGaps = [];
-  let previousBatchBorrowed = null;
-  let protectedDemandBorrowBaseline = null;
+  /**
+   * The current protected-demand episode's borrowing entitlement.
+   *
+   * `allowed` starts at whatever batch already had in flight above its own
+   * nominal floor when the episode opened — those borrowers were admitted
+   * legitimately and restoration here is non-preemptive, so they are
+   * grandfathered. It then *ratchets down*: when a grandfathered borrower
+   * finishes, the slot belongs to the protected class again and may not be
+   * refilled. Without the ratchet a borrower that completes and is immediately
+   * replaced looks identical to one that never left, and continuous churn
+   * against a restored floor would pass a check that only compared levels.
+   */
+  let demandEpisode = null;
+  const demandTransitions = [];
+  const previousActivity = new Map();
 
   for (const sample of samples) {
     const offsetMs = Number(sample?.offsetMs ?? 0);
@@ -811,10 +932,9 @@ export function capacityInvariantViolations(samples, { unlentProtectedTokens } =
     const poolTokenBudget = Number(sample?.pool?.tokenBudget ?? 0);
     if (poolMaxConcurrent < 1) {
       leaseGaps.push({ offsetMs, observed: poolMaxConcurrent, reason: "pool held no usable grant" });
-      // A lease gap breaks continuity in the sampled borrower count; do not
+      // A lease gap breaks continuity in the sampled occupancy series; do not
       // infer a new admission across a period in which no grant was observable.
-      previousBatchBorrowed = null;
-      protectedDemandBorrowBaseline = null;
+      demandEpisode = null;
       continue;
     }
     let inFlightSum = 0;
@@ -899,65 +1019,81 @@ export function capacityInvariantViolations(samples, { unlentProtectedTokens } =
         reason: "protected token floors summed above the pool grant",
       });
     }
-    // A borrower admitted while capacity was lent can remain in flight after
-    // the floor is restored. That is non-preemptive restoration, not capacity
-    // creation. New borrowing can also be legitimate while the protected floor
-    // is whole when another class still has capacity explicitly released. The
-    // safety question the sampled state can answer is therefore narrower: did
-    // batch borrowing grow beyond the grandfathered borrowers plus capacity
-    // that is *currently* released by non-interactive classes while protected
-    // interactive demand is active?
+    // H4b, and the only safety question the sampled state can actually settle
+    // about borrowing. Restoration here is non-preemptive, so a borrower
+    // admitted while capacity was lent is entitled to finish; what must not
+    // happen is that batch takes *more* of interactive's nominal floor after
+    // interactive has come back for it.
+    //
+    // Encroachment is measured against the nominal partition rather than the
+    // applied one — see `classEncroachment` for why the applied floor produced
+    // a false positive at 29.896 s on the 0.33.2 seed 4 — and the entitlement
+    // ratchets down as grandfathered borrowers drain, so refilling a freed slot
+    // is caught rather than mistaken for the same borrower still running.
     const interactive = classSample(sample, "interactive");
-    const batch = classSample(sample, "batch");
-    const interactiveFloor = Number(interactive?.limits?.protectedConcurrent ?? 0);
-    const interactiveDemanding =
-      interactive?.demandState === "demanding" || interactive?.restorationPending === true;
-    const batchBorrowed = Number(batch?.borrowedConcurrent ?? 0);
-    const nonInteractiveReleasedConcurrent = Object.keys(nominal)
-      .filter((admissionClass) => admissionClass !== "interactive")
-      .reduce(
-        (sum, admissionClass) =>
-          sum + Number(classSample(sample, admissionClass)?.releasedConcurrent ?? 0),
-        0,
-      );
-    const protectedDemandActive =
-      interactiveDemanding && interactiveFloor >= nominal.interactive.protectedConcurrent;
+    const activity = classDemandActivity(interactive);
+    const batchEncroachment = classEncroachment(sample, "batch", nominal);
+    const interactiveReleasedConcurrent = Number(interactive?.releasedConcurrent ?? 0);
 
-    if (protectedDemandActive) {
-      if (protectedDemandBorrowBaseline === null) {
-        // Borrowers already present when the floor becomes whole are
-        // grandfathered. Without preemption the sampled state cannot prove
-        // where they came from, only whether borrowing subsequently grows.
-        protectedDemandBorrowBaseline = batchBorrowed;
+    for (const admissionClass of Object.keys(nominal)) {
+      const observed = classSample(sample, admissionClass);
+      const current = classDemandActivity(observed);
+      const previous = previousActivity.get(admissionClass) ?? null;
+      if (previous === null || previous.active !== current.active || previous.state !== current.state) {
+        demandTransitions.push(
+          demandTransition({ sample, offsetMs, admissionClass, observed, previous, current }),
+        );
       }
-      const allowedBorrowed = protectedDemandBorrowBaseline + nonInteractiveReleasedConcurrent;
-      if (
-        previousBatchBorrowed !== null &&
-        batchBorrowed > previousBatchBorrowed &&
-        batchBorrowed > allowedBorrowed
-      ) {
-        violations.borrowedGrowthAfterRestoration.push({
+      previousActivity.set(admissionClass, current);
+    }
+
+    if (activity.active) {
+      if (demandEpisode === null) {
+        demandEpisode = {
+          startedAtMs: offsetMs,
+          grandfathered: batchEncroachment,
+          allowed: batchEncroachment,
+        };
+      }
+      // The ratchet: capacity a grandfathered borrower gives back is not lent
+      // out again while its owner is still asking for it.
+      demandEpisode.allowed = Math.min(demandEpisode.allowed, batchEncroachment);
+      const allowedEncroachment = demandEpisode.allowed + interactiveReleasedConcurrent;
+      if (batchEncroachment > allowedEncroachment) {
+        violations.borrowGrowthAfterDemandReturn.push({
           offsetMs,
+          admissionClass: "batch",
           observed: {
-            previous: previousBatchBorrowed,
-            current: batchBorrowed,
-            grandfathered: protectedDemandBorrowBaseline,
-            nonInteractiveReleasedConcurrent,
+            batchInFlight: Number(classSample(sample, "batch")?.inFlight ?? 0),
+            encroachment: batchEncroachment,
+            grandfathered: demandEpisode.grandfathered,
+            entitlementAfterAttrition: demandEpisode.allowed,
+            interactiveReleasedConcurrent,
+            protectedDemandSince: demandEpisode.startedAtMs,
+            protectedDemandEvidence: activity.reason,
           },
-          threshold: `<= ${allowedBorrowed} while protected demand is active`,
+          threshold: `<= ${allowedEncroachment} while protected interactive demand is active`,
           reason:
-            "batch borrowing grew beyond grandfathered borrowers and contemporaneously released non-interactive capacity",
+            "batch occupied more of interactive's nominal protected floor than the borrowers " +
+            "already in flight when interactive demand returned, and more than interactive " +
+            "currently has explicitly released",
         });
+        // One episode reports one entitlement breach; re-baseline to the level
+        // now observed so a single sustained violation is not counted once per
+        // 250 ms sample for the rest of the window.
+        demandEpisode.allowed = batchEncroachment;
       }
     } else {
-      // Once protected demand is idle again, lending is allowed to resume. A
-      // later demand episode gets a fresh grandfathered baseline.
-      protectedDemandBorrowBaseline = null;
+      // Once protected demand is idle again, lending may resume and a later
+      // demand episode gets a fresh grandfathered baseline.
+      demandEpisode = null;
     }
-    previousBatchBorrowed = batchBorrowed;
   }
 
   const total = Object.values(violations).reduce((sum, rows) => sum + rows.length, 0);
+  const frozen = Object.fromEntries(
+    Object.entries(violations).map(([key, rows]) => [key, Object.freeze(rows)]),
+  );
   return Object.freeze({
     samples: samples.length,
     total,
@@ -965,9 +1101,67 @@ export function capacityInvariantViolations(samples, { unlentProtectedTokens } =
     leaseGapShare:
       samples.length > 0 ? +(leaseGaps.length / samples.length).toFixed(4) : null,
     leaseGaps: Object.freeze(leaseGaps),
-    ...Object.fromEntries(
-      Object.entries(violations).map(([key, rows]) => [key, Object.freeze(rows)]),
-    ),
+    ...frozen,
+    /**
+     * H4a: the transfer-safety violations, which are about capacity being
+     * created, over-allocated, or moved below a floor that was promised never
+     * to move. Deliberately separate from `borrowGrowthAfterDemandReturn`,
+     * which is about *timing* rather than about an unsafe transfer.
+     */
+    transferSafetyViolations:
+      frozen.unlentFloorViolations.length +
+      frozen.classCeilingViolations.length +
+      frozen.ceilingOverAllocations.length +
+      frozen.poolOverAllocations.length +
+      frozen.floorSumOverAllocations.length,
+    /** Every observed demand-state change, for both classes, in sample order. */
+    demandTransitions: Object.freeze(demandTransitions),
+    /**
+     * Deprecated alias for `borrowGrowthAfterDemandReturn`, kept for one release
+     * so a reader holding a 0.33.x summary schema does not silently see zero.
+     * The name was wrong: the check was never about restoration.
+     */
+    borrowedGrowthAfterRestoration: frozen.borrowGrowthAfterDemandReturn,
+  });
+}
+
+/**
+ * One demand-state change, with the state that produced it.
+ *
+ * Recorded from the sampled series rather than from a log line, because the
+ * question a reader has at 60 s is not "what did the controller print" but
+ * "what was true about the grant, the occupancy and the counters at the instant
+ * the class was considered active again".
+ */
+function demandTransition({ sample, offsetMs, admissionClass, observed, previous, current }) {
+  const limits = observed?.limits ?? {};
+  return Object.freeze({
+    atMs: offsetMs,
+    class: admissionClass,
+    from: previous === null ? null : previous.state ?? (previous.active ? "active" : "idle"),
+    to: current.state ?? (current.active ? "active" : "idle"),
+    fromActive: previous === null ? null : previous.active,
+    toActive: current.active,
+    reason: current.reason,
+    recentAdmissions: Number(observed?.recentAdmissions ?? 0),
+    recentRejections: Number(observed?.recentRejections ?? 0),
+    inFlight: Number(observed?.inFlight ?? 0),
+    inFlightTokens: Number(observed?.inFlightTokens ?? 0),
+    protectedConcurrentInUse: Number(observed?.protectedConcurrentInUse ?? 0),
+    borrowedConcurrent: Number(observed?.borrowedConcurrent ?? 0),
+    restorationPending: observed?.restorationPending === true,
+    grant: Object.freeze({
+      protectedConcurrent: Number(limits.protectedConcurrent ?? 0),
+      maxConcurrent: Number(limits.maxConcurrent ?? 0),
+      protectedInFlightTokens: Number(limits.protectedInFlightTokens ?? 0),
+      maxInFlightTokens: Number(limits.maxInFlightTokens ?? 0),
+      releasedConcurrent: Number(observed?.releasedConcurrent ?? 0),
+      releasedTokens: Number(observed?.releasedTokens ?? 0),
+    }),
+    pool: Object.freeze({
+      maxConcurrent: Number(sample?.pool?.maxConcurrent ?? 0),
+      inFlight: Number(sample?.pool?.inFlight ?? 0),
+    }),
   });
 }
 
@@ -990,14 +1184,43 @@ function ceilingOverAllocation(violations, offsetMs, admissionClass, applied, no
 /**
  * Lending and restoration episodes, derived from the applied grant series.
  *
- * A lending episode starts when the interactive floor drops below nominal and
- * ends when it returns. Restoration latency is measured from the first sample
- * in which interactive demand is visible again to the first sample in which the
- * floor is whole — the caller's question is "how long after I came back", not
- * "how long after the controller noticed".
+ * What a restoration-required episode is
+ * --------------------------------------
+ * Capacity belonging to a protected class was lent; its owner came back for it
+ * while it was still lent; the controller therefore had something meaningful to
+ * restore. All three conjuncts matter, and 0.33.2 could satisfy none of them
+ * reliably:
+ *
+ *   - Demand return was detected as `inFlight > 0 || recentAdmissions > 0`.
+ *     That is unobservable in exactly the case restoration is for. When the
+ *     borrowers hold every slot in the pool, the returning owner is refused on
+ *     every attempt: never admitted, never in flight. Four real seeds produced
+ *     eight lending episodes and zero restoration-required episodes while the
+ *     samples plainly showed interactive being rejected for twenty-five
+ *     seconds. `classDemandActivity` now counts a rejection and the
+ *     controller's own demand state as the demand they are.
+ *
+ *   - A floor that simply came back — because a lease rolled over, or because
+ *     the class went idle and the nominal partition was reissued — was recorded
+ *     with `restoredAtMs` set and `demandReturnedAtMs` null, which reads as a
+ *     restoration and is not one. Those are now `passive-return` and are
+ *     counted separately, never as restorations.
+ *
+ *   - Restoration was declared complete when the *allocation* returned. On the
+ *     0.33.2 seed 4 the interactive floor was whole again 0 ms after demand
+ *     returned and interactive still could not run for another 27 seconds,
+ *     because four batch requests admitted before the lend held the entire
+ *     physical pool and nothing preempts them. An episode therefore carries
+ *     both instants: `restoredAtMs` for the grant and `occupancyRestoredAtMs`
+ *     for the moment the protected class could actually use its floor. Quoting
+ *     only the first would price restoration at zero.
  */
-export function summarizeLendingEpisodes(samples) {
-  const nominal = nominalClassGrant().interactive;
+export function summarizeLendingEpisodes(samples, { restorationSloMs } = {}) {
+  const nominalGrant = nominalClassGrant();
+  const nominal = nominalGrant.interactive;
+  const slo = Number.isFinite(restorationSloMs)
+    ? restorationSloMs
+    : CONTENTION_POLICY.lending.restorationSloMs;
   const ordered = [...samples].sort(
     (a, b) => Number(a.offsetMs ?? 0) - Number(b.offsetMs ?? 0),
   );
@@ -1005,6 +1228,45 @@ export function summarizeLendingEpisodes(samples) {
   let open = null;
   let peakBorrowedConcurrent = 0;
   let peakLentConcurrent = 0;
+
+  /** Closes an episode, resolving every derived timestamp from what was seen. */
+  const close = (episode) => {
+    const restorationRequired = episode.demandReturnedAtMs !== null;
+    const restorationLatencyMs =
+      restorationRequired && episode.restoredAtMs !== null
+        ? episode.restoredAtMs - episode.demandReturnedAtMs
+        : null;
+    const occupancyRestorationLatencyMs =
+      restorationRequired && episode.occupancyRestoredAtMs !== null
+        ? episode.occupancyRestoredAtMs - episode.demandReturnedAtMs
+        : null;
+    const outcome = !restorationRequired
+      ? episode.restoredAtMs === null
+        ? "open-at-end-of-run"
+        : "passive-return"
+      : episode.restoredAtMs === null
+        ? "unrestored"
+        : "restored";
+    return Object.freeze({
+      ...episode,
+      restorationRequired,
+      restorationLatencyMs,
+      occupancyRestorationLatencyMs,
+      /** The grant came back within the objective. */
+      withinRestorationSlo:
+        restorationLatencyMs === null ? null : restorationLatencyMs <= slo,
+      /**
+       * The class could *use* its floor within the objective. This is the one a
+       * caller feels, and it is the one that can be false while the grant-side
+       * number reads as sub-second.
+       */
+      occupancyWithinRestorationSlo:
+        occupancyRestorationLatencyMs === null
+          ? null
+          : occupancyRestorationLatencyMs <= slo,
+      outcome,
+    });
+  };
 
   for (const sample of ordered) {
     // A lease gap is absence of an applied grant, not a policy decision to lend
@@ -1018,12 +1280,10 @@ export function summarizeLendingEpisodes(samples) {
     const appliedFloor = Number(observed.limits?.protectedConcurrent ?? 0);
     const appliedTokenFloor = Number(observed.limits?.protectedInFlightTokens ?? 0);
     const lent = appliedFloor < nominal.protectedConcurrent;
-    const demanding =
-      Number(observed.inFlight ?? 0) > 0 || Number(observed.recentAdmissions ?? 0) > 0;
-    peakBorrowedConcurrent = Math.max(
-      peakBorrowedConcurrent,
-      Number(batch?.borrowedConcurrent ?? 0),
-    );
+    const activity = classDemandActivity(observed);
+    const batchBorrowed = Number(batch?.borrowedConcurrent ?? 0);
+    const batchEncroachment = classEncroachment(sample, "batch", nominalGrant);
+    peakBorrowedConcurrent = Math.max(peakBorrowedConcurrent, batchBorrowed);
     if (lent) {
       peakLentConcurrent = Math.max(
         peakLentConcurrent,
@@ -1038,37 +1298,125 @@ export function summarizeLendingEpisodes(samples) {
         lentTokens: nominal.protectedInFlightTokens - appliedTokenFloor,
         retainedTokenFloor: appliedTokenFloor,
         demandReturnedAtMs: null,
+        demandReturnEvidence: null,
+        restorationStartedAtMs: null,
         restoredAtMs: null,
+        occupancyRestoredAtMs: null,
+        lentConcurrentAtDemandReturn: null,
+        borrowedConcurrentAtDemandReturn: null,
+        encroachmentAtDemandReturn: null,
+        grandfatheredBorrowersAtDemandReturn: null,
       };
       continue;
     }
     if (open !== null) {
-      if (demanding && open.demandReturnedAtMs === null) open.demandReturnedAtMs = offsetMs;
+      if (activity.active && open.demandReturnedAtMs === null) {
+        open.demandReturnedAtMs = offsetMs;
+        open.demandReturnEvidence = activity.reason;
+        open.lentConcurrentAtDemandReturn = Math.max(
+          0,
+          nominal.protectedConcurrent - appliedFloor,
+        );
+        open.borrowedConcurrentAtDemandReturn = batchBorrowed;
+        open.encroachmentAtDemandReturn = batchEncroachment;
+        // Borrowers already in flight when the owner returns. Restoration here
+        // is non-preemptive, so these are exactly the requests the owner has to
+        // wait out, and naming them is what makes the wait attributable.
+        open.grandfatheredBorrowersAtDemandReturn = batchEncroachment;
+      }
+      // A restoration attempt is the controller having decided to take capacity
+      // back: either it says so, or it has withdrawn the release it had made.
+      if (
+        open.restorationStartedAtMs === null &&
+        open.demandReturnedAtMs !== null &&
+        (observed.restorationPending === true ||
+          Number(observed.releasedConcurrent ?? 0) < open.lentConcurrent)
+      ) {
+        open.restorationStartedAtMs = offsetMs;
+      }
       if (!lent) {
+        // The grant is back, which ends the lending episode. Whether the owner
+        // can *use* it is a second question, resolved below from the samples
+        // that follow, because a borrower does not vanish when a floor returns.
         open.restoredAtMs = offsetMs;
-        open.restorationLatencyMs =
-          open.demandReturnedAtMs === null ? null : offsetMs - open.demandReturnedAtMs;
-        episodes.push(Object.freeze(open));
+        episodes.push(close(open));
         open = null;
       }
     }
   }
-  if (open !== null) episodes.push(Object.freeze({ ...open, restorationLatencyMs: null }));
+  // An episode still open at the last sample is reported as open, not inferred
+  // to have ended: the run stopped watching, which is not the same as the floor
+  // coming back.
+  if (open !== null) episodes.push(close(open));
 
-  const restorationRequired = episodes.filter((episode) => episode.demandReturnedAtMs !== null);
+  /**
+   * Second pass: when did each restored floor become usable?
+   *
+   * Separate from the first pass on purpose. Occupancy is resolved from the
+   * samples *after* the grant returned, and a floor can be lent again before
+   * the previous borrowers have drained — so folding this into the episode loop
+   * would let one unfinished drain swallow the next lending episode.
+   */
+  const resolved = episodes.map((episode) => {
+    if (episode.restoredAtMs === null) return episode;
+    const found = ordered.find(
+      (sample) =>
+        Number(sample?.pool?.maxConcurrent ?? 0) >= 1 &&
+        Number(sample.offsetMs ?? 0) >= episode.restoredAtMs &&
+        classEncroachment(sample, "batch", nominalGrant) <= 0,
+    );
+    return close({
+      ...episode,
+      occupancyRestoredAtMs: found === undefined ? null : Number(found.offsetMs ?? 0),
+    });
+  });
+  episodes.length = 0;
+  episodes.push(...resolved);
+
+  const restorationRequired = episodes.filter((episode) => episode.restorationRequired);
   const restored = restorationRequired.filter((episode) => episode.restoredAtMs !== null);
   const unrestored = restorationRequired.filter((episode) => episode.restoredAtMs === null);
+  const passive = episodes.filter((episode) => episode.outcome === "passive-return");
+  const openAtEnd = episodes.filter((episode) => episode.outcome === "open-at-end-of-run");
   const latencies = restored
     .map((episode) => episode.restorationLatencyMs)
+    .filter(Number.isFinite);
+  const occupancyLatencies = restored
+    .map((episode) => episode.occupancyRestorationLatencyMs)
     .filter(Number.isFinite);
   return Object.freeze({
     samples: ordered.length,
     lendingEpisodes: episodes.length,
+    /** Demand returned while capacity was still lent: something to restore. */
     restorationRequiredEpisodes: restorationRequired.length,
+    /** Of those, the ones whose grant came back. */
     restorationEpisodes: restored.length,
     unrestoredEpisodes: unrestored.length,
+    /**
+     * A floor that returned with no owner demand behind it. Not a restoration,
+     * and never counted as one — a lease rollover is not an achievement.
+     */
+    passiveReturnEpisodes: passive.length,
+    /** Still lent when sampling stopped. Reported, not inferred either way. */
+    openAtEndOfRunEpisodes: openAtEnd.length,
+    restorationSloMs: slo,
     restorationLatencyMsMedian: median(latencies),
     restorationLatencyMsMax: latencies.length > 0 ? Math.max(...latencies) : null,
+    /** Grant-side objective breaches. */
+    restorationSloBreaches: restored.filter(
+      (episode) => episode.withinRestorationSlo === false,
+    ).length,
+    /**
+     * How long the owner actually waited to be able to use its floor, which on
+     * a non-preemptive policy is bounded by the borrowers' remaining decode
+     * rather than by the controller's reaction time.
+     */
+    occupancyRestorationLatencyMsMedian: median(occupancyLatencies),
+    occupancyRestorationLatencyMsMax:
+      occupancyLatencies.length > 0 ? Math.max(...occupancyLatencies) : null,
+    occupancyRestorationSloBreaches: restored.filter(
+      (episode) => episode.occupancyWithinRestorationSlo === false,
+    ).length,
     peakLentConcurrent,
     peakBorrowedConcurrent,
     /** Smallest applied protected token floor seen while the concurrency floor was lent. */
@@ -1077,6 +1425,338 @@ export function summarizeLendingEpisodes(samples) {
         ? Math.min(...episodes.map((episode) => episode.retainedTokenFloor))
         : null,
     episodes: Object.freeze(episodes),
+  });
+}
+
+/**
+ * The cross-source timeline of one protected-demand return, in one timebase.
+ *
+ * The 0.33.2 summary could not answer "what happened at 60 seconds" from the
+ * summary alone. It reported two lending episodes, zero restorations and a
+ * `null` latency, and the only way to find out that interactive had been
+ * refused for the entire contention window was to open the 600 KB per-seed
+ * capacity file. This object exists so that never has to happen again.
+ *
+ * Three clocks, reconciled rather than assumed equal
+ * --------------------------------------------------
+ * The trace is in workload time (arrival offsets from the first measured
+ * arrival). The load generator starts a little after the sampler does, so its
+ * offsets run on a third origin. `loadgenSkewMs` is the measured difference
+ * between the two epochs, and every generator-side instant below is reported in
+ * the sampler's timebase so the numbers can be compared without the reader
+ * having to know which process produced which. `null` skew means the summary
+ * did not carry the epoch, and the generator-side instants are then omitted
+ * rather than silently misaligned.
+ */
+export function summarizeDemandTransitions({
+  samples = [],
+  trace = null,
+  loadgenSummary = null,
+  workload = CONTENTION_WORKLOAD,
+  startedAtEpochMs = null,
+  admissionClass = "interactive",
+} = {}) {
+  const nominalGrant = nominalClassGrant();
+  const nominal = nominalGrant[admissionClass] ?? nominalGrant.interactive;
+  const resumeStartMs = Number(
+    loadgenSummary?.config?.interactiveResumeStartMs ?? workload.interactiveResumeStartMs,
+  );
+  const resumeDurationMs = Number(
+    loadgenSummary?.config?.interactiveResumeDurationMs ?? workload.interactiveResumeDurationMs,
+  );
+  const resumeEndMs = resumeStartMs + resumeDurationMs;
+  const ordered = [...samples].sort(
+    (a, b) => Number(a.offsetMs ?? 0) - Number(b.offsetMs ?? 0),
+  );
+  const granted = ordered.filter((sample) => Number(sample?.pool?.maxConcurrent ?? 0) >= 1);
+
+  const loadgenEpochMs = Number(loadgenSummary?.startedAtEpochMs);
+  const loadgenSkewMs =
+    Number.isFinite(loadgenEpochMs) && Number.isFinite(Number(startedAtEpochMs))
+      ? +(loadgenEpochMs - Number(startedAtEpochMs)).toFixed(1)
+      : null;
+  /** Generator-side offset expressed on the sampler's clock. */
+  const toSamplerMs = (value) => {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric) || loadgenSkewMs === null) return null;
+    return +(numeric + loadgenSkewMs).toFixed(1);
+  };
+
+  // The generator's own intent, taken from the immutable trace rather than from
+  // what survived: a request that was rejected on every attempt still arrived.
+  const traceArrivals = (Array.isArray(trace?.entries) ? trace.entries : [])
+    .filter((entry) => entry?.class === admissionClass)
+    .map((entry) => Number(entry.arrivalMs))
+    .filter(Number.isFinite)
+    .sort((a, b) => a - b);
+  const generatorResumedAtMs =
+    traceArrivals.find((arrivalMs) => arrivalMs >= resumeStartMs) ?? null;
+
+  // Tyr's own record of the first decision it made about the resumed class,
+  // whichever way it went. A refusal is an observation of demand.
+  const classSummary = loadgenSummary?.classes?.[admissionClass] ?? null;
+  const rejectSnapshots = (Array.isArray(classSummary?.localRejectSnapshots)
+    ? classSummary.localRejectSnapshots
+    : []
+  )
+    .map((snapshot) => Number(snapshot?.rejectedAtMs))
+    .filter((value) => Number.isFinite(value) && value >= resumeStartMs);
+  const successArrivals = (Array.isArray(classSummary?.phaseSamples)
+    ? classSummary.phaseSamples
+    : []
+  )
+    .filter((entry) => Number(entry?.arrivalMs) >= resumeStartMs)
+    .map((entry) => Number(entry?.completedAtMs))
+    .filter(Number.isFinite);
+  const tyrFirstDecisionAtMs =
+    rejectSnapshots.length + successArrivals.length === 0
+      ? null
+      : Math.min(...[...rejectSnapshots, ...successArrivals]);
+
+  // The benchmark's own view, on the sampled grid.
+  const activeSample = granted.find(
+    (sample) =>
+      Number(sample.offsetMs ?? 0) >= resumeStartMs &&
+      classDemandActivity(classSample(sample, admissionClass)).active,
+  );
+  const markedActiveAtMs = activeSample === undefined ? null : Number(activeSample.offsetMs ?? 0);
+  const atMark = activeSample === undefined ? null : classSample(activeSample, admissionClass);
+  const appliedFloorAtMark = Number(atMark?.limits?.protectedConcurrent ?? 0);
+
+  // Borrowing: when the last new borrower was admitted, and when the borrowed
+  // capacity finally came back. `admitted` is Tyr's cumulative counter, so an
+  // unchanged value across the whole contention window is positive evidence
+  // that no new borrowing happened rather than merely an absent event.
+  const borrower = admissionClass === "interactive" ? "batch" : "interactive";
+  let lastBorrowerAdmissionAtMs = null;
+  let lastBorrowerAdmissionBeforeMarkAtMs = null;
+  let borrowerAdmissionsDuringResumeWindow = 0;
+  let previousAdmitted = null;
+  for (const sample of granted) {
+    const admitted = Number(classSample(sample, borrower)?.admitted ?? 0);
+    const offsetMs = Number(sample.offsetMs ?? 0);
+    if (previousAdmitted !== null && admitted > previousAdmitted) {
+      lastBorrowerAdmissionAtMs = offsetMs;
+      if (markedActiveAtMs !== null && offsetMs < markedActiveAtMs) {
+        lastBorrowerAdmissionBeforeMarkAtMs = offsetMs;
+      }
+      // Scoped to the resume window on purpose. Borrowing that starts again
+      // after the protected class has gone quiet at 85 s is the policy working,
+      // not a violation, and counting it here would make every seed look as if
+      // new borrowing continued through restoration.
+      if (
+        markedActiveAtMs !== null &&
+        offsetMs >= markedActiveAtMs &&
+        offsetMs < resumeEndMs
+      ) {
+        borrowerAdmissionsDuringResumeWindow += admitted - previousAdmitted;
+      }
+    }
+    previousAdmitted = admitted;
+  }
+
+  const floorRestoredSample =
+    markedActiveAtMs === null
+      ? undefined
+      : granted.find(
+          (sample) =>
+            Number(sample.offsetMs ?? 0) >= markedActiveAtMs &&
+            Number(classSample(sample, admissionClass)?.limits?.protectedConcurrent ?? 0) >=
+              nominal.protectedConcurrent,
+        );
+  // Restoration is only "in progress" if there was something to restore: either
+  // the grant was still short at the mark, or a borrower was still sitting on
+  // the class's nominal floor. A grant that happens to be at its nominal
+  // allocation with nobody encroaching is not a restoration event, and 0.34.0
+  // must not fabricate one.
+  const restorationWasNeeded =
+    activeSample !== undefined &&
+    (appliedFloorAtMark < nominal.protectedConcurrent ||
+      classEncroachment(activeSample, borrower, nominalGrant) > 0);
+  const restorationStartedSample =
+    markedActiveAtMs === null || !restorationWasNeeded
+      ? undefined
+      : granted.find((sample) => {
+          const observed = classSample(sample, admissionClass);
+          return (
+            Number(sample.offsetMs ?? 0) >= markedActiveAtMs &&
+            (observed?.restorationPending === true ||
+              Number(observed?.limits?.protectedConcurrent ?? 0) >= nominal.protectedConcurrent)
+          );
+        });
+  const occupancySample =
+    markedActiveAtMs === null
+      ? undefined
+      : granted.find(
+          (sample) =>
+            Number(sample.offsetMs ?? 0) >= markedActiveAtMs &&
+            classEncroachment(sample, borrower, nominalGrant) <= 0,
+        );
+
+  const inWindow = (sample) => {
+    const offsetMs = Number(sample.offsetMs ?? 0);
+    return offsetMs >= resumeStartMs && offsetMs < resumeEndMs;
+  };
+  const windowSamples = granted.filter(inWindow);
+  const admissionsInWindow = (() => {
+    if (windowSamples.length === 0) return null;
+    const first = classSample(windowSamples[0], admissionClass);
+    const last = classSample(windowSamples[windowSamples.length - 1], admissionClass);
+    return {
+      admitted: Number(last?.admitted ?? 0) - Number(first?.admitted ?? 0),
+      rejected: Number(last?.rejected ?? 0) - Number(first?.rejected ?? 0),
+      maxInFlight: Math.max(
+        0,
+        ...windowSamples.map((sample) => Number(classSample(sample, admissionClass)?.inFlight ?? 0)),
+      ),
+    };
+  })();
+
+  return Object.freeze({
+    admissionClass,
+    resumeWindowMs: Object.freeze({ fromMs: resumeStartMs, toMs: resumeEndMs }),
+    loadgenSkewMs,
+    timebase:
+      "Sampler offsets are milliseconds from the arm's measured start. Generator-side " +
+      "instants are shifted by loadgenSkewMs onto the same origin; when that skew is " +
+      "unknown they are reported as null rather than aligned by assumption.",
+    /** Question 1: when did the workload actually ask again? */
+    generatorResumedAtMs,
+    generatorResumedAtSamplerMs: toSamplerMs(generatorResumedAtMs),
+    /** Question 2: when did Tyr first decide something about that demand? */
+    tyrFirstDecisionAtMs,
+    tyrFirstDecisionAtSamplerMs: toSamplerMs(tyrFirstDecisionAtMs),
+    tyrFirstDecisionWasRejection:
+      tyrFirstDecisionAtMs === null
+        ? null
+        : rejectSnapshots.includes(tyrFirstDecisionAtMs),
+    /** Question 3: when did this benchmark call the class active? */
+    benchmarkMarkedActiveAtMs: markedActiveAtMs,
+    benchmarkMarkedActiveEvidence:
+      atMark === null ? null : classDemandActivity(atMark).reason,
+    /** Question 4: was the class's capacity lent at that instant? */
+    capacityLentAtMark:
+      atMark === null ? null : appliedFloorAtMark < nominal.protectedConcurrent,
+    lentConcurrentAtMark:
+      atMark === null ? null : Math.max(0, nominal.protectedConcurrent - appliedFloorAtMark),
+    appliedProtectedConcurrentAtMark: atMark === null ? null : appliedFloorAtMark,
+    /** Question 5: how much was the other class holding? */
+    borrowerAtMark: borrower,
+    borrowedConcurrentAtMark:
+      activeSample === undefined
+        ? null
+        : Number(classSample(activeSample, borrower)?.borrowedConcurrent ?? 0),
+    borrowerEncroachmentAtMark:
+      activeSample === undefined
+        ? null
+        : classEncroachment(activeSample, borrower, nominalGrant),
+    /**
+     * Question 6: when did new borrowing stop?
+     *
+     * `borrowerAdmissionsDuringResumeWindow` is the number that answers it, and
+     * it is scoped to the window in which the protected class was actually
+     * asking. Zero here with a positive `borrowerEncroachmentAtMark` is the
+     * signature of correct non-preemptive behaviour: the loans were all made
+     * before the owner came back, and none was made after.
+     */
+    lastBorrowerAdmissionBeforeMarkAtMs,
+    borrowerAdmissionsDuringResumeWindow,
+    newBorrowingDuringResumeWindow: borrowerAdmissionsDuringResumeWindow > 0,
+    /** Run-wide, including the drain after the protected class goes quiet again. */
+    lastBorrowerAdmissionAtMs,
+    /**
+     * Question 7: when did a restoration attempt begin, and how did it end?
+     *
+     * `restorationWasNeeded` is false when the class's grant was already whole
+     * at the mark and nobody was occupying its floor; the remaining fields are
+     * then reported for completeness but describe a class that never had to
+     * wait for anything.
+     */
+    restorationWasNeeded,
+    restorationStartedAtMs:
+      restorationStartedSample === undefined
+        ? null
+        : Number(restorationStartedSample.offsetMs ?? 0),
+    floorRestoredAtMs:
+      floorRestoredSample === undefined ? null : Number(floorRestoredSample.offsetMs ?? 0),
+    occupancyRestoredAtMs:
+      occupancySample === undefined ? null : Number(occupancySample.offsetMs ?? 0),
+    floorRestorationLatencyMs:
+      floorRestoredSample === undefined || markedActiveAtMs === null
+        ? null
+        : Number(floorRestoredSample.offsetMs ?? 0) - markedActiveAtMs,
+    occupancyRestorationLatencyMs:
+      occupancySample === undefined || markedActiveAtMs === null
+        ? null
+        : Number(occupancySample.offsetMs ?? 0) - markedActiveAtMs,
+    /** What the protected class actually got for the whole resume window. */
+    resumeWindow: admissionsInWindow,
+  });
+}
+
+/**
+ * The sampled series around a chosen interval, with unchanged samples collapsed.
+ *
+ * The interval this benchmark cares about is 50–70 s: the last ten seconds in
+ * which the interactive floor is legitimately lendable, and the first ten in
+ * which its owner is back. At 250 ms that is eighty samples per arm per seed,
+ * most of them identical, so only samples at which something tracked changed
+ * are kept — plus the first and last, so the boundaries of the interval are
+ * never inferred from a gap.
+ */
+export function criticalWindowDigest(samples, { fromMs, toMs } = {}) {
+  const from = Number.isFinite(fromMs) ? fromMs : 50_000;
+  const to = Number.isFinite(toMs) ? toMs : 70_000;
+  const nominalGrant = nominalClassGrant();
+  const rows = [...samples]
+    .sort((a, b) => Number(a.offsetMs ?? 0) - Number(b.offsetMs ?? 0))
+    .filter((sample) => {
+      const offsetMs = Number(sample.offsetMs ?? 0);
+      return offsetMs >= from && offsetMs < to;
+    })
+    .map((sample) =>
+      Object.freeze({
+        atMs: Number(sample.offsetMs ?? 0),
+        poolMaxConcurrent: Number(sample?.pool?.maxConcurrent ?? 0),
+        classes: Object.freeze(
+          Object.fromEntries(
+            Object.keys(nominalGrant).map((admissionClass) => {
+              const observed = classSample(sample, admissionClass);
+              const activity = classDemandActivity(observed);
+              return [
+                admissionClass,
+                Object.freeze({
+                  protectedConcurrent: Number(observed?.limits?.protectedConcurrent ?? 0),
+                  inFlight: Number(observed?.inFlight ?? 0),
+                  borrowedConcurrent: Number(observed?.borrowedConcurrent ?? 0),
+                  encroachment: classEncroachment(sample, admissionClass, nominalGrant),
+                  admitted: Number(observed?.admitted ?? 0),
+                  rejected: Number(observed?.rejected ?? 0),
+                  demandState: observed?.demandState ?? null,
+                  demandActive: activity.active,
+                  demandEvidence: activity.reason,
+                  releasedConcurrent: Number(observed?.releasedConcurrent ?? 0),
+                  restorationPending: observed?.restorationPending === true,
+                }),
+              ];
+            }),
+          ),
+        ),
+      }),
+    );
+  const kept = rows.filter((row, index) => {
+    if (index === 0 || index === rows.length - 1) return true;
+    return JSON.stringify({ ...row, atMs: 0 }) !== JSON.stringify({ ...rows[index - 1], atMs: 0 });
+  });
+  return Object.freeze({
+    fromMs: from,
+    toMs: to,
+    samples: rows.length,
+    retained: kept.length,
+    note:
+      "Samples identical to their predecessor are omitted; the first and last sample in the " +
+      "interval are always kept so the boundaries are observed rather than inferred.",
+    series: Object.freeze(kept),
   });
 }
 
@@ -1200,8 +1880,12 @@ export function localContentionSeedProof({
         count(direct.classes?.interactive?.windows?.idle?.ttftP95Ms),
       {
         idleTtftP95Ms: direct.classes?.interactive?.windows?.idle?.ttftP95Ms ?? null,
+        idleCompleted: count(direct.classes?.interactive?.windows?.idle?.completed),
         contentionTtftP95Ms:
           direct.classes?.interactive?.windows?.contention?.ttftP95Ms ?? null,
+        // Carried because a `null` tail means the window had no completions at
+        // all, which is a different failure from a tail that did not grow.
+        contentionCompleted: count(direct.classes?.interactive?.windows?.contention?.completed),
       },
       "contention-window tail above idle-window tail on the direct arm",
       "without measurable queueing in the control arm there is no contention to protect against",
@@ -1263,27 +1947,51 @@ export function localContentionSeedProof({
       0,
       "protected floors may never sum above the capacity they partition",
     ),
-    noBorrowGrowthAfterRestoration: gate(
-      invariants.borrowedGrowthAfterRestoration.length === 0,
-      invariants.borrowedGrowthAfterRestoration.length,
+    /**
+     * H4b. Renamed in 0.34.0: the old `noBorrowGrowthAfterRestoration` said
+     * "restoration", but the check has never been about restoration — it is
+     * about what happens once the owner asks again, whether or not any
+     * restoration has yet occurred. The old key is preserved below as an alias.
+     */
+    noBorrowGrowthAfterDemandReturn: gate(
+      invariants.borrowGrowthAfterDemandReturn.length === 0,
+      invariants.borrowGrowthAfterDemandReturn.length,
       0,
-      "already-running borrowers may drain after restoration, but new batch borrowing must not grow once protected demand has returned and its floor is restored",
+      "borrowers already in flight when protected demand returned may drain, but the borrowing " +
+        "class must not take more of the protected class's nominal floor after that instant, " +
+        "and may not refill a slot a grandfathered borrower has given back",
     ),
+    /**
+     * H4a. The only genuinely unsafe handoff outcome: capacity that moved
+     * before its previous holder confirmed it had let go. An abort is the
+     * control plane declining a reallocation whose preconditions lapsed, which
+     * is the safe outcome and is priced as slower restoration, and borrow
+     * growth at the wrong time is a timing failure rather than an unsafe
+     * transfer — neither is counted here.
+     */
     noUnsafeHandoff: gate(
       handoff.unsafeHandoffs === 0,
-      { committedWithoutAck: handoff.committedWithoutAck, aborted: handoff.aborted },
+      {
+        committedWithoutAck: handoff.committedWithoutAck,
+        aborted: handoff.aborted,
+        committed: handoff.committed,
+      },
       0,
       "a capacity handoff must be acknowledged before it is committed; an aborted handoff is " +
         "the safe outcome and is priced as slower restoration rather than gated here",
     ),
     everyLentFloorRestored: gate(
-      lending.lendingEpisodes === 0 || lending.unrestoredEpisodes === 0,
+      lending.restorationRequiredEpisodes === 0 || lending.unrestoredEpisodes === 0,
       {
         lendingEpisodes: lending.lendingEpisodes,
+        restorationRequiredEpisodes: lending.restorationRequiredEpisodes,
+        passiveReturnEpisodes: lending.passiveReturnEpisodes,
+        openAtEndOfRunEpisodes: lending.openAtEndOfRunEpisodes,
         unrestored: lending.unrestoredEpisodes,
       },
       0,
-      "when protected demand returns, a lent floor must come back; lending that remains open while its owner stays idle is not a restoration failure",
+      "when protected demand returns while capacity is lent, that capacity must come back; a " +
+        "lend whose owner never returned is a passive return, not a restoration failure",
     ),
     noDeadlineAbandonments: gate(
       count(mofluxBatch.deadlineAbandonments) === 0 &&
@@ -1299,7 +2007,16 @@ export function localContentionSeedProof({
   return Object.freeze({
     passed: Object.values(checks).every((entry) => entry.passed),
     validity,
-    safety,
+    /**
+     * `noBorrowGrowthAfterRestoration` is a deprecated alias for
+     * `noBorrowGrowthAfterDemandReturn`, kept for one release so a reader
+     * holding the 0.33.x schema sees the real verdict rather than `undefined`.
+     * It is not counted twice: `checks` is built before the alias is added.
+     */
+    safety: Object.freeze({
+      ...safety,
+      noBorrowGrowthAfterRestoration: safety.noBorrowGrowthAfterDemandReturn,
+    }),
     failed: Object.freeze(
       Object.entries(checks)
         .filter(([, entry]) => !entry.passed)
@@ -1312,8 +2029,18 @@ export function localContentionSeedProof({
       interactiveSloGoodputDeltaRpsVsDirect: comparison.interactiveSloGoodputDeltaRpsVsDirect,
       batchBorrowWindowRatioVsStatic: comparison.batchBorrowWindowRatioVsStatic,
       lendingEpisodes: lending.lendingEpisodes,
+      restorationRequiredEpisodes: lending.restorationRequiredEpisodes,
       restorationEpisodes: lending.restorationEpisodes,
+      passiveReturnEpisodes: lending.passiveReturnEpisodes,
       restorationLatencyMsMedian: lending.restorationLatencyMsMedian,
+      /**
+       * Recorded, never gated. The grant-side latency is the controller's
+       * reaction time; this is how long the owner waited to be able to use the
+       * floor, and on a non-preemptive policy the two can differ by tens of
+       * seconds.
+       */
+      occupancyRestorationLatencyMsMedian: lending.occupancyRestorationLatencyMsMedian,
+      occupancyRestorationSloBreaches: lending.occupancyRestorationSloBreaches,
     }),
   });
 }
@@ -1355,6 +2082,19 @@ export function localContentionProof({ seeds, seedProofs, comparisons, requiredS
   const sloGoodputImproved =
     Number.isFinite(sloGoodputDeltaMedian) &&
     sloGoodputDeltaMedian >= HYPOTHESIS_THRESHOLDS.interactiveSloGoodputDeltaMinRps;
+
+  /** H4a: nothing unsafe was transferred. */
+  const transferSafe = (proof) =>
+    proof.safety.noUnsafeHandoff.passed &&
+    proof.safety.noUnlentFloorViolations.passed &&
+    proof.safety.noClassCeilingViolations.passed &&
+    proof.safety.noCeilingOverAllocation.passed &&
+    proof.safety.noPoolOverAllocation.passed &&
+    proof.safety.noFloorSumOverAllocation.passed;
+  /** H4b: nothing new was borrowed after the owner came back, and it converged. */
+  const postDemandSafe = (proof) =>
+    proof.safety.noBorrowGrowthAfterDemandReturn.passed &&
+    proof.safety.everyLentFloorRestored.passed;
 
   const checks = Object.freeze({
     enoughSeeds: gate(
@@ -1402,25 +2142,42 @@ export function localContentionProof({ seeds, seedProofs, comparisons, requiredS
       seedProofs.length,
       "H3: the configured interactive protected floor is never violated",
     ),
-    h4NoUnsafeCapacityHandoff: gate(
-      seedProofs.every(
-        (proof) =>
-          proof.safety.noUnsafeHandoff.passed &&
-          proof.safety.noCeilingOverAllocation.passed &&
-          proof.safety.noPoolOverAllocation.passed &&
-          proof.safety.noFloorSumOverAllocation.passed &&
-          proof.safety.noBorrowGrowthAfterRestoration.passed,
-      ),
-      seedProofs.filter(
-        (proof) =>
-          proof.safety.noUnsafeHandoff.passed &&
-          proof.safety.noCeilingOverAllocation.passed &&
-          proof.safety.noPoolOverAllocation.passed &&
-          proof.safety.noFloorSumOverAllocation.passed &&
-          proof.safety.noBorrowGrowthAfterRestoration.passed,
-      ).length,
+    /**
+     * H4a — capacity transfer safety.
+     *
+     * Everything that would mean capacity was created, over-allocated, moved
+     * below a floor promised never to move, or handed over before its previous
+     * holder acknowledged letting go. These are absolute: a system that does
+     * any of them is unsafe regardless of timing.
+     *
+     * Split from H4b in 0.34.0 because the combined gate could not say which
+     * kind of failure had occurred, and had twice reported an
+     * acknowledged-and-aborted-safe handoff run as "unsafe capacity handoff"
+     * when what actually happened was borrow growth at a suspect instant.
+     */
+    h4aNoUnsafeCapacityTransfer: gate(
+      seedProofs.every((proof) => transferSafe(proof)),
+      seedProofs.filter((proof) => transferSafe(proof)).length,
       seedProofs.length,
-      "H4: adaptive lending and restoration produce no over-allocation and no unsafe handoff",
+      "H4a: lending and restoration move capacity without creating it, without breaching a " +
+        "class ceiling, pool grant, floor sum or unlent slice, and without committing a " +
+        "handoff that was never acknowledged",
+    ),
+    /**
+     * H4b — no new borrowing after protected demand returns.
+     *
+     * A timing property, not a safety-of-transfer property. Borrowers already
+     * in flight are grandfathered because restoration here is non-preemptive;
+     * what must hold is that no new loan is made after the owner asks again,
+     * that a slot a grandfathered borrower gives back is not refilled, and that
+     * every episode which actually required restoration converged.
+     */
+    h4bNoBorrowingAfterProtectedDemandReturn: gate(
+      seedProofs.every((proof) => postDemandSafe(proof)),
+      seedProofs.filter((proof) => postDemandSafe(proof)).length,
+      seedProofs.length,
+      "H4b: once protected demand returns, no new borrowing of that class's floor begins and " +
+        "every restoration-required episode converges",
     ),
   });
 
@@ -1430,7 +2187,16 @@ export function localContentionProof({ seeds, seedProofs, comparisons, requiredS
       h1: checks.h1InteractivePreserved.passed,
       h2: checks.h2BatchBorrowedIdleCapacity.passed,
       h3: checks.h3ProtectedFloorNeverViolated.passed,
-      h4: checks.h4NoUnsafeCapacityHandoff.passed,
+      h4a: checks.h4aNoUnsafeCapacityTransfer.passed,
+      h4b: checks.h4bNoBorrowingAfterProtectedDemandReturn.passed,
+      /**
+       * Deprecated: the 0.33.x combined verdict, retained for one release as
+       * the conjunction of the two gates that replaced it. A reader who needs
+       * to know *which* failed must read h4a and h4b.
+       */
+      h4:
+        checks.h4aNoUnsafeCapacityTransfer.passed &&
+        checks.h4bNoBorrowingAfterProtectedDemandReturn.passed,
     }),
     checks,
     failed: Object.freeze(

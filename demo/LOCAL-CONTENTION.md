@@ -141,15 +141,97 @@ tokens, rejected admissions with their reasons and binding constraints, deadline
 abandonments, torn streams, server errors, and per-window completions.
 
 For the lending arm additionally: the applied per-class grant sampled from Tyr
-every 500 ms, merged with Latchflo's own demand view; lending and restoration
-episodes derived from that series; restoration latency measured from the first
-sample in which interactive demand is visible again; Latchflo's per-resource
-restoration episodes; the `unlent_floor` gauges; and the handoff event log.
+every 250 ms, merged with Latchflo's own demand view; lending and restoration
+episodes derived from that series; Latchflo's own per-resource restoration
+episodes; the `unlent_floor` gauges; and the handoff event log.
 
 Three independent sources on purpose. Tyr says what it enforced, Latchflo says
 what it withheld and whether each resource met its objective, and the load
 generator says what the caller lost. A verdict built from the controller's side
 alone would report a restoration without ever pricing it.
+
+### Missing is not zero
+
+A distribution with no observations reports `null`, never `0`. A contention
+window in which every interactive request was rejected has no TTFT p95; before
+0.34.0 it reported `0` and read as the fastest window in the run. Counts and
+rates stay numeric, because zero completions really is zero goodput and that is
+a measurement rather than an absence. Ratios built from a missing distribution
+are `null` too: an undefined comparison must not be readable as "no difference".
+
+### Demand transitions
+
+Both classes' demand-state changes are recorded from the sampled series, with
+the grant, occupancy, released capacity and admission/rejection counters that
+were true at the instant of each change.
+
+Alongside them each managed arm carries a `demandReturn` object built for the
+one moment the experiment turns on — interactive coming back at 60 s — and
+reconciling three clocks onto one origin:
+
+| source | what it knows | timebase |
+| --- | --- | --- |
+| the trace | when the workload *asked* | workload offsets |
+| the load generator | Tyr's first decision, refusals included | its own start |
+| the `/stats` sampler | applied grant, occupancy, controller demand | arm start |
+
+`loadgenSkewMs` is the measured difference between the generator's epoch and the
+sampler's, and every generator-side instant is reported shifted onto the
+sampler's clock. When that skew is unknown the shifted values are `null` rather
+than aligned by assumption. The object answers, from the summary alone:
+
+- `generatorResumedAtMs` — when interactive demand actually resumed
+- `tyrFirstDecisionAtMs` / `tyrFirstDecisionWasRejection` — when Tyr first
+  decided anything about it, and which way
+- `benchmarkMarkedActiveAtMs` / `benchmarkMarkedActiveEvidence` — when this
+  benchmark called the class active, and what proved it
+- `capacityLentAtMark` / `lentConcurrentAtMark` — whether its floor was lent
+  at that instant, and by how much
+- `borrowedConcurrentAtMark` / `borrowerEncroachmentAtMark` — how much the
+  other class was holding
+- `borrowerAdmissionsDuringResumeWindow` — whether any *new* borrowing followed
+- `restorationStartedAtMs`, `floorRestoredAtMs`, `occupancyRestoredAtMs`
+
+A deduplicated per-sample digest of the 50–70 s interval ships next to it, with
+identical consecutive samples collapsed and both borders always retained.
+
+### Restoration episodes
+
+A **restoration-required** episode is one where capacity belonging to a
+protected class was lent, its owner returned while that capacity was still lent,
+and the controller therefore had something meaningful to restore. Every lending
+episode lands in exactly one outcome:
+
+| outcome | meaning |
+| --- | --- |
+| `restored` | demand returned while lent, and the grant came back |
+| `unrestored` | demand returned while lent, and it did not |
+| `passive-return` | the floor came back with nobody asking. Not a restoration |
+| `open-at-end-of-run` | still lent when sampling stopped. Not inferred either way |
+
+A lease expiring, or a grant happening to return to its nominal allocation, is
+never counted as a restoration.
+
+Demand return is detected from the controller's demand state and from
+**rejections**, not only from admissions. That distinction is the whole point:
+a class returning to a pool whose every slot is held by borrowers is refused on
+every attempt, so it is never admitted and never in flight. Measured by
+admissions it looks idle. The 0.33.2 run produced eight lending episodes and
+zero restoration-required episodes for exactly that reason, while its samples
+showed interactive being refused for twenty-five seconds straight.
+
+Two latencies are reported, and they are not the same number:
+
+- `restorationLatencyMs` — from demand return to the **grant** being whole.
+  This is the controller's reaction time.
+- `occupancyRestorationLatencyMs` — from demand return to the protected class
+  being able to **use** its floor, i.e. to no borrower still sitting on it.
+
+Restoration here is non-preemptive, so the second is bounded by the borrowers'
+remaining decode rather than by the control plane. On the 0.33.2 diagnostic
+seeds the first was 0–394 ms and the second was 15–42 seconds. Quoting only the
+first would price restoration at nothing, so both are carried and both are
+checked against `restorationSloMs`.
 
 ## Acceptance
 
@@ -170,15 +252,27 @@ fails the sweep:
 - the static arm actually refused batch work
 - no unlent-floor violation, class-ceiling violation, ceiling over-allocation,
   pool over-allocation, or floor-sum over-allocation at any sample
-- once protected interactive demand returns and its floor is restored, observed
-  batch borrowing does not grow; already-running borrowers are grandfathered
-  because non-preemptive restoration does not retroactively make their original
-  admission unsafe
+- once protected interactive demand returns, batch does not take **more** of
+  interactive's nominal floor than it already held; already-running borrowers
+  are grandfathered because non-preemptive restoration does not retroactively
+  make their original admission unsafe, and the entitlement ratchets down as
+  they drain so a freed slot may not be refilled while its owner is still asking
 - no capacity handoff committed without the required acknowledgement; an
   aborted handoff is a safe refusal to reallocate and is reported as restoration
   cost, not as an unsafe commit
 - every lending episode for which protected demand actually returned was
   restored; an end-of-run lend with no returning owner demand is not a failure
+
+Encroachment is measured against the **nominal** partition, not against the
+applied grant. Tyr's `borrowedConcurrent` is occupancy above a class's applied
+floor, and a class whose own floor has been lent away while it was idle reports
+its first perfectly legitimate request as borrowing. That produced a false H4
+failure at 29.896 s on the 0.33.2 seed 4 — inside the phase in which batch is
+supposed to be using idle capacity, with the interactive floor whole and
+untouched at three slots. Because the floors sum to the physical ceiling,
+occupancy above a class's own nominal floor is exactly the occupancy that must
+be coming out of some other class's reserve, whoever lent it and whenever the
+applied grant catches up.
 - no borrowed-slot deadline abandonment (no arm configures one)
 
 Across seeds, the **hypotheses**, evaluated on medians against thresholds
@@ -191,8 +285,18 @@ pre-registered in `HYPOTHESIS_THRESHOLDS`:
   requests and reporting a fast survivor tail.
 - **H2** — batch borrow-window completions versus `static` ≥ 1.2×.
 - **H3** — the configured interactive protected floor was never violated.
-- **H4** — lending and restoration produced no over-allocation and no unsafe
-  handoff.
+- **H4a** — *capacity transfer safety*: no class-ceiling violation, no pool or
+  floor-sum over-allocation, no unlent-slice breach, and no handoff committed
+  without its required acknowledgement.
+- **H4b** — *no new borrowing after protected demand returns*: demand return is
+  recognised, new loans stop, grandfathered borrowers may drain but the slots
+  they give back are not refilled, and every restoration-required episode
+  converges.
+
+H4a and H4b were one gate before 0.34.0, which meant a run could report "unsafe
+capacity handoff" when what had actually happened was borrow growth at a suspect
+instant and every handoff was acknowledged or safely aborted. `hypotheses.h4`
+remains as the conjunction of the two for one release.
 
 H1 and H2 can fail, and the fixtures in `demo/verify-local-contention.mjs`
 exercise them failing. A MoFlux arm that does not beat unmanaged Ollama is a
@@ -209,7 +313,11 @@ and the numbers travel:
 - **Upstream reclamation** — no arm configures a borrowed-slot deadline, so no
   in-flight upstream request is ever cancelled. Restoration is by borrower
   attrition plus withheld allocation. The honest bound on an interactive
-  request's wait for a lent slot is one batch request's remaining decode.
+  request's wait for a lent slot is one batch request's remaining decode, and
+  `occupancyRestorationLatencyMs` measures what that bound actually cost rather
+  than assuming it away. Restoring the *grant* quickly is not the same as
+  restoring the *capacity*, and a summary that reports only the first is
+  describing the controller rather than the caller.
 - **Decode determinism** — temperature is 0 and each attempt carries a
   trace-derived seed, but arms differ in retry count and therefore in attempt
   seeds, and the server's prefix-cache state differs. Equal token totals would
@@ -219,6 +327,29 @@ and the numbers travel:
   configuration.
 - **Production scale** — single host, single model, one replica per arm, tens of
   requests per arm per seed.
+
+## Credentials
+
+Workload class is carried by a signed JWT from the shared identity fixture. The
+fixture re-mints on access as a token approaches expiry rather than minting once
+per process, and each mint carries a distinct `jti` so a forced refresh cannot
+hand back the credential the server just refused.
+
+This is not a hypothetical. A five-seed sweep runs for over an hour of wall
+clock; the 0.33.2 fixture minted once at t=0 with a one-hour expiry, and the run
+died in seed 5's MoFlux warm-up on `HTTP 401` at 64 minutes with no evidence
+beyond that status code. Lengthening the lifetime would only move the cliff to
+whichever sweep outgrows the new guess.
+
+Every managed-arm warm-up failure is recorded in `diagnostics.managedArmWarmupFailures`
+with the seed, arm, workload class, request index, attempt, HTTP status, a
+bounded response body, whether a token was present, its fingerprint, its issue
+and expiry times, elapsed benchmark time, and whether credentials were refreshed
+for that attempt. A 401 or 403 is retried exactly once behind a forced re-mint —
+so the retry is a hypothesis being tested rather than a loop papering over the
+failure — and both attempts are recorded either way. Bearer tokens are never
+written to a summary; a twelve-character fingerprint identifies a credential
+across log lines and reveals nothing.
 
 ## Locality and spend safety
 
