@@ -60,6 +60,11 @@ export const REVIEWED_EVIDENCE = Object.freeze([
   // evidence for a different one under a name that still says the old thing.
   "results/local-inference-contention.json",
   "results/local-inference-contention/",
+  // 0.35.0 follow-up: same traces and floors, with one concurrency slot that
+  // batch can never occupy. Kept separate so the negative baseline remains
+  // immutable and citable.
+  "results/local-inference-contention-unlent-concurrency.json",
+  "results/local-inference-contention-unlent-concurrency/",
 ]);
 
 /** Directory under the results root that holds generated runs. */

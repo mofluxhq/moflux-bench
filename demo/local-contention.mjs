@@ -29,6 +29,7 @@ import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 
 import { buildTrace } from "../load/trace-lib.mjs";
+import { summarizeAdmissionProvenance } from "./admission-provenance-lib.mjs";
 import {
   ASYNC_BULKHEAD_LLM_VERSION,
   ASYNC_BULKHEAD_TS_VERSION,
@@ -64,6 +65,8 @@ import {
   CONTENTION_LATCHFLO_PORT,
   CONTENTION_OLLAMA_PORT,
   CONTENTION_POLICY,
+  CONTENTION_PROFILE,
+  LOCAL_CONTENTION_PROFILE,
   CONTENTION_WORKLOAD,
   EVIDENCE_LIMITS,
   LOCAL_CONTENTION_SWEEP_NAME,
@@ -202,6 +205,7 @@ const ARM_URLS = Object.fromEntries(
   CONTENTION_ARMS.map((arm) => [arm.id, `http://127.0.0.1:${arm.port}${CONTENTION_ENDPOINT}`]),
 );
 const OLLAMA_URL = `http://127.0.0.1:${CONTENTION_OLLAMA_PORT}${CONTENTION_ENDPOINT}`;
+const OLLAMA_READY_URL = `http://127.0.0.1:${CONTENTION_OLLAMA_PORT}/api/tags`;
 
 let runOutputDir = null;
 let pointerFile = null;
@@ -238,6 +242,9 @@ const ORDER_PLAN = armOrderPlan(OPT.seeds, OPT.arms);
 
 const plan = {
   benchmark: LOCAL_CONTENTION_SWEEP_NAME,
+  profile: LOCAL_CONTENTION_PROFILE,
+  interactiveUnlentConcurrent: CONTENTION_PROFILE.interactiveUnlentConcurrent,
+  batchMaxConcurrent: CONTENTION_PROFILE.batchMaxConcurrent,
   model: OPT.model,
   arms: OPT.arms.join(","),
   seeds: OPT.seeds.join(","),
@@ -354,6 +361,30 @@ async function ensureModelPulled() {
   }
 }
 
+/**
+ * A censored direct-arm tail may still be executing inside Ollama after the
+ * client streams are aborted. Recreate only Ollama before another arm is
+ * measured so those grandfathered requests cannot contaminate the next arm.
+ * The named model volume survives; the next arm's excluded warm-up absorbs the
+ * cold runtime/model load.
+ */
+async function resetOllamaAfterCensoredDrain({ seed, arm, loadgenSummary }) {
+  const censored = Number(loadgenSummary?.drain?.censoredTotal ?? 0);
+  if (arm.managed || loadgenSummary?.drain?.outcome !== "censored" || censored <= 0) {
+    return false;
+  }
+  console.warn(
+    `seed ${seed} arm ${arm.id}: ${censored} request(s) censored at hard drain cap; ` +
+      "recreating Ollama before the next arm",
+  );
+  compose(["up", "-d", "--force-recreate", "--wait", "ollama"], { inherit: true });
+  await waitFor(OLLAMA_READY_URL, {
+    timeoutMs: 60_000,
+    label: "Ollama readiness after censored direct drain",
+  });
+  return true;
+}
+
 async function configurePools(grantTtlMs, { allowCreate }) {
   for (const arm of MANAGED_ARMS) {
     const spec = contentionPoolDefinition(arm.pool, grantTtlMs, { lending: arm.lending });
@@ -434,7 +465,9 @@ async function readControllerDemand(arm) {
  * agreed happened.
  */
 async function sampleArm(arm, startedAt) {
+  const observationStartedAtMs = Date.now();
   const [pool, controller] = await Promise.all([readPoolStats(arm), readControllerDemand(arm)]);
+  const observationCompletedAtMs = Date.now();
   const controllerClasses = new Map(
     (controller?.classes ?? []).map((entry) => [entry?.admissionClass, entry]),
   );
@@ -458,6 +491,8 @@ async function sampleArm(arm, startedAt) {
           admitted: Number(value?.admitted ?? 0),
           rejected: Number(value?.rejected ?? 0),
           demandState: demand?.demand?.state ?? null,
+          demandStateSince: demand?.demand?.stateSince ?? demand?.stateSince ?? null,
+          demandReceivedAt: demand?.demand?.receivedAt ?? demand?.receivedAt ?? null,
           recentAdmissions: Number(demand?.demand?.recentAdmissions ?? 0),
           recentRejections: Number(demand?.demand?.recentRejections ?? 0),
           releasedConcurrent: Number(demand?.released?.protectedConcurrent ?? 0),
@@ -468,7 +503,23 @@ async function sampleArm(arm, startedAt) {
     }),
   );
   return {
-    offsetMs: +(Date.now() - startedAt),
+    offsetMs: +(observationCompletedAtMs - startedAt),
+    observationStartedAtMs,
+    observationCompletedAtMs,
+    observedAt: new Date(observationCompletedAtMs).toISOString(),
+    admissionProvenance: pool?.admissionProvenance ?? null,
+    provenanceNextSequence:
+      Number.isSafeInteger(Number(pool?.admissionProvenance?.nextSequence))
+        ? Number(pool.admissionProvenance.nextSequence)
+        : null,
+    provenanceDropped:
+      Number.isSafeInteger(Number(pool?.admissionProvenance?.dropped))
+        ? Number(pool.admissionProvenance.dropped)
+        : null,
+    provenanceCaptureFailures:
+      Number.isSafeInteger(Number(pool?.admissionProvenance?.captureFailures))
+        ? Number(pool.admissionProvenance.captureFailures)
+        : null,
     pool: {
       maxConcurrent: Number(pool?.limits?.maxConcurrent ?? 0),
       tokenBudget: Number(pool?.tokenBudget?.budget ?? 0),
@@ -480,14 +531,49 @@ async function sampleArm(arm, startedAt) {
 }
 
 /** Background sampler; resolves to the collected series when stopped. */
-function startSampler(arm, startedAt) {
+function startSampler(arm, startedAt, initialSample = null) {
   const samples = [];
+  const provenanceSamples = [];
   const errors = [];
   let running = true;
+  let lastProvenanceFingerprint = null;
+
+  const append = (raw) => {
+    if (!raw) return;
+    const { admissionProvenance, ...sample } = raw;
+    samples.push(sample);
+
+    // Tyr's provenance ring is cumulative. Keep the synchronous pre-load
+    // baseline plus each sequence/counter change once instead of duplicating
+    // the retained ring in every 250 ms capacity sample.
+    const evidence = admissionProvenance ?? null;
+    const fingerprint = evidence === null
+      ? "null"
+      : JSON.stringify({
+          nextSequence: evidence?.nextSequence ?? null,
+          dropped: evidence?.dropped ?? null,
+          captureFailures: evidence?.captureFailures ?? null,
+          retained: evidence?.retained ?? null,
+        });
+    if (fingerprint !== lastProvenanceFingerprint) {
+      provenanceSamples.push({
+        observedAt: raw.observedAt ?? null,
+        replicas: [
+          {
+            port: arm.port,
+            [arm.pool]: { admissionProvenance: evidence },
+          },
+        ],
+      });
+      lastProvenanceFingerprint = fingerprint;
+    }
+  };
+
+  append(initialSample);
   const loop = (async () => {
     while (running) {
       try {
-        samples.push(await sampleArm(arm, startedAt));
+        append(await sampleArm(arm, startedAt));
       } catch (error) {
         errors.push(error instanceof Error ? error.message : String(error));
       }
@@ -498,7 +584,7 @@ function startSampler(arm, startedAt) {
     async stop() {
       running = false;
       await loop;
-      return { samples, errors };
+      return { samples, provenanceSamples, errors };
     },
   };
 }
@@ -896,6 +982,9 @@ function runLoadgen({ seed, arm, traceFile, outFile }) {
     "--emit-phase-samples=true",
     `--drain-idle-ms=${WORKLOAD.drainIdleMs}`,
     `--drain-max-ms=${WORKLOAD.drainMaxMs}`,
+    // Only the unmanaged control may convert a progressing hard-drain tail to
+    // censored failures. A managed-arm drain timeout still invalidates the run.
+    `--drain-timeout-mode=${arm.managed ? "fail" : "censor"}`,
     `--trace-file=${traceFile}`,
     "--metrics-port=0",
     `--out=${outFile}`,
@@ -945,14 +1034,36 @@ async function collectControlPlaneEvidence(arm, loadgenSummary, startedAtMs) {
     `${LATCHFLO}/v1/restoration-episodes?protectedPool=${encodeURIComponent(arm.pool)}&limit=500`,
     { allowed: [200, 404] },
   ).catch(() => null);
-  const eventsResponse = await jsonRequest(`${LATCHFLO}/v1/events?limit=500`, {
+  const eventLimit = 1000;
+  const eventsResponse = await jsonRequest(`${LATCHFLO}/v1/events?limit=${eventLimit}`, {
     allowed: [200, 404],
   }).catch(() => null);
-  const events = (Array.isArray(eventsResponse?.body?.events) ? eventsResponse.body.events : [])
-    .filter((event) => {
-      const at = Date.parse(String(event?.createdAt ?? ""));
-      return !Number.isFinite(at) || at >= startedAtMs;
-    });
+  const rawEvents = Array.isArray(eventsResponse?.body?.events) ? eventsResponse.body.events : [];
+  const eventTimes = rawEvents
+    .map((event) => Date.parse(String(event?.createdAt ?? "")))
+    .filter(Number.isFinite);
+  const earliestEventAtMs = eventTimes.length > 0 ? Math.min(...eventTimes) : null;
+  const latestEventAtMs = eventTimes.length > 0 ? Math.max(...eventTimes) : null;
+  // Latchflo 0.15.0 serves /v1/events newest-first with a hard cap of 1000.
+  // If the page is full and its oldest event is newer than this arm's start,
+  // earlier prepare/ACK evidence may have been evicted. That is inconclusive,
+  // not proof of an unsafe commit.
+  const eventWindow = Object.freeze({
+    limit: eventLimit,
+    returned: rawEvents.length,
+    earliestEventAt:
+      earliestEventAtMs === null ? null : new Date(earliestEventAtMs).toISOString(),
+    latestEventAt:
+      latestEventAtMs === null ? null : new Date(latestEventAtMs).toISOString(),
+    startedAt: new Date(startedAtMs).toISOString(),
+    completeForArm:
+      rawEvents.length < eventLimit ||
+      (earliestEventAtMs !== null && earliestEventAtMs <= startedAtMs),
+  });
+  const events = rawEvents.filter((event) => {
+    const at = Date.parse(String(event?.createdAt ?? ""));
+    return !Number.isFinite(at) || at >= startedAtMs;
+  });
 
   return {
     pool: arm.pool,
@@ -972,7 +1083,7 @@ async function collectControlPlaneEvidence(arm, loadgenSummary, startedAtMs) {
       pools: [arm.pool],
     }),
     deadlineCost: summarizeBorrowedDeadlineCost(loadgenSummary),
-    handoff: summarizeClassHandoffSafety(events, arm.pool),
+    handoff: summarizeClassHandoffSafety(events, arm.pool, { eventWindow, startedAtMs }),
   };
 }
 
@@ -1067,13 +1178,21 @@ try {
         const startingGrant = arm.managed ? await waitForInteractiveFloor(arm) : null;
 
         const startedAt = Date.now();
-        const sampler = arm.managed ? startSampler(arm, startedAt) : null;
+        // Establish Tyr admission-provenance sequence/counter baselines before
+        // the measured child can emit its first request.
+        const initialSample = arm.managed ? await sampleArm(arm, startedAt) : null;
+        const sampler = arm.managed ? startSampler(arm, startedAt, initialSample) : null;
         console.log(`seed ${seed} arm ${armId}: measured run`);
         const loadgenSummary = await runLoadgen({
           seed,
           arm,
           traceFile,
           outFile: path.join(runOutputDir, `${armId}-seed-${seed}.json`),
+        });
+        const runtimeResetAfterCensoredDrain = await resetOllamaAfterCensoredDrain({
+          seed,
+          arm,
+          loadgenSummary,
         });
         // Sampling continues past the offered-load window: a floor lent late in
         // the run may only come back during the drain, and stopping at the last
@@ -1094,6 +1213,8 @@ try {
             latencyMsMedian: median(warmup.map((entry) => entry.latencyMs)),
           },
           classes: summarizeArmClasses(loadgenSummary),
+          drain: loadgenSummary?.drain ?? null,
+          runtimeResetAfterCensoredDrain,
           bindingConstraint: {
             interactive: loadgenSummary?.classes?.interactive?.bindingConstraint ?? null,
             batch: loadgenSummary?.classes?.batch?.bindingConstraint ?? null,
@@ -1104,7 +1225,14 @@ try {
         };
 
         if (arm.managed) {
-          const invariants = capacityInvariantViolations(sampled.samples);
+          const admissionProvenance = summarizeAdmissionProvenance(
+            sampled.provenanceSamples ?? [],
+            { pool: arm.pool },
+          );
+          const invariants = capacityInvariantViolations(sampled.samples, {
+            admissionProvenance,
+            startedAtEpochMs: startedAt,
+          });
           const lending = summarizeLendingEpisodes(sampled.samples);
           const controlPlane = await collectControlPlaneEvidence(arm, loadgenSummary, startedAt);
           // The cross-source timeline of the 60 s demand return, reconciled
@@ -1129,6 +1257,7 @@ try {
           evidence[armId] = {
             invariants: invariantViolations,
             demandTransitions,
+            admissionProvenance,
             lending,
             demandReturn,
             criticalWindow,
@@ -1252,6 +1381,13 @@ if (OPT.doctor) {
         "locality rule before the first request, and no flag disables the check.",
     },
     experiment: {
+      profile: {
+        ...CONTENTION_PROFILE,
+        note:
+          CONTENTION_PROFILE.interactiveUnlentConcurrent > 0
+            ? "One physical concurrency slot is kept unreachable to batch by capping batch at three concurrent requests; this is enforced by Tyr's class ceiling because Latchflo 0.15.0 has no unlent-concurrency wire primitive."
+            : "Baseline profile: all three interactive protected concurrency slots may be lent while interactive is idle.",
+      },
       arms: OPT.arms,
       armDescriptions: Object.fromEntries(
         OPT.arms.map((id) => [id, contentionArm(id).summary]),
@@ -1261,6 +1397,12 @@ if (OPT.doctor) {
       counterbalanced: armOrderIsCounterbalanced(ORDER_PLAN, OPT.arms),
       publicationSeedCount: OPT.seeds.length >= PUBLICATION_SEED_COUNT,
       workload: WORKLOAD,
+      drainPolicy: {
+        direct: { hardTimeout: "censor", idleStall: "fail", resetOllamaAfterCensor: true },
+        managed: { hardTimeout: "fail", idleStall: "fail" },
+        note:
+          "A direct request still incomplete at the 300s hard drain ceiling is a censored SLO failure, not a synthetic completion. Its client stream is aborted and Ollama is recreated before another arm runs. Managed-arm drain exhaustion still invalidates the run.",
+      },
       phases: [
         { name: "warm-up", measured: false, note: `${OPT.warmupRequestsPerClass} requests per class per arm, excluded from every distribution` },
         { name: "interactive-with-spare-capacity", fromMs: 0, toMs: WORKLOAD.batchStartMs },
@@ -1317,9 +1459,17 @@ if (OPT.doctor) {
           (sum, row) => sum + (row.evidence?.moflux?.handoff?.unsafeHandoffs ?? 0),
           0,
         ),
+        indeterminateTotal: rows.reduce(
+          (sum, row) => sum + (row.evidence?.moflux?.handoff?.indeterminateHandoffs ?? 0),
+          0,
+        ),
+        proofCompleteSeeds: rows.filter(
+          (row) => row.evidence?.moflux?.handoff?.proofComplete === true,
+        ).length,
         note:
-          "An aborted handoff is the control plane declining a reallocation whose preconditions " +
-          "lapsed. It is the safe outcome and is priced as slower restoration, not counted as unsafe.",
+          "Each handoff is correlated by handoffId. Every drain grant named by prepare must have " +
+          "a first applied ACK ordered before commit. A bounded event window that cannot prove " +
+          "its predecessor events is indeterminate and fails closed without being called unsafe.",
       },
       seedsWithLending: lendingRows.filter((row) => row.lendingEpisodes > 0).length,
       seedsWithRestoration: lendingRows.filter((row) => row.restorationEpisodes > 0).length,

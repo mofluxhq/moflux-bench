@@ -44,8 +44,46 @@ import {
   validateUnlentSlice,
 } from "./restoration-contract-lib.mjs";
 
+/**
+ * Experiment profile selected before this module is loaded.
+ *
+ * `baseline` is the published 0.34.0 experiment. `unlent-concurrency-1` is the
+ * 0.35.0 follow-up: the protected floors remain 3/1, but batch is capped at
+ * three concurrent requests so one of the four physical slots can never be
+ * occupied by batch. Latchflo 0.15.0 has no `globalUnlentProtectedConcurrent`
+ * wire field, so the reserve is enforced by the borrower's class ceiling
+ * rather than by inventing a control-plane primitive the runtime does not have.
+ */
+export const LOCAL_CONTENTION_PROFILE =
+  process.env.MOFLUX_LOCAL_CONTENTION_PROFILE ?? "baseline";
+
+export const LOCAL_CONTENTION_PROFILES = Object.freeze({
+  baseline: Object.freeze({
+    id: "baseline",
+    sweepName: "local-inference-contention",
+    interactiveUnlentConcurrent: 0,
+    batchMaxConcurrent: 4,
+    implementation: "fully-lendable-protected-concurrency",
+  }),
+  "unlent-concurrency-1": Object.freeze({
+    id: "unlent-concurrency-1",
+    sweepName: "local-inference-contention-unlent-concurrency",
+    interactiveUnlentConcurrent: 1,
+    batchMaxConcurrent: 3,
+    implementation: "borrower-class-ceiling",
+  }),
+});
+
+if (!Object.hasOwn(LOCAL_CONTENTION_PROFILES, LOCAL_CONTENTION_PROFILE)) {
+  throw new Error(
+    `unknown MOFLUX_LOCAL_CONTENTION_PROFILE ${JSON.stringify(LOCAL_CONTENTION_PROFILE)}`,
+  );
+}
+
+export const CONTENTION_PROFILE = LOCAL_CONTENTION_PROFILES[LOCAL_CONTENTION_PROFILE];
+
 /** Evidence sweep name; also the results/ subdirectory a run writes into. */
-export const LOCAL_CONTENTION_SWEEP_NAME = "local-inference-contention";
+export const LOCAL_CONTENTION_SWEEP_NAME = CONTENTION_PROFILE.sweepName;
 
 /**
  * Loopback ports published by demo/ollama/compose-contention.yaml.
@@ -147,10 +185,23 @@ export const CONTENTION_POLICY = Object.freeze({
     }),
     batch: Object.freeze({
       globalProtectedConcurrent: 1,
-      globalMaxConcurrent: 4,
+      // In the 0.35.0 follow-up profile, batch may borrow at most two of the
+      // three interactive slots. Its own floor is one, so max=3 leaves one
+      // physical slot batch can never occupy. Static never exceeds its floor,
+      // making this ceiling change inert there and effective only when lending.
+      globalMaxConcurrent: CONTENTION_PROFILE.batchMaxConcurrent,
       globalProtectedInFlightTokens: 1_600,
       globalMaxInFlightTokens: 4_000,
     }),
+  }),
+  /**
+   * Concurrency intentionally unavailable to batch borrowing. This is
+   * experiment metadata, not a Latchflo wire field; enforcement is through the
+   * batch class ceiling above.
+   */
+  unlentProtectedConcurrent: Object.freeze({
+    interactive: CONTENTION_PROFILE.interactiveUnlentConcurrent,
+    batch: 0,
   }),
   /**
    * Half of each protected token floor is withheld from borrowing under
@@ -333,8 +384,10 @@ export const EVIDENCE_LIMITS = Object.freeze({
     "not-claimed: Ollama's internal scheduler is treated as an opaque FIFO with " +
     "OLLAMA_NUM_PARALLEL slots. A shed request is one that never arrived, not one that was preempted.",
   upstreamReclamation:
-    "not-claimed: no arm here configures a borrowed-slot deadline, so no in-flight upstream " +
-    "request is ever cancelled. Restoration is by attrition plus withheld allocation.",
+    "not-claimed for the managed policy: no managed arm configures a borrowed-slot deadline. " +
+    "The unmanaged direct control may abort client streams only after its 300s hard drain " +
+    "ceiling; those requests are censored failures, Ollama is recreated before another arm, " +
+    "and the teardown is not reported as reclaimed upstream capacity.",
   decodeDeterminism:
     "unverified: temperature is 0 and each attempt carries a trace-derived seed, but arms " +
     "differ in retry count and therefore in attempt seeds, and the server's prefix cache state " +
@@ -573,6 +626,7 @@ function count(value) {
  * `ttftP95Ms: 0`, which reads as the fastest window in the run.
  */
 function observed(value) {
+  if (value === null || value === undefined || value === "") return null;
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : null;
 }
@@ -643,6 +697,26 @@ export function summarizeArmClasses(loadgenSummary) {
     const logical = count(values.logical);
     const success = count(values.success);
     const samples = Array.isArray(values.phaseSamples) ? values.phaseSamples : [];
+    const drainTimeoutSnapshots = Array.isArray(values.drainTimeoutSnapshots)
+      ? values.drainTimeoutSnapshots
+      : [];
+    const contentionFromMs = Number(
+      loadgenSummary?.config?.interactiveResumeStartMs ??
+        CONTENTION_WORKLOAD.interactiveResumeStartMs,
+    );
+    const contentionDurationMs = Number(
+      loadgenSummary?.config?.interactiveResumeDurationMs ??
+        CONTENTION_WORKLOAD.interactiveResumeDurationMs,
+    );
+    const contentionToMs = contentionFromMs + contentionDurationMs;
+    const drainTimeoutCensoredContention = drainTimeoutSnapshots.filter((snapshot) => {
+      const arrivalMs = Number(snapshot?.arrivalMs);
+      return (
+        Number.isFinite(arrivalMs) &&
+        arrivalMs >= contentionFromMs &&
+        arrivalMs < contentionToMs
+      );
+    }).length;
     const latencies = samples.map((sample) => Number(sample.latencyMs));
     const ttfts = samples.map((sample) => Number(sample.ttftMs));
     const durationMs = Number(
@@ -682,6 +756,12 @@ export function summarizeArmClasses(loadgenSummary) {
       serverErrors: count(values.serverError),
       upstreamRejects: count(values.upstreamReject),
       exhausted: count(values.exhausted),
+      /**
+       * Requests still incomplete when the direct arm reached its absolute
+       * drain ceiling. They are censored failures, not successful tail samples.
+       */
+      drainTimeoutCensored: count(values.drainTimeoutCensored),
+      drainTimeoutCensoredContention,
       admissionClassResponses: Object.freeze({ ...(values.admissionClassResponses ?? {}) }),
       windows: Object.freeze({
         idle: windowMetrics(windows.idle),
@@ -878,7 +958,10 @@ export function classEncroachment(sample, admissionClass, nominal = nominalClass
  * offsets at which it failed, so a violation is locatable rather than merely
  * counted.
  */
-export function capacityInvariantViolations(samples, { unlentProtectedTokens } = {}) {
+export function capacityInvariantViolations(
+  samples,
+  { unlentProtectedTokens, admissionProvenance = null, startedAtEpochMs = null } = {},
+) {
   const nominal = nominalClassGrant();
   const unlent = unlentProtectedTokens ?? CONTENTION_POLICY.unlentProtectedTokens;
   const violations = {
@@ -898,6 +981,32 @@ export function capacityInvariantViolations(samples, { unlentProtectedTokens } =
      */
     borrowGrowthAfterDemandReturn: [],
   };
+  const borrowOrderingBoundaryResolutions = [];
+  const borrowOrderingIndeterminate = [];
+  const provenanceComplete = admissionProvenance?.complete === true;
+  const runStartEpoch = Number(startedAtEpochMs);
+  const exactAdmissions = (Array.isArray(admissionProvenance?.events)
+    ? admissionProvenance.events
+    : []
+  )
+    .map((event) => {
+      const epochMs = Date.parse(String(event?.admittedAt ?? ""));
+      return Object.freeze({
+        admissionId: event?.admissionId ?? null,
+        sequence: Number.isFinite(Number(event?.sequence)) ? Number(event.sequence) : null,
+        admittedAt: event?.admittedAt ?? null,
+        atMs:
+          Number.isFinite(epochMs) && Number.isFinite(runStartEpoch)
+            ? +(epochMs - runStartEpoch).toFixed(1)
+            : null,
+        admissionClass: event?.admissionClass ?? null,
+        priority: event?.priority ?? null,
+        grantId: event?.grant?.grantId ?? null,
+        limitRevision: event?.limitRevision ?? event?.grant?.revision ?? null,
+      });
+    })
+    .filter((event) => Number.isFinite(event.atMs))
+    .sort((a, b) => a.atMs - b.atMs);
 
   /**
    * Samples in which the pool held no usable grant at all.
@@ -923,6 +1032,10 @@ export function capacityInvariantViolations(samples, { unlentProtectedTokens } =
    * against a restored floor would pass a check that only compared levels.
    */
   let demandEpisode = null;
+  let previousSampleOffsetMs = null;
+  let previousBatchAdmitted = null;
+  let previousInteractiveAdmitted = null;
+  let previousProvenanceNextSequence = null;
   const demandTransitions = [];
   const previousActivity = new Map();
 
@@ -1049,8 +1162,17 @@ export function capacityInvariantViolations(samples, { unlentProtectedTokens } =
 
     if (activity.active) {
       if (demandEpisode === null) {
+        const stateSinceEpoch = Date.parse(String(interactive?.demandStateSince ?? ""));
+        const exactStateSinceMs =
+          Number.isFinite(stateSinceEpoch) && Number.isFinite(runStartEpoch)
+            ? +(stateSinceEpoch - runStartEpoch).toFixed(1)
+            : null;
         demandEpisode = {
-          startedAtMs: offsetMs,
+          startedAtMs:
+            exactStateSinceMs !== null && exactStateSinceMs <= offsetMs
+              ? exactStateSinceMs
+              : offsetMs,
+          sampledStartedAtMs: offsetMs,
           grandfathered: batchEncroachment,
           allowed: batchEncroachment,
         };
@@ -1060,34 +1182,157 @@ export function capacityInvariantViolations(samples, { unlentProtectedTokens } =
       demandEpisode.allowed = Math.min(demandEpisode.allowed, batchEncroachment);
       const allowedEncroachment = demandEpisode.allowed + interactiveReleasedConcurrent;
       if (batchEncroachment > allowedEncroachment) {
-        violations.borrowGrowthAfterDemandReturn.push({
-          offsetMs,
-          admissionClass: "batch",
-          observed: {
-            batchInFlight: Number(classSample(sample, "batch")?.inFlight ?? 0),
-            encroachment: batchEncroachment,
-            grandfathered: demandEpisode.grandfathered,
-            entitlementAfterAttrition: demandEpisode.allowed,
-            interactiveReleasedConcurrent,
-            protectedDemandSince: demandEpisode.startedAtMs,
-            protectedDemandEvidence: activity.reason,
-          },
-          threshold: `<= ${allowedEncroachment} while protected interactive demand is active`,
-          reason:
-            "batch occupied more of interactive's nominal protected floor than the borrowers " +
-            "already in flight when interactive demand returned, and more than interactive " +
-            "currently has explicitly released",
+        const batchAdmitted = Number(classSample(sample, "batch")?.admitted ?? 0);
+        const interactiveAdmitted = Number(classSample(sample, "interactive")?.admitted ?? 0);
+        const admittedDelta =
+          previousBatchAdmitted === null ? null : Math.max(0, batchAdmitted - previousBatchAdmitted);
+        const interactiveAdmittedDelta =
+          previousInteractiveAdmitted === null
+            ? null
+            : Math.max(0, interactiveAdmitted - previousInteractiveAdmitted);
+        const intervalFrom =
+          previousSampleOffsetMs === null ? demandEpisode.startedAtMs : previousSampleOffsetMs;
+        const currentProvenanceNextSequence = Number(sample?.provenanceNextSequence);
+        const sequenceWindowAvailable =
+          Number.isSafeInteger(previousProvenanceNextSequence) &&
+          Number.isSafeInteger(currentProvenanceNextSequence) &&
+          currentProvenanceNextSequence >= previousProvenanceNextSequence;
+        const exactAdmissionsInInterval = exactAdmissions.filter((event) => {
+          if (sequenceWindowAvailable && Number.isSafeInteger(event.sequence)) {
+            return (
+              event.sequence >= previousProvenanceNextSequence &&
+              event.sequence < currentProvenanceNextSequence
+            );
+          }
+          return event.atMs > intervalFrom && event.atMs <= offsetMs;
         });
-        // One episode reports one entitlement breach; re-baseline to the level
-        // now observed so a single sustained violation is not counted once per
-        // 250 ms sample for the rest of the window.
-        demandEpisode.allowed = batchEncroachment;
+        const explicitlyBatch = exactAdmissionsInInterval.filter(
+          (event) => event.admissionClass === "batch",
+        );
+        const everyEventClassified = exactAdmissionsInInterval.every(
+          (event) => typeof event.admissionClass === "string" && event.admissionClass.length > 0,
+        );
+        const counterUniquelyAttributesBatch =
+          admittedDelta !== null &&
+          interactiveAdmittedDelta === 0 &&
+          admittedDelta > 0 &&
+          exactAdmissionsInInterval.length === admittedDelta;
+        const exactBatchAdmissionsInInterval = everyEventClassified
+          ? explicitlyBatch
+          : counterUniquelyAttributesBatch
+            ? exactAdmissionsInInterval
+            : [];
+        const exactBatchAttribution = everyEventClassified
+          ? "provenance.admissionClass"
+          : counterUniquelyAttributesBatch
+            ? "class_admitted_counter_delta"
+            : null;
+        const afterDemand = exactBatchAdmissionsInInterval.filter(
+          (event) => event.atMs > demandEpisode.startedAtMs,
+        );
+        const beforeOrAtDemand = exactBatchAdmissionsInInterval.filter(
+          (event) => event.atMs <= demandEpisode.startedAtMs,
+        );
+
+        // The sampled admitted counter/occupancy can move one sample after the
+        // actual Tyr decision. Exact `admittedAt` provenance resolves that race.
+        if (
+          provenanceComplete &&
+          admittedDelta !== null &&
+          admittedDelta > 0 &&
+          exactBatchAdmissionsInInterval.length >= admittedDelta &&
+          afterDemand.length === 0 &&
+          beforeOrAtDemand.length > 0
+        ) {
+          borrowOrderingBoundaryResolutions.push({
+            offsetMs,
+            protectedDemandSince: demandEpisode.startedAtMs,
+            admittedDelta,
+            exactAdmissions: exactBatchAdmissionsInInterval,
+            attribution: exactBatchAttribution,
+            resolution: "proven_admitted_before_protected_demand",
+          });
+          demandEpisode.grandfathered = Math.max(demandEpisode.grandfathered, batchEncroachment);
+          demandEpisode.allowed = batchEncroachment;
+        } else if (
+          provenanceComplete &&
+          admittedDelta !== null &&
+          admittedDelta > 0 &&
+          exactBatchAdmissionsInInterval.length >= admittedDelta &&
+          afterDemand.length > 0
+        ) {
+          violations.borrowGrowthAfterDemandReturn.push({
+            offsetMs,
+            admissionClass: "batch",
+            observed: {
+              batchInFlight: Number(classSample(sample, "batch")?.inFlight ?? 0),
+              encroachment: batchEncroachment,
+              grandfathered: demandEpisode.grandfathered,
+              entitlementAfterAttrition: demandEpisode.allowed,
+              interactiveReleasedConcurrent,
+              protectedDemandSince: demandEpisode.startedAtMs,
+              protectedDemandEvidence: activity.reason,
+              exactAdmissionsAfterDemand: afterDemand,
+              exactAdmissionAttribution: exactBatchAttribution,
+            },
+            threshold: `<= ${allowedEncroachment} while protected interactive demand is active`,
+            reason:
+              "exact Tyr admission provenance places a batch admission after protected demand " +
+              "returned while sampled occupancy grew into interactive's nominal floor",
+          });
+          demandEpisode.allowed = batchEncroachment;
+        } else if (admissionProvenance !== null) {
+          borrowOrderingIndeterminate.push({
+            offsetMs,
+            protectedDemandSince: demandEpisode.startedAtMs,
+            admittedDelta,
+            provenanceComplete,
+            provenanceReason: admissionProvenance?.reason ?? null,
+            exactAdmissionsInInterval,
+            exactBatchAdmissionsInInterval,
+            exactBatchAttribution,
+            interactiveAdmittedDelta,
+            reason:
+              provenanceComplete
+                ? "sampled encroachment grew but exact provenance could not uniquely account for the admission delta"
+                : "exact Tyr admission provenance was incomplete, so ordering cannot be proved",
+          });
+          demandEpisode.allowed = batchEncroachment;
+        } else {
+          // Backward-compatible sampled-only mode for unit tests and older
+          // evidence that did not carry exact Tyr provenance.
+          violations.borrowGrowthAfterDemandReturn.push({
+            offsetMs,
+            admissionClass: "batch",
+            observed: {
+              batchInFlight: Number(classSample(sample, "batch")?.inFlight ?? 0),
+              encroachment: batchEncroachment,
+              grandfathered: demandEpisode.grandfathered,
+              entitlementAfterAttrition: demandEpisode.allowed,
+              interactiveReleasedConcurrent,
+              protectedDemandSince: demandEpisode.startedAtMs,
+              protectedDemandEvidence: activity.reason,
+            },
+            threshold: `<= ${allowedEncroachment} while protected interactive demand is active`,
+            reason:
+              "batch occupied more of interactive's nominal protected floor than the borrowers " +
+              "already in flight when interactive demand returned, and more than interactive " +
+              "currently has explicitly released",
+          });
+          demandEpisode.allowed = batchEncroachment;
+        }
       }
     } else {
       // Once protected demand is idle again, lending may resume and a later
       // demand episode gets a fresh grandfathered baseline.
       demandEpisode = null;
     }
+    previousSampleOffsetMs = offsetMs;
+    previousBatchAdmitted = Number(classSample(sample, "batch")?.admitted ?? 0);
+    previousInteractiveAdmitted = Number(classSample(sample, "interactive")?.admitted ?? 0);
+    previousProvenanceNextSequence = Number.isSafeInteger(Number(sample?.provenanceNextSequence))
+      ? Number(sample.provenanceNextSequence)
+      : null;
   }
 
   const total = Object.values(violations).reduce((sum, rows) => sum + rows.length, 0);
@@ -1116,6 +1361,18 @@ export function capacityInvariantViolations(samples, { unlentProtectedTokens } =
       frozen.floorSumOverAllocations.length,
     /** Every observed demand-state change, for both classes, in sample order. */
     demandTransitions: Object.freeze(demandTransitions),
+    /** Sample-boundary growth that exact Tyr admission timestamps proved pre-demand. */
+    borrowOrderingBoundaryResolutions: Object.freeze(borrowOrderingBoundaryResolutions),
+    /** Missing or non-unique exact evidence. Never silently treated as safe. */
+    borrowOrderingIndeterminate: Object.freeze(borrowOrderingIndeterminate),
+    admissionProvenance: Object.freeze({
+      source: admissionProvenance?.source ?? null,
+      complete: admissionProvenance?.complete ?? null,
+      reason: admissionProvenance?.reason ?? null,
+      events: exactAdmissions.length,
+      droppedDelta: admissionProvenance?.droppedDelta ?? null,
+      captureFailuresDelta: admissionProvenance?.captureFailuresDelta ?? null,
+    }),
     /**
      * Deprecated alias for `borrowGrowthAfterDemandReturn`, kept for one release
      * so a reader holding a 0.33.x summary schema does not silently see zero.
@@ -1779,38 +2036,144 @@ export function criticalWindowDigest(samples, { fromMs, toMs } = {}) {
  * Only the control plane's event log distinguishes them. The data plane sees a
  * floor that came back and nothing about how.
  */
-export function summarizeClassHandoffSafety(events, pool) {
-  const relevant = (Array.isArray(events) ? events : []).filter(
-    (event) =>
-      String(event?.type ?? "").startsWith("admission_class.handoff") &&
-      (event?.entityId === pool || event?.payload?.pool === pool),
-  );
+export function summarizeClassHandoffSafety(
+  events,
+  pool,
+  { eventWindow = null, startedAtMs = null } = {},
+) {
+  const eventTime = (event) => {
+    const value = Date.parse(String(event?.createdAt ?? ""));
+    return Number.isFinite(value) ? value : null;
+  };
+  const eventOrder = (left, right) => {
+    const leftAt = eventTime(left);
+    const rightAt = eventTime(right);
+    if (leftAt !== null && rightAt !== null && leftAt !== rightAt) return leftAt - rightAt;
+    return Number(left?.id ?? 0) - Number(right?.id ?? 0);
+  };
+  const relevant = (Array.isArray(events) ? events : [])
+    .filter(
+      (event) =>
+        String(event?.type ?? "").startsWith("admission_class.handoff") &&
+        (event?.entityId === pool || event?.payload?.pool === pool),
+    )
+    .sort(eventOrder);
+  const grouped = new Map();
+  for (const event of relevant) {
+    const handoffId = event?.payload?.handoffId ?? null;
+    const key = handoffId ?? `missing:${event?.id ?? grouped.size}`;
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key).push(event);
+  }
+
+  const completeWindow = eventWindow?.completeForArm !== false;
+  const timelines = [];
+  let unsafeHandoffs = 0;
+  let indeterminateHandoffs = 0;
+  let committedWithoutAck = 0;
+  const abortReasons = {};
+
+  for (const [key, handoffEvents] of grouped.entries()) {
+    const prepared = handoffEvents.find((event) => event.type === "admission_class.handoff_prepared") ?? null;
+    const committed = handoffEvents.find((event) => event.type === "admission_class.handoff_committed") ?? null;
+    const aborted = handoffEvents.find((event) => event.type === "admission_class.handoff_aborted") ?? null;
+    const applied = handoffEvents.filter((event) => event.type === "admission_class.handoff_grant_applied");
+    const preparedGrants = Array.isArray(prepared?.payload?.grants) ? prepared.payload.grants : [];
+    const drainGrants = preparedGrants.filter((grant) => grant?.role === "drain");
+    const drainIds = new Set(drainGrants.map((grant) => grant?.grantId).filter(Boolean));
+    const firstAckByGrant = new Map();
+    for (const event of applied) {
+      const grantId = event?.entityId ?? event?.payload?.grantId ?? null;
+      if (!grantId || (drainIds.size > 0 && !drainIds.has(grantId))) continue;
+      const current = firstAckByGrant.get(grantId);
+      if (!current || eventOrder(event, current) < 0) firstAckByGrant.set(grantId, event);
+    }
+    const allRequiredAcks =
+      prepared !== null &&
+      (drainIds.size === 0 || [...drainIds].every((grantId) => firstAckByGrant.has(grantId)));
+    const ackEvents = [...firstAckByGrant.values()].sort(eventOrder);
+    const ackBarrier = ackEvents.length > 0 ? ackEvents.at(-1) : null;
+    const commitAfterAckBarrier =
+      committed === null
+        ? null
+        : drainIds.size === 0 && prepared !== null
+          ? true
+          : ackBarrier === null
+            ? false
+            : eventOrder(ackBarrier, committed) <= 0;
+
+    let status = aborted !== null ? "aborted_safe" : committed === null ? "open" : "safe";
+    if (committed !== null) {
+      const missingPrepare = prepared === null;
+      const missingAck = !allRequiredAcks;
+      const unorderedAck = allRequiredAcks && commitAfterAckBarrier === false;
+      if (missingPrepare || missingAck || unorderedAck) {
+        if (!completeWindow && (missingPrepare || missingAck)) {
+          status = "indeterminate_event_window";
+          indeterminateHandoffs += 1;
+        } else {
+          status = unorderedAck ? "unsafe_commit_before_ack" : "unsafe_commit_without_ack";
+          unsafeHandoffs += 1;
+          committedWithoutAck += 1;
+        }
+      }
+    }
+    if (aborted !== null) {
+      const reason = String(aborted?.payload?.reason ?? "unattributed");
+      abortReasons[reason] = (abortReasons[reason] ?? 0) + 1;
+    }
+
+    const iso = (event) => event?.createdAt ?? null;
+    const offset = (event) => {
+      const at = eventTime(event);
+      return at === null || !Number.isFinite(Number(startedAtMs))
+        ? null
+        : +(at - Number(startedAtMs)).toFixed(1);
+    };
+    timelines.push(Object.freeze({
+      handoffId: prepared?.payload?.handoffId ?? committed?.payload?.handoffId ?? aborted?.payload?.handoffId ?? key,
+      status,
+      preparedAt: iso(prepared),
+      preparedOffsetMs: offset(prepared),
+      requiredDrainGrantIds: Object.freeze([...drainIds]),
+      drainGrantAcks: Object.freeze([...drainIds].map((grantId) => {
+        const event = firstAckByGrant.get(grantId) ?? null;
+        return Object.freeze({
+          grantId,
+          firstAckAt: iso(event),
+          firstAckOffsetMs: offset(event),
+        });
+      })),
+      allRequiredAcks,
+      ackBarrierAt: iso(ackBarrier),
+      ackBarrierOffsetMs: offset(ackBarrier),
+      committedAt: iso(committed),
+      committedOffsetMs: offset(committed),
+      abortedAt: iso(aborted),
+      abortedOffsetMs: offset(aborted),
+      commitAfterAckBarrier,
+    }));
+  }
+
   const prepared = relevant.filter((event) => event.type === "admission_class.handoff_prepared");
   const committed = relevant.filter((event) => event.type === "admission_class.handoff_committed");
   const aborted = relevant.filter((event) => event.type === "admission_class.handoff_aborted");
-  const applied = relevant.filter(
-    (event) => event.type === "admission_class.handoff_grant_applied",
-  );
-  const appliedIds = new Set(applied.map((event) => event?.payload?.handoffId));
-  const committedWithoutAck = committed.filter(
-    (event) => !appliedIds.has(event?.payload?.handoffId),
-  );
-  const abortReasons = {};
-  for (const event of aborted) {
-    const reason = String(event?.payload?.reason ?? "unattributed");
-    abortReasons[reason] = (abortReasons[reason] ?? 0) + 1;
-  }
+  const applied = relevant.filter((event) => event.type === "admission_class.handoff_grant_applied");
   return Object.freeze({
     events: relevant.length,
+    eventWindow: eventWindow === null ? null : Object.freeze({ ...eventWindow }),
     prepared: prepared.length,
     committed: committed.length,
     grantApplied: applied.length,
-    /** Declined reallocations. Safe, and priced as slower restoration. */
     aborted: aborted.length,
     abortReasons: Object.freeze(abortReasons),
-    /** A commit nobody acknowledged: the unsafe-ordering signature. */
-    committedWithoutAck: committedWithoutAck.length,
-    unsafeHandoffs: committedWithoutAck.length,
+    /** Backward-compatible name: includes missing or out-of-order required ACKs. */
+    committedWithoutAck,
+    unsafeHandoffs,
+    /** Missing evidence due a bounded event window is inconclusive, never safe. */
+    indeterminateHandoffs,
+    proofComplete: indeterminateHandoffs === 0,
+    timelines: Object.freeze(timelines),
   });
 }
 
@@ -1877,17 +2240,22 @@ export function localContentionSeedProof({
     ),
     interactiveConstrainedUnderContention: gate(
       count(direct.classes?.interactive?.windows?.contention?.ttftP95Ms) >
-        count(direct.classes?.interactive?.windows?.idle?.ttftP95Ms),
+        count(direct.classes?.interactive?.windows?.idle?.ttftP95Ms) ||
+        count(direct.classes?.interactive?.drainTimeoutCensoredContention) > 0,
       {
         idleTtftP95Ms: direct.classes?.interactive?.windows?.idle?.ttftP95Ms ?? null,
         idleCompleted: count(direct.classes?.interactive?.windows?.idle?.completed),
         contentionTtftP95Ms:
           direct.classes?.interactive?.windows?.contention?.ttftP95Ms ?? null,
-        // Carried because a `null` tail means the window had no completions at
-        // all, which is a different failure from a tail that did not grow.
+        // A request still incomplete at the 300s hard cap is stronger evidence
+        // of control-arm contention than a missing successful-request tail. It
+        // remains a failure and never receives a synthetic TTFT or latency.
         contentionCompleted: count(direct.classes?.interactive?.windows?.contention?.completed),
+        contentionDrainTimeoutCensored: count(
+          direct.classes?.interactive?.drainTimeoutCensoredContention,
+        ),
       },
-      "contention-window tail above idle-window tail on the direct arm",
+      "contention-window tail above idle-window tail, or a contention request still incomplete at the direct arm's 300s hard drain ceiling",
       "without measurable queueing in the control arm there is no contention to protect against",
     ),
     classesResolved: gate(
@@ -1957,9 +2325,16 @@ export function localContentionSeedProof({
       invariants.borrowGrowthAfterDemandReturn.length === 0,
       invariants.borrowGrowthAfterDemandReturn.length,
       0,
-      "borrowers already in flight when protected demand returned may drain, but the borrowing " +
-        "class must not take more of the protected class's nominal floor after that instant, " +
-        "and may not refill a slot a grandfathered borrower has given back",
+      "borrowers already in flight when protected demand returned may drain, but exact Tyr " +
+        "admission provenance must not place a new borrower into the protected class's nominal " +
+        "floor after that instant",
+    ),
+    borrowOrderingProofComplete: gate(
+      (invariants.borrowOrderingIndeterminate?.length ?? 0) === 0,
+      invariants.borrowOrderingIndeterminate?.length ?? 0,
+      0,
+      "sampled boundary growth must be resolved by complete Tyr admission-provenance evidence; " +
+        "missing or dropped provenance is inconclusive, never silently safe",
     ),
     /**
      * H4a. The only genuinely unsafe handoff outcome: capacity that moved
@@ -1977,8 +2352,18 @@ export function localContentionSeedProof({
         committed: handoff.committed,
       },
       0,
-      "a capacity handoff must be acknowledged before it is committed; an aborted handoff is " +
-        "the safe outcome and is priced as slower restoration rather than gated here",
+      "every required drain grant's first ACK must precede handoff commit; an aborted handoff " +
+        "is the safe outcome and is priced as slower restoration rather than gated here",
+    ),
+    handoffProofComplete: gate(
+      (handoff.indeterminateHandoffs ?? 0) === 0,
+      {
+        indeterminateHandoffs: handoff.indeterminateHandoffs ?? 0,
+        eventWindow: handoff.eventWindow ?? null,
+      },
+      0,
+      "the bounded Latchflo event window must contain enough correlated prepare/ACK/commit " +
+        "history to prove ordering; a truncated predecessor window is inconclusive, not safe",
     ),
     everyLentFloorRestored: gate(
       lending.restorationRequiredEpisodes === 0 || lending.unrestoredEpisodes === 0,
@@ -2086,6 +2471,7 @@ export function localContentionProof({ seeds, seedProofs, comparisons, requiredS
   /** H4a: nothing unsafe was transferred. */
   const transferSafe = (proof) =>
     proof.safety.noUnsafeHandoff.passed &&
+    proof.safety.handoffProofComplete.passed &&
     proof.safety.noUnlentFloorViolations.passed &&
     proof.safety.noClassCeilingViolations.passed &&
     proof.safety.noCeilingOverAllocation.passed &&
@@ -2094,6 +2480,7 @@ export function localContentionProof({ seeds, seedProofs, comparisons, requiredS
   /** H4b: nothing new was borrowed after the owner came back, and it converged. */
   const postDemandSafe = (proof) =>
     proof.safety.noBorrowGrowthAfterDemandReturn.passed &&
+    proof.safety.borrowOrderingProofComplete.passed &&
     proof.safety.everyLentFloorRestored.passed;
 
   const checks = Object.freeze({
@@ -2246,6 +2633,10 @@ export function aggregateArmClass(rows) {
     deadlineAbandonmentsTotal: rows.reduce((sum, row) => sum + count(row.deadlineAbandonments), 0),
     tornStreamsTotal: rows.reduce((sum, row) => sum + count(row.tornStreams), 0),
     serverErrorsTotal: rows.reduce((sum, row) => sum + count(row.serverErrors), 0),
+    drainTimeoutCensoredTotal: rows.reduce(
+      (sum, row) => sum + count(row.drainTimeoutCensored),
+      0,
+    ),
     borrowWindowCompleted: spread(pick((row) => row.windows?.borrow?.completed)),
     contentionWindowCompleted: spread(pick((row) => row.windows?.contention?.completed)),
     contentionWindowGoodputRps: spread(pick((row) => row.windows?.contention?.goodputRps)),
