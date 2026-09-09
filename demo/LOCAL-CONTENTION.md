@@ -80,6 +80,24 @@ defined over token capacity and cannot be exercised at all on a concurrency-only
 policy. Each arm reports `bindingConstraint` so a reader can see which limit
 actually decided admissions rather than inferring it.
 
+### Direct-arm hard-drain censoring
+
+The unmanaged control can accumulate an Ollama FIFO tail that is still decoding
+after the 300 s absolute drain ceiling. Waiting longer does not make those calls
+useful under the predeclared 5 s TTFT / 30 s completion SLOs, and aborting the
+whole sweep prevents the managed policies from being measured. The direct arm
+therefore uses `--drain-timeout-mode=censor` for the **hard** drain ceiling only.
+Each survivor is preserved in `drain.censoredRequests` and in its class's
+`drainTimeoutSnapshots`; it remains part of `logical`, never enters `success` or
+`phaseSamples`, and therefore contributes zero SLO goodput without acquiring a
+made-up latency. A no-progress `--drain-idle-ms` expiry still fails the run.
+
+After such a censor, the runner aborts the remaining client streams, force-
+recreates the Ollama service, waits for `/api/tags`, and only then advances to
+the next arm. The next arm's five-per-class warm-up remains excluded from every
+measurement and absorbs the cold runtime/model load. Managed arms do **not** use
+censoring: either drain bound still invalidates a `static` or `moflux` run.
+
 Workload class is carried by signed identity (the shared
 `demo/identity-fixture-lib.mjs` JWKS fixture), not by a client header.
 `priority.trustHeader` is `false` precisely because the load generator sends
@@ -286,12 +304,23 @@ pre-registered in `HYPOTHESIS_THRESHOLDS`:
 - **H2** — batch borrow-window completions versus `static` ≥ 1.2×.
 - **H3** — the configured interactive protected floor was never violated.
 - **H4a** — *capacity transfer safety*: no class-ceiling violation, no pool or
-  floor-sum over-allocation, no unlent-slice breach, and no handoff committed
-  without its required acknowledgement.
+  floor-sum over-allocation, no unlent-slice breach, and every committed class
+  handoff is correlated by `handoffId` to its prepare event and to the first ACK
+  for every required drain grant, with the complete ACK barrier preceding
+  commit.
 - **H4b** — *no new borrowing after protected demand returns*: demand return is
   recognised, new loans stop, grandfathered borrowers may drain but the slots
   they give back are not refilled, and every restoration-required episode
-  converges.
+  converges. When a 250 ms capacity sample straddles the return boundary, exact
+  Tyr `admission-provenance.v1` `admittedAt` ordering is authoritative.
+
+Both gates fail closed on missing ordering evidence. Proven sampler-boundary
+races are retained under `borrowOrderingBoundaryResolutions`; incomplete or
+non-unique admission ordering is retained under `borrowOrderingIndeterminate`
+and fails `borrowOrderingProofComplete`. A truncated Latchflo event window is
+retained as an indeterminate handoff and fails `handoffProofComplete`. An
+indeterminate transition is never silently converted into either a safe event
+or an unsafe event.
 
 H4a and H4b were one gate before 0.34.0, which meant a run could report "unsafe
 capacity handoff" when what had actually happened was borrow growth at a suspect
@@ -368,18 +397,48 @@ to point elsewhere. No provider credential is read or sent.
 ## Commands
 
 ```bash
-npm run demo:local:contention:dry-run    # prints the plan and arm order; sends nothing
-npm run demo:local:contention:doctor     # prerequisites only
-npm run demo:local:contention:single     # one seed, development
-npm run demo:local:contention            # five seeds with --require-proof
-npm run verify:local:contention          # harness tests; no Docker, no weights
+npm run demo:local:contention:dry-run           # baseline plan; sends nothing
+npm run demo:local:contention:doctor            # prerequisites only
+npm run demo:local:contention:single            # one baseline seed
+npm run demo:local:contention                   # five baseline seeds with --require-proof
+npm run verify:local:contention                 # baseline harness tests
+
+npm run demo:local:contention:unlent:dry-run    # 0.35.0 one-slot reserve plan
+npm run demo:local:contention:unlent:single     # one follow-up seed
+npm run demo:local:contention:unlent            # five follow-up seeds with --require-proof
+npm run verify:local:contention:unlent          # profile/regression tests; no Docker
 
 npm run evidence:publish -- --as=local-inference-contention
+npm run evidence:publish -- --as=local-inference-contention-unlent-concurrency
 npm run verify:publication
 ```
 
-A run writes only to `results/runs/local-inference-contention/<run-id>/` and
-never to reviewed evidence. Promotion is the separate, deliberate step.
+A baseline run writes only to `results/runs/local-inference-contention/<run-id>/`.
+The 0.35.0 follow-up writes only to
+`results/runs/local-inference-contention-unlent-concurrency/<run-id>/`. Neither
+run path is reviewed evidence; promotion is the separate, deliberate step.
+
+## 0.35.0 follow-up: one unlent concurrency slot
+
+The published 0.34.0 result showed that allocation restoration could be fast
+while grandfathered batch occupancy kept interactive capacity unusable for much
+longer. The follow-up asks whether withholding one physical execution slot from
+batch can recover interactive SLO goodput without giving up the utilization
+benefit of lending the other two interactive slots.
+
+The experiment deliberately does not add a fictional Latchflo setting. The
+control plane has `globalUnlentProtectedInFlightTokens` but no corresponding
+concurrency field in 0.15.0. Instead, the follow-up changes only the batch class
+ceiling from 4 to 3. With a batch protected floor of 1, that permits exactly two
+borrowed concurrent slots and prevents batch from ever occupying all four
+physical slots. The summary records the profile and `borrower-class-ceiling`
+implementation so the mechanism is explicit.
+
+Everything else stays fixed: model/runtime pins, 105 s phased workload, trace
+seeds, 3/1 protected floors, token budgets and unlent token slices, 15 s grant
+TTL/restoration objective, warm-up, retry behavior, H1/H2 thresholds and safety
+gates. The new run therefore answers a new policy question without rewriting
+the negative baseline.
 
 ## Stack
 

@@ -394,8 +394,27 @@ if (pkg.scripts?.["demo:local:contention:dry-run"] !== "node demo/local-contenti
     pkg.scripts?.["verify:local:contention"] !== "node demo/verify-local-contention.mjs") {
   findings.push("package.json: the local contention dry-run, doctor, single-seed and verify commands are required");
 }
-if (pkg.version !== "0.34.0") {
-  findings.push("package.json: the current benchmark release must be version 0.34.0");
+const unlentContentionScript = pkg.scripts?.["demo:local:contention:unlent"] ?? "";
+for (const required of ["demo/local-contention-unlent.mjs", "--seeds=1-5", "--require-proof"]) {
+  if (!unlentContentionScript.includes(required)) {
+    findings.push(`package.json: demo:local:contention:unlent is missing ${required}`);
+  }
+}
+if (
+  pkg.scripts?.["demo:local:contention:unlent:dry-run"] !==
+    "node demo/local-contention-unlent.mjs --dry-run" ||
+  !pkg.scripts?.["demo:local:contention:unlent:single"]?.includes(
+    "demo/local-contention-unlent.mjs",
+  ) ||
+  pkg.scripts?.["verify:local:contention:unlent"] !==
+    "node demo/verify-local-contention-unlent.mjs"
+) {
+  findings.push(
+    "package.json: the unlent-concurrency contention dry-run, single-seed and verify commands are required",
+  );
+}
+if (pkg.version !== "0.35.0") {
+  findings.push("package.json: the current benchmark release must be version 0.35.0");
 }
 if (
   !pkg.scripts?.["demo:restoration"]?.includes("--restoration-ladder") ||
@@ -553,6 +572,9 @@ for (const required of [
   "borrowGrowthAfterDemandReturn",
   "h4aNoUnsafeCapacityTransfer",
   "h4bNoBorrowingAfterProtectedDemandReturn",
+  "unlent-concurrency-1",
+  "borrower-class-ceiling",
+  "unlentProtectedConcurrent",
 ]) {
   if (!localContentionLib.includes(required)) {
     findings.push(`demo/local-contention-lib.mjs: missing evidence contract ${required}`);

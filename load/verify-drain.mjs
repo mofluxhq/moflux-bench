@@ -9,10 +9,11 @@
  * died holding a 200 is the second, and must still fail the run rather than
  * be written into a summary as if the request had never been issued.
  *
- * Three child scenarios, each against a purpose-built origin:
+ * Four child scenarios, each against a purpose-built origin:
  *   1. slow but streaming  -> succeeds past the idle window
  *   2. headers then silence -> fails on --drain-idle-ms, naming the straggler
- *   3. streams forever      -> fails on --drain-max-ms
+ *   3. streams forever      -> fails on --drain-max-ms in the default mode
+ *   4. streams forever      -> censors survivors at --drain-max-ms when asked
  */
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
@@ -229,6 +230,57 @@ async function runLoadgen(port, extraArgs, timeoutMs) {
     "the failure blames the hard cap",
     result.stderr.includes("--drain-max-ms"),
     result.stderr.slice(0, 300),
+  );
+}
+
+
+// ── 4. streams forever, direct-arm censor semantics ──────────────────
+{
+  const origin = await startOrigin("endless");
+  const result = await runLoadgen(
+    origin.port,
+    [
+      "--drain-idle-ms=30000",
+      "--drain-max-ms=5000",
+      "--drain-timeout-mode=censor",
+    ],
+    60000,
+  );
+  await origin.close();
+
+  check(
+    "a hard drain cap can be represented as censored failures",
+    result.code === 0 && result.summary?.drain?.outcome === "censored",
+    `exit=${result.code} drain=${JSON.stringify(result.summary?.drain)}`,
+  );
+  check(
+    "censoring records every survivor without inventing success",
+    Number(result.summary?.drain?.censoredTotal) > 0 &&
+      result.summary?.classes?.interactive?.drainTimeoutCensored ===
+        result.summary?.drain?.censoredTotal &&
+      result.summary?.classes?.interactive?.success <
+        result.summary?.classes?.interactive?.logical,
+    JSON.stringify({
+      drain: result.summary?.drain,
+      interactive: result.summary?.classes?.interactive,
+    }),
+  );
+  check(
+    "client teardown after censoring is not misclassified as transport failure",
+    result.summary?.classes?.interactive?.transportError === 0,
+    JSON.stringify({
+      transportError: result.summary?.classes?.interactive?.transportError,
+      censored: result.summary?.classes?.interactive?.drainTimeoutCensored,
+    }),
+  );
+  check(
+    "censored requests carry observable state rather than fake latency samples",
+    Array.isArray(result.summary?.drain?.censoredRequests) &&
+      result.summary.drain.censoredRequests.length === result.summary.drain.censoredTotal &&
+      result.summary.drain.censoredRequests.every(
+        (row) => row.requestId && row.class === "interactive" && Number.isFinite(row.ageMs),
+      ),
+    JSON.stringify(result.summary?.drain?.censoredRequests?.slice?.(0, 2)),
   );
 }
 

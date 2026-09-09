@@ -654,6 +654,75 @@ assert.equal(
   "a freed grandfathered slot must not be lent out again while its owner is still asking",
 );
 
+// Higher-resolution H4b proof: Tyr 0.30.0 admission provenance has an exact
+// admittedAt plus a monotonic sequence. A 250 ms sample can observe the counter
+// after the decision, so sampled growth is not unsafe when the newly observed
+// sequence proves the admission itself preceded protected demand.
+const provenanceRunStart = Date.parse("2026-09-09T00:00:00.000Z");
+const provenanceEvent = (sequence, admittedOffsetMs) => ({
+  schema: "tyr.admission-provenance.v1",
+  sequence,
+  admittedAt: new Date(provenanceRunStart + admittedOffsetMs).toISOString(),
+  admissionId: `batch-${sequence}`,
+  priority: "normal",
+  grant: { grantId: `g-${sequence}`, revision: 1 },
+});
+const provenanceSummary = (events, complete = true) => ({
+  source: "tyr.stats.tyr.admissionProvenance",
+  complete,
+  reason: complete ? null : "retention_loss",
+  events,
+  droppedDelta: complete ? 0 : 1,
+  captureFailuresDelta: 0,
+});
+const boundarySamples = (secondSequence = 11) => [
+  sampleAt(1_000, {
+    provenanceNextSequence: 10,
+    classes: {
+      interactive: {
+        demandState: "demanding",
+        demandStateSince: new Date(provenanceRunStart + 900).toISOString(),
+      },
+      batch: { inFlight: 1, admitted: 1, borrowedConcurrent: 0 },
+    },
+  }),
+  sampleAt(1_250, {
+    provenanceNextSequence: secondSequence,
+    classes: {
+      interactive: {
+        demandState: "demanding",
+        demandStateSince: new Date(provenanceRunStart + 900).toISOString(),
+      },
+      batch: { inFlight: 2, admitted: 2, borrowedConcurrent: 1 },
+    },
+  }),
+];
+const resolvedBoundary = capacityInvariantViolations(boundarySamples(), {
+  startedAtEpochMs: provenanceRunStart,
+  admissionProvenance: provenanceSummary([provenanceEvent(10, 850)]),
+});
+assert.equal(resolvedBoundary.borrowGrowthAfterDemandReturn.length, 0);
+assert.equal(resolvedBoundary.borrowOrderingBoundaryResolutions.length, 1);
+assert.equal(
+  resolvedBoundary.borrowOrderingBoundaryResolutions[0].resolution,
+  "proven_admitted_before_protected_demand",
+);
+const exactPostDemandBorrow = capacityInvariantViolations(boundarySamples(), {
+  startedAtEpochMs: provenanceRunStart,
+  admissionProvenance: provenanceSummary([provenanceEvent(10, 950)]),
+});
+assert.equal(exactPostDemandBorrow.borrowGrowthAfterDemandReturn.length, 1);
+assert.equal(
+  exactPostDemandBorrow.borrowGrowthAfterDemandReturn[0].observed.exactAdmissionsAfterDemand[0].sequence,
+  10,
+);
+const incompleteBoundary = capacityInvariantViolations(boundarySamples(), {
+  startedAtEpochMs: provenanceRunStart,
+  admissionProvenance: provenanceSummary([], false),
+});
+assert.equal(incompleteBoundary.borrowGrowthAfterDemandReturn.length, 0);
+assert.equal(incompleteBoundary.borrowOrderingIndeterminate.length, 1);
+
 // Demand-state transitions are recorded for both classes with the state that
 // produced them.
 const transitionSeries = capacityInvariantViolations([
@@ -1040,6 +1109,125 @@ const unacknowledged = summarizeClassHandoffSafety(
 );
 assert.equal(unacknowledged.committedWithoutAck, 1);
 assert.equal(unacknowledged.unsafeHandoffs, 1);
+
+// Higher-resolution H4a proof joins one handoff by handoffId, requires the
+// first ACK for every drain grant named by the prepare event, and orders those
+// ACKs against commit by controller event time (event id breaks equal-time ties).
+const handoffAt = (ms) => new Date(Date.parse("2026-09-09T00:00:00.000Z") + ms).toISOString();
+const correlatedSafeHandoff = summarizeClassHandoffSafety(
+  [
+    {
+      id: 10,
+      createdAt: handoffAt(100),
+      type: "admission_class.handoff_prepared",
+      entityId: "local-moflux",
+      payload: {
+        handoffId: "hc1",
+        grants: [
+          { role: "drain", grantId: "d1" },
+          { role: "drain", grantId: "d2" },
+        ],
+      },
+    },
+    {
+      id: 11,
+      createdAt: handoffAt(120),
+      type: "admission_class.handoff_grant_applied",
+      entityId: "d1",
+      payload: { handoffId: "hc1", pool: "local-moflux" },
+    },
+    {
+      id: 12,
+      createdAt: handoffAt(140),
+      type: "admission_class.handoff_grant_applied",
+      entityId: "d2",
+      payload: { handoffId: "hc1", pool: "local-moflux" },
+    },
+    {
+      id: 13,
+      createdAt: handoffAt(160),
+      type: "admission_class.handoff_committed",
+      entityId: "local-moflux",
+      payload: { handoffId: "hc1" },
+    },
+  ],
+  "local-moflux",
+  {
+    startedAtMs: Date.parse("2026-09-09T00:00:00.000Z"),
+    eventWindow: { limit: 1000, returned: 4, completeForArm: true },
+  },
+);
+assert.equal(correlatedSafeHandoff.unsafeHandoffs, 0);
+assert.equal(correlatedSafeHandoff.indeterminateHandoffs, 0);
+assert.equal(correlatedSafeHandoff.timelines[0].allRequiredAcks, true);
+assert.equal(correlatedSafeHandoff.timelines[0].ackBarrierOffsetMs, 140);
+assert.equal(correlatedSafeHandoff.timelines[0].committedOffsetMs, 160);
+assert.equal(correlatedSafeHandoff.timelines[0].commitAfterAckBarrier, true);
+
+const commitBeforeAck = summarizeClassHandoffSafety(
+  [
+    {
+      id: 20,
+      createdAt: handoffAt(100),
+      type: "admission_class.handoff_prepared",
+      entityId: "local-moflux",
+      payload: { handoffId: "hc2", grants: [{ role: "drain", grantId: "d3" }] },
+    },
+    {
+      id: 21,
+      createdAt: handoffAt(120),
+      type: "admission_class.handoff_committed",
+      entityId: "local-moflux",
+      payload: { handoffId: "hc2" },
+    },
+    {
+      id: 22,
+      createdAt: handoffAt(140),
+      type: "admission_class.handoff_grant_applied",
+      entityId: "d3",
+      payload: { handoffId: "hc2", pool: "local-moflux" },
+    },
+  ],
+  "local-moflux",
+  { eventWindow: { limit: 1000, returned: 3, completeForArm: true } },
+);
+assert.equal(commitBeforeAck.unsafeHandoffs, 1);
+assert.equal(commitBeforeAck.timelines[0].status, "unsafe_commit_before_ack");
+
+const truncatedHandoffWindow = summarizeClassHandoffSafety(
+  [
+    {
+      id: 30,
+      createdAt: handoffAt(300),
+      type: "admission_class.handoff_committed",
+      entityId: "local-moflux",
+      payload: { handoffId: "hc3" },
+    },
+  ],
+  "local-moflux",
+  { eventWindow: { limit: 1000, returned: 1000, completeForArm: false } },
+);
+assert.equal(truncatedHandoffWindow.unsafeHandoffs, 0);
+assert.equal(truncatedHandoffWindow.indeterminateHandoffs, 1);
+assert.equal(truncatedHandoffWindow.proofComplete, false);
+assert.equal(truncatedHandoffWindow.timelines[0].status, "indeterminate_event_window");
+
+const completeMissingPrepare = summarizeClassHandoffSafety(
+  [
+    {
+      id: 31,
+      createdAt: handoffAt(300),
+      type: "admission_class.handoff_committed",
+      entityId: "local-moflux",
+      payload: { handoffId: "hc4" },
+    },
+  ],
+  "local-moflux",
+  { eventWindow: { limit: 1000, returned: 1, completeForArm: true } },
+);
+assert.equal(completeMissingPrepare.unsafeHandoffs, 1);
+assert.equal(completeMissingPrepare.indeterminateHandoffs, 0);
+
 // An abort is the control plane declining a reallocation whose preconditions
 // lapsed. It is the safe outcome, it is priced as slower restoration, and it
 // must not fail a safety gate — a measured run against Latchflo 0.15.0 with a
@@ -1171,6 +1359,35 @@ assert.equal(
   "a ratio of two absent tails is undefined, not 1 and not 0",
 );
 assert.equal(emptyComparison.interactiveGoodputRatioVsDirect, null);
+// One missing numerator with a real direct tail must also stay null. `Number(null)`
+// is zero in JavaScript, which previously made no-completion seeds print a
+// misleading 0x TTFT ratio.
+const directWithTail = {
+  trace: { hash: "h" },
+  classes: {
+    ...emptyWindows,
+    interactive: {
+      ...emptyWindows.interactive,
+      windows: {
+        ...emptyWindows.interactive.windows,
+        contention: {
+          ...emptyWindows.interactive.windows.contention,
+          ttftP95Ms: 1000,
+        },
+      },
+    },
+  },
+};
+const missingNumeratorComparison = compareLocalContention({
+  direct: directWithTail,
+  static: emptyArm,
+  moflux: emptyArm,
+});
+assert.equal(
+  missingNumeratorComparison.interactiveTtftP95RatioVsDirect,
+  null,
+  "a missing MoFlux tail over a real direct tail is undefined, not zero",
+);
 // The SLO-goodput delta is a difference of two real rates and stays numeric.
 assert.equal(emptyComparison.interactiveSloGoodputDeltaRpsVsDirect, 0);
 // An aggregate whose every contributing value is missing reports null with n=0.
@@ -1268,6 +1485,35 @@ assert.equal(summarized.interactive.totalTokens, 2_516);
 assert.equal(summarized.interactive.deadlineAbandonments, 0);
 assert.equal(summarized.batch.windows.borrow.completed, 5);
 assert.equal(summarized.batch.windows.contention.completed, 2);
+assert.equal(summarized.interactive.drainTimeoutCensored, 0);
+assert.equal(summarized.interactive.drainTimeoutCensoredContention, 0);
+
+const censoredDirectFixture = loadgenFixture({
+  ttftContention: 400,
+  goodputContention: 0,
+  borrowCompleted: 4,
+});
+censoredDirectFixture.classes.interactive.success = 6;
+censoredDirectFixture.classes.interactive.phaseSamples = [
+  { offsetMs: 1_500, arrivalMs: 1_000, completedAtMs: 1_500, latencyMs: 900, ttftMs: 100 },
+];
+censoredDirectFixture.classes.interactive.windows.contention = {
+  completed: 0,
+  goodputRps: 0,
+  p50Ms: null,
+  p95Ms: null,
+  ttftP50Ms: null,
+  ttftP95Ms: null,
+};
+censoredDirectFixture.classes.interactive.drainTimeoutCensored = 1;
+censoredDirectFixture.classes.interactive.drainTimeoutSnapshots = [
+  { requestId: "interactive-resume-1", class: "interactive", arrivalMs: 65_000, ageMs: 300_100 },
+];
+const censoredDirectSummary = summarizeArmClasses(censoredDirectFixture);
+assert.equal(censoredDirectSummary.interactive.drainTimeoutCensored, 1);
+assert.equal(censoredDirectSummary.interactive.drainTimeoutCensoredContention, 1);
+assert.equal(censoredDirectSummary.interactive.windows.contention.completed, 0);
+assert.equal(censoredDirectSummary.interactive.windows.contention.ttftP95Ms, null);
 
 const aggregated = aggregateArmClass([summarized.interactive, summarized.interactive]);
 assert.equal(aggregated.logicalTotal, 40);
@@ -1369,6 +1615,35 @@ for (const failure of unsafeSeed.failed) {
   assert.ok(typeof failure.reason === "string" && failure.reason.length > 0);
 }
 
+// Missing higher-resolution evidence fails closed without being mislabeled as
+// a proven unsafe transition.
+const inconclusiveOrderingSeed = localContentionSeedProof({
+  comparison: passingComparison,
+  arms: passingArms,
+  lending: cleanEvidence.lending,
+  invariants: incompleteBoundary,
+  handoff: correlatedSafeHandoff,
+  warmupRequestsPerClass: 5,
+});
+assert.equal(inconclusiveOrderingSeed.passed, false);
+assert.equal(inconclusiveOrderingSeed.safety.noBorrowGrowthAfterDemandReturn.passed, true);
+assert.equal(inconclusiveOrderingSeed.safety.borrowOrderingProofComplete.passed, false);
+assert.ok(
+  inconclusiveOrderingSeed.failed.some((entry) => entry.gate === "borrowOrderingProofComplete"),
+);
+const inconclusiveHandoffSeed = localContentionSeedProof({
+  comparison: passingComparison,
+  arms: passingArms,
+  lending: cleanEvidence.lending,
+  invariants: cleanEvidence.invariants,
+  handoff: truncatedHandoffWindow,
+  warmupRequestsPerClass: 5,
+});
+assert.equal(inconclusiveHandoffSeed.passed, false);
+assert.equal(inconclusiveHandoffSeed.safety.noUnsafeHandoff.passed, true);
+assert.equal(inconclusiveHandoffSeed.safety.handoffProofComplete.passed, false);
+assert.ok(inconclusiveHandoffSeed.failed.some((entry) => entry.gate === "handoffProofComplete"));
+
 // A run where the control arm never queued measured no contention at all.
 const noContention = localContentionSeedProof({
   comparison: passingComparison,
@@ -1388,6 +1663,30 @@ assert.equal(noContention.passed, false);
 assert.ok(
   noContention.failed.some((entry) => entry.gate === "interactiveConstrainedUnderContention"),
 );
+
+// A contention request still incomplete at the direct arm's 300s hard drain
+// ceiling is itself evidence that the control was constrained. It must satisfy
+// the validity precondition without fabricating a successful-request TTFT.
+const censoredControlArms = {
+  ...passingArms,
+  direct: {
+    ...passingArms.direct,
+    classes: censoredDirectSummary,
+  },
+};
+const censoredControlComparison = compareLocalContention(censoredControlArms);
+const censoredControlProof = localContentionSeedProof({
+  comparison: censoredControlComparison,
+  arms: censoredControlArms,
+  ...cleanEvidence,
+  warmupRequestsPerClass: 5,
+});
+assert.equal(
+  censoredControlProof.validity.interactiveConstrainedUnderContention.passed,
+  true,
+  JSON.stringify(censoredControlProof.validity.interactiveConstrainedUnderContention),
+);
+assert.equal(censoredControlComparison.interactiveTtftP95RatioVsDirect, null);
 
 const seeds = [1, 2, 3, 4, 5];
 const passingProof = localContentionProof({

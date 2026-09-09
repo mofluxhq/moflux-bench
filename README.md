@@ -177,9 +177,12 @@ the seed count. `demo/local-contention.mjs` asks one question:
 > traffic use otherwise-idle capacity?
 
 ```bash
-npm run demo:local:contention:dry-run    # prints the plan and arm order; sends nothing
-npm run demo:local:contention:single     # one seed, development
-npm run demo:local:contention            # five seeds with --require-proof
+npm run demo:local:contention:dry-run           # published-baseline design; sends nothing
+npm run demo:local:contention:single            # one baseline seed, development
+npm run demo:local:contention                   # five baseline seeds with --require-proof
+npm run demo:local:contention:unlent:dry-run    # 0.35.0 one-slot-reserve plan
+npm run demo:local:contention:unlent:single     # one follow-up seed
+npm run demo:local:contention:unlent            # five follow-up seeds with --require-proof
 ```
 
 Three arms replay one immutable, five-phase trace against one Ollama container
@@ -189,6 +192,39 @@ floors, lent while idle and restored on demand). `static` and `moflux` partition
 identical capacity and differ only in whether Latchflo's
 `admissionClassDemandPolicy` is enabled, so any difference between them has
 exactly one candidate cause.
+
+0.35.0 adds a **separate follow-up profile** rather than changing that baseline.
+The protected floors remain interactive=3 and batch=1 on a four-slot runtime,
+but batch's class ceiling is reduced from four to three. Static never exceeds
+its one-slot floor, so the ceiling is inert there; under lending it means batch
+can use its own slot plus at most two borrowed interactive slots. One physical
+slot therefore remains unreachable to batch and is immediately available when
+interactive demand returns. This is implemented as a borrower ceiling because
+Latchflo 0.15.0 has no unlent-concurrency wire primitive; the benchmark does not
+pretend otherwise. The follow-up writes to
+`local-inference-contention-unlent-concurrency`, leaving the published baseline
+corpus untouched.
+
+The unmanaged direct arm has one extra measurement rule in 0.35.0: if requests
+are still progressing when the absolute 300 s drain ceiling is reached, they are
+recorded as **censored incomplete failures** instead of crashing the whole sweep.
+They are never turned into latency samples or successful work. Their client
+streams are aborted, then Ollama is force-recreated and warmed again before the
+next arm so unfinished direct work cannot leak into a managed measurement. An
+idle/no-progress drain still fails, and `static`/`moflux` still fail on either
+drain bound.
+
+0.35.0 also raises the authority of the H4 proof without weakening either gate.
+Before measured load, each managed arm establishes a synchronous Tyr
+`admission-provenance.v1` sequence baseline. Apparent borrow growth at a 250 ms
+sampler boundary is cleared only when exact Tyr `admittedAt` provenance proves
+the newly observed admission occurred before protected demand returned. Missing,
+dropped, capture-failed, or non-unique provenance is reported as indeterminate
+and fails the separate proof-completeness gate. For H4a the runner reads
+Latchflo's full 1000-event window, correlates `admission_class.handoff_*` events
+by `handoffId`, and requires the first ACK for every drain grant named by the
+prepare event to precede commit. A truncated event window is likewise
+indeterminate rather than silently safe or falsely unsafe.
 
 The workload class is carried by signed identity rather than a client header,
 and the trace contains a deliberate interval in which interactive demand is

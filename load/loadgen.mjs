@@ -116,6 +116,14 @@ const CONFIG = Object.freeze({
    */
   drainIdleMs: num("drain-idle-ms", 20000),
   drainMaxMs: num("drain-max-ms", 180000),
+  /**
+   * What to do when the absolute drain ceiling is reached while requests are
+   * still making progress. `fail` preserves the historical behavior. `censor`
+   * records the survivors as incomplete SLO failures, aborts their client
+   * streams, writes the summary, and exits successfully so an experiment can
+   * continue to its next arm. A true idle stall still fails in both modes.
+   */
+  drainTimeoutMode: str("drain-timeout-mode", "fail"),
   windowMs: num("window-ms", 30000),
   /**
    * Sampling temperature, sent only when set.
@@ -152,6 +160,9 @@ if (!["openai", "anthropic"].includes(CONFIG.providerApi)) {
 }
 if (CONFIG.temperature !== null && !Number.isFinite(CONFIG.temperature)) {
   throw new Error("--temperature must be a finite number when it is set");
+}
+if (!["fail", "censor"].includes(CONFIG.drainTimeoutMode)) {
+  throw new Error("--drain-timeout-mode must be fail or censor");
 }
 if (CONFIG.interactiveResumeRps > 0) {
   const firstEndMs = CONFIG.interactiveStartMs + CONFIG.interactiveDurationMs;
@@ -221,6 +232,14 @@ for (const cls of classes) {
     serverError: 0,
     transportError: 0,
     exhausted: 0, // gave up after maxAttempts
+    /**
+     * Logical requests still incomplete when a censoring hard drain ceiling
+     * fired. They remain failures: they are never added to phaseSamples, never
+     * receive synthetic latency/TTFT values, and therefore contribute zero to
+     * SLO goodput.
+     */
+    drainTimeoutCensored: 0,
+    drainTimeoutSnapshots: [],
     outputTokens: 0,
     /**
      * Prompt tokens the server reported, summed over successful requests.
@@ -1163,6 +1182,9 @@ await Promise.all(TRACE.entries.map(scheduleEntry));
  */
 const drainStartedAt = Date.now();
 const drainHardDeadline = drainStartedAt + CONFIG.drainMaxMs;
+let drainOutcome = "complete";
+let drainCause = null;
+let drainCensoredRequests = [];
 let lastProgressAt = drainStartedAt;
 let lastActiveCount = activeIssues.size;
 let drainStalled = false;
@@ -1187,27 +1209,61 @@ while (activeIssues.size > 0) {
 if (activeIssues.size > 0) {
   const remaining = activeIssues.size;
   const elapsedMs = Date.now() - drainStartedAt;
-  const stragglers = [...liveRequests.values()]
+  const snapshotAtMs = Date.now();
+  drainCensoredRequests = [...liveRequests.values()]
     .sort((a, b) => a.startedAt - b.startedAt)
-    .slice(0, 10)
-    .map(
-      (r) =>
-        `${r.id} class=${r.class} arrivalMs=${Math.round(r.arrivalMs)} ` +
-        `attempt=${r.attempt + 1}/${CONFIG.maxAttempts} phase=${r.phase} ` +
-        `lastStatus=${r.lastStatus ?? "none"} inputChars=${r.inputChars} maxTokens=${r.maxTokens} ` +
-        `outputTokens=${Math.round(r.outputTokens)} ageMs=${Date.now() - r.startedAt}`,
-    );
+    .map((r) => ({
+      requestId: r.id,
+      class: r.class,
+      arrivalMs: Math.round(r.arrivalMs),
+      attempt: r.attempt + 1,
+      maxAttempts: CONFIG.maxAttempts,
+      phase: r.phase,
+      lastStatus: r.lastStatus ?? null,
+      inputChars: r.inputChars,
+      maxTokens: r.maxTokens,
+      outputTokensObserved: Math.round(r.outputTokens),
+      ageMs: snapshotAtMs - r.startedAt,
+    }));
+  const stragglers = drainCensoredRequests.slice(0, 10).map(
+    (r) =>
+      `${r.requestId} class=${r.class} arrivalMs=${r.arrivalMs} ` +
+      `attempt=${r.attempt}/${r.maxAttempts} phase=${r.phase} ` +
+      `lastStatus=${r.lastStatus ?? "none"} inputChars=${r.inputChars} maxTokens=${r.maxTokens} ` +
+      `outputTokens=${r.outputTokensObserved} ageMs=${r.ageMs}`,
+  );
   const cause = drainStalled
     ? `no request completed for ${CONFIG.drainIdleMs}ms (--drain-idle-ms)`
     : `drain exceeded ${CONFIG.drainMaxMs}ms (--drain-max-ms)`;
   const detail = [
-    `load generator drain failed with ${remaining} request(s) still active after ${elapsedMs}ms: ${cause}`,
+    `load generator drain ${drainStalled ? "failed" : "reached hard cap"} with ${remaining} request(s) still active after ${elapsedMs}ms: ${cause}`,
     ...stragglers.map((line) => `  ${line}`),
   ].join("\n");
+
+  // A lack-of-progress timeout is still a broken run. Censoring is only for a
+  // hard wall-clock ceiling reached by work that remains alive/progressing.
+  if (drainStalled || CONFIG.drainTimeoutMode !== "censor") {
+    runAbort.abort(new Error(detail));
+    await Promise.allSettled([...activeIssues]);
+    throw new Error(detail);
+  }
+
+  drainOutcome = "censored";
+  drainCause = "hard_max";
+  for (const snapshot of drainCensoredRequests) {
+    const s = stats[snapshot.class];
+    if (!s) continue;
+    s.drainTimeoutCensored += 1;
+    s.drainTimeoutSnapshots.push(snapshot);
+  }
+  console.warn(`${detail}\ncontinuing with ${remaining} censored incomplete request(s)`);
+  // Abort every surviving client request only after its censoring snapshot is
+  // recorded. issue() sees the shared abort and exits without misclassifying
+  // the teardown as a transport error.
   runAbort.abort(new Error(detail));
   await Promise.allSettled([...activeIssues]);
-  throw new Error(detail);
 }
+
 
 const {
   interactiveIdentityToken,
@@ -1227,6 +1283,14 @@ const summary = {
     elapsedMs: Date.now() - drainStartedAt,
     idleMs: CONFIG.drainIdleMs,
     maxMs: CONFIG.drainMaxMs,
+    timeoutMode: CONFIG.drainTimeoutMode,
+    outcome: drainOutcome,
+    cause: drainCause,
+    censoredTotal: drainCensoredRequests.length,
+    censoredByClass: Object.fromEntries(
+      classes.map((cls) => [cls, stats[cls].drainTimeoutCensored]),
+    ),
+    censoredRequests: drainCensoredRequests,
   },
   config: {
     ...publicConfig,
@@ -1273,6 +1337,8 @@ for (const cls of classes) {
     serverError: s.serverError,
     transportError: s.transportError,
     exhausted: s.exhausted,
+    drainTimeoutCensored: s.drainTimeoutCensored,
+    drainTimeoutSnapshots: s.drainTimeoutSnapshots,
     requestSizes: sizeSummary(cls),
     /**
      * Which limit actually refused work.

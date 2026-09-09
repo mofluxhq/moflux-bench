@@ -100,9 +100,16 @@ makes **no claim that restoration performance improved**; the new
 occupancy-side measurement makes the existing non-preemptive cost visible for
 the first time and reports it as a cost.
 
-No `results/local-inference-contention.json` artifact is created by the release.
-A run writes only beneath `results/runs/local-inference-contention/<run-id>/`;
-publication is a separate explicit promotion.
+No reviewed local-contention artifact is created as a side effect of a run.
+Baseline output lands beneath `results/runs/local-inference-contention/<run-id>/`;
+the 0.35.0 one-slot-reserve follow-up lands beneath
+`results/runs/local-inference-contention-unlent-concurrency/<run-id>/`. Each has
+its own reviewed target and requires explicit promotion.
+
+`npm run verify:local:contention:unlent` additionally proves that the follow-up
+keeps physical capacity at four and protected floors at 3/1 while changing only
+the batch ceiling from four to three. This is the enforcement mechanism for the
+one-slot reserve because Latchflo 0.15.0 has no unlent-concurrency wire field.
 
 ## Locality and credential safety
 
@@ -112,3 +119,37 @@ upstream and control plane through the locality guard before the first request.
 Warm-up diagnostics name credentials by a twelve-character SHA-256 fingerprint
 and by issue/expiry time; bearer tokens are never written to a summary, and the
 verifier asserts it.
+
+## 0.35.0 direct-arm drain censoring
+
+`load/verify-drain.mjs` now covers both hard-drain outcomes. The historical
+default still exits non-zero when an endless stream reaches `--drain-max-ms`.
+With `--drain-timeout-mode=censor`, the same origin must exit zero with a
+`drain.outcome` of `censored`, preserve every survivor snapshot, leave those
+logical requests unsuccessful, emit no synthetic latency sample for them, and
+avoid reclassifying the deliberate abort as a transport failure.
+
+`demo/verify-local-contention-unlent.mjs` also pins the runner wiring: only the
+unmanaged arm selects censor mode, and a censored direct tail must force-
+recreate Ollama before another arm can run. Managed-arm drain semantics are
+unchanged.
+
+## 0.35.0 higher-resolution H4 proof
+
+`demo/verify-local-contention.mjs` now pins exact event ordering on both halves
+of H4. For H4b, a synchronous pre-load Tyr `admission-provenance.v1` baseline
+provides sequence windows and exact `admittedAt` timestamps. A sampler-observed
+borrow increase is cleared only when every newly attributed batch admission is
+proved to predate protected demand; an admission proved after demand remains a
+hard violation, while incomplete or non-unique provenance fails
+`borrowOrderingProofComplete`.
+
+For H4a, Latchflo events are correlated by `handoffId`. The verifier requires
+the prepare record, every drain grant named by that prepare, the first ACK for
+each required drain grant, and commit ordering after the resulting ACK barrier.
+Commit-before-ACK remains unsafe. If the bounded event history cannot establish
+the predecessor records, `handoffProofComplete` fails instead of converting an
+unknown ordering into either a pass or a fabricated safety violation. The local
+contention runner requests Latchflo's 1000-event maximum and records whether the
+window covers the measured arm.
+

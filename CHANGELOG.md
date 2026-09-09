@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.35.0 - 2026-09-04
+
+This release adds the follow-up experiment prompted by the published 0.34.0 local-contention result. The baseline evidence remains a separate corpus and is not rewritten by this experiment.
+
+### Added
+
+- **Unlent-concurrency follow-up profile.** `npm run demo:local:contention:unlent` replays the same three arms, five deterministic seeds, workload timing, 3/1 protected concurrency split, token policy, grant TTL, and H1/H2 thresholds as the baseline. The single policy change is `batch.globalMaxConcurrent: 4 -> 3`. With a physical ceiling of four and a batch floor of one, batch can borrow at most two interactive slots, leaving one physical slot it can never occupy.
+- **A separate evidence corpus** at `results/local-inference-contention-unlent-concurrency.json` plus its per-seed directory. Runs write under `results/runs/local-inference-contention-unlent-concurrency/<run-id>/` and require explicit promotion, so the 0.34.0 negative baseline stays immutable and citable.
+- **Focused verifier** `npm run verify:local:contention:unlent`, which proves the follow-up keeps the 3/1 protected partition, physical ceiling, trace generator and managed-arm symmetry while reducing only the batch borrowing ceiling.
+- **Higher-resolution H4 proof for local contention.** Each managed arm now establishes a synchronous Tyr 0.30.0 `admission-provenance.v1` sequence baseline before measured load starts, retains sequence/counter changes without duplicating the full ring into every 250 ms sample, and uses exact `admittedAt` plus provenance sequence windows to resolve apparent post-demand borrow growth. A sampled occupancy increase is cleared only when exact provenance proves the newly observed admission preceded protected demand; lost, incomplete or non-unique provenance is explicitly inconclusive and fails closed.
+- **Correlated class-handoff timelines.** Local contention now reads Latchflo's full 1000-event window, groups `admission_class.handoff_*` records by `handoffId`, records prepare/first-ACK/commit/abort timestamps, requires the first ACK for every drain grant named by the prepare event to precede commit, and reports bounded-window truncation as indeterminate rather than mislabeling a missing predecessor event as an unsafe commit.
+
+### Changed
+
+- The follow-up calls the one-slot reserve an **unlent concurrent floor**, but does not invent a Latchflo field that does not exist. Latchflo 0.15.0 has an unlent-token primitive but no `globalUnlentProtectedConcurrent` wire field, so the experiment enforces the reserve through Tyr's batch class ceiling. The summary records `implementation: borrower-class-ceiling` explicitly.
+- H4a/H4b remain absolute gates, but their evidence authority is stronger. `noUnsafeHandoff` now means a correlated required-ACK ordering violation; a truncated event history fails the separate `handoffProofComplete` gate. `noBorrowGrowthAfterDemandReturn` now uses exact Tyr provenance to settle sampler-boundary races; missing exact ordering fails `borrowOrderingProofComplete`. Neither path turns uncertainty into success.
+
+### Fixed
+
+- **Do not abort a local-contention sweep when the unmanaged direct arm is still making progress at the 300 s hard drain ceiling.** The direct arm now runs the load generator with `--drain-timeout-mode=censor`: every survivor is snapshotted with its request id, class, phase, status, observed output and age; it remains a failed logical request, receives no synthetic TTFT/latency, and contributes zero SLO goodput. The shared abort then tears down the client streams, and the runner force-recreates Ollama and waits for readiness before another arm is measured so grandfathered direct work cannot contaminate it. A true no-progress idle stall still fails, and every managed arm retains the historical fail-on-drain behavior.
+- **Keep descriptive TTFT ratios null when the MoFlux contention distribution is missing.** JavaScript's `Number(null) === 0` caused a seed with zero MoFlux contention completions and a real direct tail to print a `0` TTFT ratio. `observed()` now rejects null/undefined/empty values before numeric coercion, and the verifier covers the one-missing-side case. This does not change H1, which remains based on SLO goodput.
+
 ## 0.34.0 - 2026-09-04
 
 This release is instrumentation, benchmark semantics, and reliability. The
