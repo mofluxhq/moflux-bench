@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.35.0 - 2026-09-04
+## 0.35.0 - 2026-09-09
 
 This release adds the follow-up experiment prompted by the published 0.34.0 local-contention result. The baseline evidence remains a separate corpus and is not rewritten by this experiment.
 
