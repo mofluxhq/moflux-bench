@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.36.0 - 2026-09-10
+## 0.36.0 - 2026-09-11
 
 This release moves the successful one-slot local-inference reserve from an
 experimental borrower-ceiling workaround into Latchflo 0.16.0's native policy
