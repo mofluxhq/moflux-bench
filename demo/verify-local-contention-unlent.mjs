@@ -14,19 +14,45 @@ function loadProfile(profile) {
       CONTENTION_PROFILE,
       LOCAL_CONTENTION_PROFILE,
       LOCAL_CONTENTION_SWEEP_NAME,
+      capacityInvariantViolations,
       contentionPoolDefinition,
+      contentionRestorationClaim,
       nominalClassGrant
     } from ${JSON.stringify(new URL("./local-contention-lib.mjs", import.meta.url).href)};
     const staticPool = contentionPoolDefinition("local-static", 15000, { lending: false });
     const mofluxPool = contentionPoolDefinition("local-moflux", 15000, { lending: true });
+    const nominal = nominalClassGrant();
+    const sample = (interactiveProtectedConcurrent) => ({
+      offsetMs: 0,
+      pool: { maxConcurrent: 4, tokenBudget: 4000, inFlight: 0, sharedMaxConcurrent: 0 },
+      classes: {
+        interactive: {
+          limits: { ...nominal.interactive, protectedConcurrent: interactiveProtectedConcurrent },
+          inFlight: 0, inFlightTokens: 0, borrowedConcurrent: 0, admitted: 0, rejected: 0
+        },
+        batch: {
+          limits: { ...nominal.batch },
+          inFlight: 0, inFlightTokens: 0, borrowedConcurrent: 0, admitted: 0, rejected: 0
+        }
+      }
+    });
     console.log(JSON.stringify({
       profile: LOCAL_CONTENTION_PROFILE,
       descriptor: CONTENTION_PROFILE,
       sweep: LOCAL_CONTENTION_SWEEP_NAME,
       policy: CONTENTION_POLICY,
-      nominal: nominalClassGrant(),
+      nominal,
       staticBatchMax: staticPool.admissionClassLimits.batch.globalMaxConcurrent,
-      mofluxBatchMax: mofluxPool.admissionClassLimits.batch.globalMaxConcurrent
+      mofluxBatchMax: mofluxPool.admissionClassLimits.batch.globalMaxConcurrent,
+      staticInteractiveUnlentConcurrent:
+        staticPool.admissionClassLimits.interactive.globalUnlentProtectedConcurrent ?? null,
+      mofluxInteractiveUnlentConcurrent:
+        mofluxPool.admissionClassLimits.interactive.globalUnlentProtectedConcurrent ?? null,
+      mofluxBatchUnlentConcurrent:
+        mofluxPool.admissionClassLimits.batch.globalUnlentProtectedConcurrent ?? null,
+      restorationClaim: contentionRestorationClaim("moflux"),
+      belowNativeFloor: capacityInvariantViolations([sample(0)]).unlentFloorViolations,
+      atNativeFloor: capacityInvariantViolations([sample(CONTENTION_POLICY.unlentProtectedConcurrent.interactive)]).unlentFloorViolations
     }));
   `;
   const child = spawnSync(process.execPath, ["--input-type=module", "--eval", script], {
@@ -48,33 +74,64 @@ assert.equal(baseline.policy.unlentProtectedConcurrent.interactive, 0);
 
 const experiment = loadProfile("unlent-concurrency-1");
 assert.equal(experiment.sweep, "local-inference-contention-unlent-concurrency");
-assert.equal(experiment.descriptor.implementation, "borrower-class-ceiling");
+assert.equal(experiment.descriptor.implementation, "latchflo-native-unlent-concurrency");
 assert.equal(experiment.policy.physical.maxConcurrent, 4);
 assert.equal(experiment.policy.classes.interactive.globalProtectedConcurrent, 3);
 assert.equal(experiment.policy.classes.batch.globalProtectedConcurrent, 1);
 assert.equal(experiment.policy.classes.interactive.globalMaxConcurrent, 4);
-assert.equal(experiment.policy.classes.batch.globalMaxConcurrent, 3);
+assert.equal(experiment.policy.classes.batch.globalMaxConcurrent, 4);
 assert.equal(experiment.policy.unlentProtectedConcurrent.interactive, 1);
-assert.equal(experiment.staticBatchMax, 3);
-assert.equal(experiment.mofluxBatchMax, 3);
+assert.equal(experiment.staticBatchMax, 4);
+assert.equal(experiment.mofluxBatchMax, 4);
+assert.equal(
+  experiment.staticInteractiveUnlentConcurrent,
+  null,
+  "the non-lending static arm must not need a native unlent field",
+);
+assert.equal(
+  experiment.mofluxInteractiveUnlentConcurrent,
+  1,
+  "the lending arm must send Latchflo the one-slot native unlent floor",
+);
+assert.equal(experiment.mofluxBatchUnlentConcurrent, null);
+assert.equal(experiment.restorationClaim.unlentProtectedConcurrent.interactive, 1);
 assert.deepEqual(
   Object.fromEntries(Object.entries(experiment.nominal).map(([k, v]) => [k, v.protectedConcurrent])),
   { interactive: 3, batch: 1 },
   "the follow-up must not change the protected 3/1 partition",
 );
 
-// The static arm never exceeds its protected floor of one, so max=3 is inert
-// there. In the lending arm the same max is what prevents batch from consuming
-// all four physical slots: own floor 1 + at most 2 borrowed = 3.
+// The borrower's class ceiling remains unchanged. Latchflo withholds one of
+// interactive's three protected slots, so only two slots can become shared.
 assert.equal(
-  experiment.policy.classes.batch.globalMaxConcurrent -
-    experiment.policy.classes.batch.globalProtectedConcurrent,
+  experiment.policy.classes.interactive.globalProtectedConcurrent -
+    experiment.policy.unlentProtectedConcurrent.interactive,
   2,
-  "batch may borrow exactly two interactive slots in the new profile",
+  "exactly two interactive protected slots remain lendable",
+);
+assert.equal(
+  experiment.policy.classes.batch.globalMaxConcurrent,
+  baseline.policy.classes.batch.globalMaxConcurrent,
+  "the follow-up must not enforce the reserve by narrowing batch",
+);
+assert.equal(experiment.belowNativeFloor.length, 1);
+assert.equal(experiment.belowNativeFloor[0].resource, "concurrency");
+assert.equal(experiment.belowNativeFloor[0].threshold, 1);
+assert.equal(
+  experiment.atNativeFloor.filter((entry) => entry.resource === "concurrency").length,
+  0,
+  "an applied protected concurrency floor at the native unlent slice is safe",
 );
 
 
 const runnerSource = readFileSync(path.join(ROOT, "demo", "local-contention.mjs"), "utf8");
+const evidenceSource = readFileSync(
+  path.join(ROOT, "demo", "restoration-enforceability-lib.mjs"),
+  "utf8",
+);
+assert.match(evidenceSource, /latchflo_admission_class_unlent_protected_concurrent/);
+assert.match(runnerSource, /unlentConcurrentObserved/);
+assert.match(runnerSource, /unlentGauges: mofluxEvidence\.unlentGauges/);
 assert.match(
   runnerSource,
   /--drain-timeout-mode=\$\{arm\.managed \? "fail" : "censor"\}/,
@@ -110,6 +167,7 @@ const dry = spawnSync(process.execPath, ["demo/local-contention-unlent.mjs", "--
 assert.equal(dry.status, 0, dry.stderr);
 assert.match(dry.stdout, /local-inference-contention-unlent-concurrency/);
 assert.match(dry.stdout, /unlent-concurrency-1/);
+assert.match(dry.stdout, /latchflo-native-unlent-concurrency/);
 assert.match(dry.stdout, /PASS dry-run/);
 
 console.log("PASS local-contention unlent-concurrency profile");

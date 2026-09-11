@@ -48,11 +48,10 @@ import {
  * Experiment profile selected before this module is loaded.
  *
  * `baseline` is the published 0.34.0 experiment. `unlent-concurrency-1` is the
- * 0.35.0 follow-up: the protected floors remain 3/1, but batch is capped at
- * three concurrent requests so one of the four physical slots can never be
- * occupied by batch. Latchflo 0.15.0 has no `globalUnlentProtectedConcurrent`
- * wire field, so the reserve is enforced by the borrower's class ceiling
- * rather than by inventing a control-plane primitive the runtime does not have.
+ * one-slot-reserve follow-up. In 0.36.0 it uses Latchflo 0.16.0's native
+ * `globalUnlentProtectedConcurrent` policy: the protected floors remain 3/1,
+ * both classes retain their original maxConcurrent=4 ceilings, and one of the
+ * interactive floor's three slots is never released into shared capacity.
  */
 export const LOCAL_CONTENTION_PROFILE =
   process.env.MOFLUX_LOCAL_CONTENTION_PROFILE ?? "baseline";
@@ -69,8 +68,8 @@ export const LOCAL_CONTENTION_PROFILES = Object.freeze({
     id: "unlent-concurrency-1",
     sweepName: "local-inference-contention-unlent-concurrency",
     interactiveUnlentConcurrent: 1,
-    batchMaxConcurrent: 3,
-    implementation: "borrower-class-ceiling",
+    batchMaxConcurrent: 4,
+    implementation: "latchflo-native-unlent-concurrency",
   }),
 });
 
@@ -185,19 +184,18 @@ export const CONTENTION_POLICY = Object.freeze({
     }),
     batch: Object.freeze({
       globalProtectedConcurrent: 1,
-      // In the 0.35.0 follow-up profile, batch may borrow at most two of the
-      // three interactive slots. Its own floor is one, so max=3 leaves one
-      // physical slot batch can never occupy. Static never exceeds its floor,
-      // making this ceiling change inert there and effective only when lending.
+      // Keep the baseline class ceiling. In the native unlent profile, the
+      // one-slot reserve is enforced by Latchflo retaining part of interactive's
+      // protected floor, not by narrowing the borrower's maximum.
       globalMaxConcurrent: CONTENTION_PROFILE.batchMaxConcurrent,
       globalProtectedInFlightTokens: 1_600,
       globalMaxInFlightTokens: 4_000,
     }),
   }),
   /**
-   * Concurrency intentionally unavailable to batch borrowing. This is
-   * experiment metadata, not a Latchflo wire field; enforcement is through the
-   * batch class ceiling above.
+   * Concurrency intentionally unavailable to borrowing. Under the follow-up
+   * profile this is sent to Latchflo 0.16.0 as
+   * `globalUnlentProtectedConcurrent` on the lending arm.
    */
   unlentProtectedConcurrent: Object.freeze({
     interactive: CONTENTION_PROFILE.interactiveUnlentConcurrent,
@@ -205,7 +203,7 @@ export const CONTENTION_POLICY = Object.freeze({
   }),
   /**
    * Half of each protected token floor is withheld from borrowing under
-   * Latchflo 0.15.0's `unlent_floor` mechanism.
+   * Latchflo's `unlent_floor` mechanism.
    *
    * A 50/50 split is interpretable rather than optimal: the allocation-enforced
    * half and the objective-only half are the same size, so the arm reports what
@@ -219,7 +217,7 @@ export const CONTENTION_POLICY = Object.freeze({
     /**
      * Grant lease length, and the single most consequential number here.
      *
-     * Measured against `latchflo-control-plane:0.15.0`, lending and restoration
+     * Measured against `latchflo-control-plane:0.15.0` and preserved by 0.16.0, lending and restoration
      * do not travel by the same path, and the asymmetry decides what a run of a
      * given length can observe at all:
      *
@@ -405,10 +403,10 @@ export const EVIDENCE_LIMITS = Object.freeze({
  *
  * `lending: false` produces a pool whose class floors are fixed for the life of
  * the run. `lending: true` adds the admission-class demand policy and the
- * per-resource restoration contract Latchflo 0.15.0 requires alongside it. The
- * numeric limits are identical in both cases and come from one frozen policy
- * object, so the two arms cannot drift into partitioning different amounts of
- * capacity.
+ * per-resource restoration contract Latchflo requires alongside it. The class
+ * ceilings and nominal protected floors are identical in both managed arms.
+ * The lending arm additionally carries the native unlent subfloor because a
+ * non-lending arm already withholds its entire protected floor by definition.
  */
 export function contentionPoolDefinition(name, grantTtlMs, { lending }) {
   if (typeof lending !== "boolean") {
@@ -433,6 +431,7 @@ export function contentionPoolDefinition(name, grantTtlMs, { lending }) {
     Object.entries(policy.classes).map(([admissionClass, limits]) => {
       if (!lending) return [admissionClass, limits];
       const unlentTokens = policy.unlentProtectedTokens[admissionClass];
+      const unlentConcurrent = policy.unlentProtectedConcurrent[admissionClass] ?? 0;
       // Mirror Latchflo's own per-class rules so a bad split fails here, naming
       // the class, rather than at pool creation naming a wire path.
       validateUnlentSlice({
@@ -442,9 +441,26 @@ export function contentionPoolDefinition(name, grantTtlMs, { lending }) {
         contract: restoration,
         lendingEnabled: true,
       });
+      if (!Number.isSafeInteger(unlentConcurrent) || unlentConcurrent < 0) {
+        throw new Error(
+          `${name}.${admissionClass}.globalUnlentProtectedConcurrent must be a non-negative integer`,
+        );
+      }
+      if (unlentConcurrent > limits.globalProtectedConcurrent) {
+        throw new Error(
+          `${name}.${admissionClass}.globalUnlentProtectedConcurrent cannot exceed ` +
+            "globalProtectedConcurrent",
+        );
+      }
       return [
         admissionClass,
-        { ...limits, globalUnlentProtectedInFlightTokens: unlentTokens },
+        {
+          ...limits,
+          ...(unlentConcurrent > 0
+            ? { globalUnlentProtectedConcurrent: unlentConcurrent }
+            : {}),
+          globalUnlentProtectedInFlightTokens: unlentTokens,
+        },
       ];
     }),
   );
@@ -511,6 +527,14 @@ export function contentionRestorationClaim(armId) {
         admissionSlots: "never-lent",
         upstreamCapacity: "never-lent",
       }),
+      unlentProtectedConcurrent: Object.freeze(
+        Object.fromEntries(
+          Object.entries(CONTENTION_POLICY.classes).map(([admissionClass, limits]) => [
+            admissionClass,
+            limits.globalProtectedConcurrent,
+          ]),
+        ),
+      ),
       unlentProtectedTokens: Object.freeze(
         Object.fromEntries(
           Object.entries(CONTENTION_POLICY.classes).map(([admissionClass, limits]) => [
@@ -530,6 +554,7 @@ export function contentionRestorationClaim(armId) {
     arm: armId,
     contract,
     enforceability: restorationEnforceability(contract),
+    unlentProtectedConcurrent: Object.freeze({ ...CONTENTION_POLICY.unlentProtectedConcurrent }),
     unlentProtectedTokens: Object.freeze({ ...CONTENTION_POLICY.unlentProtectedTokens }),
     /** Latchflo withholds the unlent slice; it never reclaims provider-side tokens. */
     upstreamReclamation: "not-claimed",
@@ -960,12 +985,19 @@ export function classEncroachment(sample, admissionClass, nominal = nominalClass
  */
 export function capacityInvariantViolations(
   samples,
-  { unlentProtectedTokens, admissionProvenance = null, startedAtEpochMs = null } = {},
+  {
+    unlentProtectedConcurrent,
+    unlentProtectedTokens,
+    admissionProvenance = null,
+    startedAtEpochMs = null,
+  } = {},
 ) {
   const nominal = nominalClassGrant();
-  const unlent = unlentProtectedTokens ?? CONTENTION_POLICY.unlentProtectedTokens;
+  const unlentConcurrent =
+    unlentProtectedConcurrent ?? CONTENTION_POLICY.unlentProtectedConcurrent;
+  const unlentTokens = unlentProtectedTokens ?? CONTENTION_POLICY.unlentProtectedTokens;
   const violations = {
-    /** Applied floor fell below the slice Latchflo promised never to lend. */
+    /** Applied floor fell below a slice Latchflo promised never to lend. */
     unlentFloorViolations: [],
     /** Class in flight above the ceiling that class was granted. */
     classCeilingViolations: [],
@@ -1074,12 +1106,25 @@ export function capacityInvariantViolations(
       floorTokensSum += applied.protectedInFlightTokens;
       borrowedSum += Number(observed.borrowedConcurrent ?? 0);
 
-      if (applied.protectedInFlightTokens < unlent[admissionClass]) {
+      const requiredUnlentConcurrent = Number(unlentConcurrent[admissionClass] ?? 0);
+      if (applied.protectedConcurrent < requiredUnlentConcurrent) {
         violations.unlentFloorViolations.push({
           offsetMs,
           admissionClass,
+          resource: "concurrency",
+          observed: applied.protectedConcurrent,
+          threshold: requiredUnlentConcurrent,
+          reason: "applied protected concurrency floor fell below the native unlent slice",
+        });
+      }
+      const requiredUnlentTokens = Number(unlentTokens[admissionClass] ?? 0);
+      if (applied.protectedInFlightTokens < requiredUnlentTokens) {
+        violations.unlentFloorViolations.push({
+          offsetMs,
+          admissionClass,
+          resource: "tokens",
           observed: applied.protectedInFlightTokens,
-          threshold: unlent[admissionClass],
+          threshold: requiredUnlentTokens,
           reason: "applied protected token floor fell below the unlent slice",
         });
       }
@@ -2195,6 +2240,7 @@ export function localContentionSeedProof({
   lending,
   invariants,
   handoff,
+  unlentGauges = null,
   warmupRequestsPerClass,
 }) {
   const moflux = arms.moflux ?? {};
@@ -2267,6 +2313,22 @@ export function localContentionSeedProof({
       },
       "Tyr classified each workload as its own admission class",
       "a run whose traffic all landed in one class measured no partition at all",
+    ),
+    nativeUnlentConcurrencyObserved: gate(
+      CONTENTION_PROFILE.interactiveUnlentConcurrent === 0 ||
+        (unlentGauges?.concurrencyStatus === "measured" &&
+          Number(unlentGauges?.totalUnlentConcurrent ?? 0) >=
+            CONTENTION_PROFILE.interactiveUnlentConcurrent),
+      {
+        required: CONTENTION_PROFILE.interactiveUnlentConcurrent,
+        status: unlentGauges?.concurrencyStatus ?? null,
+        observed: Number(unlentGauges?.totalUnlentConcurrent ?? 0),
+        samples: Number(unlentGauges?.concurrentSamples ?? 0),
+      },
+      CONTENTION_PROFILE.interactiveUnlentConcurrent === 0
+        ? "not required by this profile"
+        : `>= ${CONTENTION_PROFILE.interactiveUnlentConcurrent}`,
+      "a native-unlent run must observe Latchflo's allocator-side concurrency gauge, not merely echo benchmark configuration",
     ),
     leaseGapWithinBudget: gate(
       invariants.leaseGapShare === null ||

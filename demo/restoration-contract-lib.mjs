@@ -51,6 +51,7 @@ export const BORROWED_ADMISSION_SLOT_RELEASE_MECHANISM = "deadline_abandonment";
 export const DEFAULT_RESTORATION_SLO_MS = 30_000;
 
 const LATCHFLO_PER_RESOURCE_MIN = [0, 15, 0];
+const LATCHFLO_UNLENT_CONCURRENCY_MIN = [0, 16, 0];
 const TYR_BORROWED_DEADLINE_MIN = [0, 30, 0];
 
 /** Latchflo 0.15.0 replaced `restoration.{mode,sloMs}` with per-resource contracts. */
@@ -61,6 +62,11 @@ export function latchfloPerResourceRestorationExpected(version) {
 /** `unlent_floor` and the unlent gauges arrived in the same release. */
 export function latchfloUnlentFloorExpected(version) {
   return versionAtLeast(version, LATCHFLO_PER_RESOURCE_MIN);
+}
+
+/** Native allocation-enforced concurrency subfloors arrived in Latchflo 0.16.0. */
+export function latchfloUnlentConcurrencyExpected(version) {
+  return versionAtLeast(version, LATCHFLO_UNLENT_CONCURRENCY_MIN);
 }
 
 /** Tyr 0.30.0 added `borrowedAdmissionSlot` deadlines and the restoration stats block. */

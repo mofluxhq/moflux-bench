@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import path from "node:path";
 
 export const TYR_VERSION = "0.30.0";
-export const LATCHFLO_VERSION = "0.15.0";
+export const LATCHFLO_VERSION = "0.16.0";
 export const ASYNC_BULKHEAD_LLM_VERSION = "3.17.0";
 export const ASYNC_BULKHEAD_TS_VERSION = "1.0.1";
 export const OLLAMA_VERSION = "0.12.3";
