@@ -2,7 +2,7 @@
 
 MoFlux Bench 0.31.0 retains the four-arm authenticated noisy-neighbor scenario
 introduced in 0.16.0, including demand-aware protected-floor lending with the current Tyr
-0.30.0 and Latchflo 0.15.0 runtime.
+0.30.0 and Latchflo 0.16.0 runtime.
 
 ## The restoration-enforceability ladder (0.31.0)
 
@@ -174,7 +174,7 @@ performance metric improves.
 ## Floor semantics
 
 Tyr 0.30.0 reports bounded per-class demand and ordered class occupancy evidence while enforcing the class limits in its
-currently applied Latchflo grant. Latchflo 0.15.0 owns the lending and handoff decisions; these handoff semantics were introduced in earlier 0.12.x releases and are preserved here.
+currently applied Latchflo grant. Latchflo 0.16.0 owns the lending and handoff decisions; these handoff semantics were introduced in earlier 0.12.x releases and are preserved here.
 
 A configured protected floor is therefore the **nominal floor**. In the
 adaptive arm the **active floor** may temporarily be lower while the class is

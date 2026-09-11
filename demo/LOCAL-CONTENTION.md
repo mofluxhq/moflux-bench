@@ -403,7 +403,7 @@ npm run demo:local:contention:single            # one baseline seed
 npm run demo:local:contention                   # five baseline seeds with --require-proof
 npm run verify:local:contention                 # baseline harness tests
 
-npm run demo:local:contention:unlent:dry-run    # 0.35.0 one-slot reserve plan
+npm run demo:local:contention:unlent:dry-run    # 0.36.0 native one-slot reserve plan
 npm run demo:local:contention:unlent:single     # one follow-up seed
 npm run demo:local:contention:unlent            # five follow-up seeds with --require-proof
 npm run verify:local:contention:unlent          # profile/regression tests; no Docker
@@ -414,11 +414,11 @@ npm run verify:publication
 ```
 
 A baseline run writes only to `results/runs/local-inference-contention/<run-id>/`.
-The 0.35.0 follow-up writes only to
+The one-slot-reserve follow-up writes only to
 `results/runs/local-inference-contention-unlent-concurrency/<run-id>/`. Neither
 run path is reviewed evidence; promotion is the separate, deliberate step.
 
-## 0.35.0 follow-up: one unlent concurrency slot
+## 0.36.0 follow-up: native unlent concurrency
 
 The published 0.34.0 result showed that allocation restoration could be fast
 while grandfathered batch occupancy kept interactive capacity unusable for much
@@ -426,19 +426,23 @@ longer. The follow-up asks whether withholding one physical execution slot from
 batch can recover interactive SLO goodput without giving up the utilization
 benefit of lending the other two interactive slots.
 
-The experiment deliberately does not add a fictional Latchflo setting. The
-control plane has `globalUnlentProtectedInFlightTokens` but no corresponding
-concurrency field in 0.15.0. Instead, the follow-up changes only the batch class
-ceiling from 4 to 3. With a batch protected floor of 1, that permits exactly two
-borrowed concurrent slots and prevents batch from ever occupying all four
-physical slots. The summary records the profile and `borrower-class-ceiling`
-implementation so the mechanism is explicit.
+Latchflo 0.16.0 adds the concurrency primitive the 0.35.0 experiment had to
+emulate. The follow-up now sends `globalUnlentProtectedConcurrent: 1` on the
+interactive class in the lending arm. Latchflo retains that one-slot subfloor
+when interactive is idle and may release only the other two protected slots.
+Batch's `globalMaxConcurrent` returns to the baseline value of 4, so the reserve
+is no longer implemented by narrowing the borrower. The summary records
+`implementation: latchflo-native-unlent-concurrency`.
 
-Everything else stays fixed: model/runtime pins, 105 s phased workload, trace
-seeds, 3/1 protected floors, token budgets and unlent token slices, 15 s grant
-TTL/restoration objective, warm-up, retry behavior, H1/H2 thresholds and safety
-gates. The new run therefore answers a new policy question without rewriting
-the negative baseline.
+The verifier checks both sides of the mechanism: the pool definition actually
+carries the native field, Latchflo's allocator-side Prometheus gauge reports the
+withheld concurrency, and every usable Tyr capacity sample keeps the applied
+interactive protected floor at or above one. A missing allocator gauge makes a
+native-unlent seed invalid; a drop below the native floor is a hard H3/H4 safety
+failure. Everything else stays fixed: the 105 s phased
+workload, trace seeds, 3/1 nominal protected floors, token budgets and unlent
+token slices, 15 s grant TTL/restoration objective, warm-up, retry behavior,
+H1/H2 thresholds, drain censoring, and exact H4 ordering proof.
 
 ## Stack
 

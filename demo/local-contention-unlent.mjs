@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * 0.35.0 follow-up to the published local-contention baseline.
+ * 0.36.0 native-unlent follow-up to the published local-contention baseline.
  *
  * The wrapper selects the profile before local-contention-lib.mjs is imported,
  * so every policy helper, proof and summary sees one immutable experiment

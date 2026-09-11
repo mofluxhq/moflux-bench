@@ -1,7 +1,7 @@
 # MoFlux Bench 0.34.0 verification
 
 Verified 2026-09-04 in this build environment with Node.js 24.18.0, npm 12.0.1,
-Docker 29.7.2, and the pinned Tyr 0.30.0 / Latchflo 0.15.0 / Ollama 0.12.3
+Docker 29.7.2, and the pinned Tyr 0.30.0 / Latchflo 0.16.0 / Ollama 0.12.3
 images present locally.
 
 MoFlux Bench 0.33.0 introduced the local-inference contention benchmark in
@@ -102,14 +102,16 @@ the first time and reports it as a cost.
 
 No reviewed local-contention artifact is created as a side effect of a run.
 Baseline output lands beneath `results/runs/local-inference-contention/<run-id>/`;
-the 0.35.0 one-slot-reserve follow-up lands beneath
+the native one-slot-reserve follow-up lands beneath
 `results/runs/local-inference-contention-unlent-concurrency/<run-id>/`. Each has
 its own reviewed target and requires explicit promotion.
 
 `npm run verify:local:contention:unlent` additionally proves that the follow-up
-keeps physical capacity at four and protected floors at 3/1 while changing only
-the batch ceiling from four to three. This is the enforcement mechanism for the
-one-slot reserve because Latchflo 0.15.0 has no unlent-concurrency wire field.
+keeps physical capacity at four, protected floors at 3/1, and both class ceilings
+at four. It requires the lending pool to carry
+`globalUnlentProtectedConcurrent: 1` on interactive while the non-lending static
+pool carries no such field. Synthetic capacity samples also prove that an
+applied interactive floor below one is rejected by the benchmark safety gate.
 
 ## Locality and credential safety
 
@@ -119,6 +121,24 @@ upstream and control plane through the locality guard before the first request.
 Warm-up diagnostics name credentials by a twelve-character SHA-256 fingerprint
 and by issue/expiry time; bearer tokens are never written to a summary, and the
 verifier asserts it.
+
+
+## 0.36.0 native unlent-concurrency proof
+
+The local one-slot-reserve experiment now runs against Latchflo 0.16.0 and uses
+its native admission-class concurrency subfloor. The benchmark no longer caps
+batch at three. Both classes keep their baseline maxConcurrent=4 ceilings, and
+only the lending arm sends `globalUnlentProtectedConcurrent: 1` for interactive.
+The control-plane policy therefore withholds one interactive slot from lending
+while allowing the other two to enter shared capacity.
+
+The runtime proof is deliberately independent of the configuration assertion.
+`capacityInvariantViolations` checks each usable Tyr sample and fails if the
+applied protected concurrency for a class falls below its configured native
+unlent slice. The runner also scrapes Latchflo's native unlent-concurrency gauge
+and requires allocator-side evidence on every native-unlent seed. The existing
+token-unlent check remains separate evidence in the same gate. Lease-gap
+samples are still excluded because no grant exists to violate during a gap.
 
 ## 0.35.0 direct-arm drain censoring
 

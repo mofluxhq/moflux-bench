@@ -131,7 +131,7 @@ if (lock.packages?.[""]?.version !== pkg.version || lock.version !== pkg.version
 const example = readFileSync(path.join(ROOT, "demo/moflux/.env.example"), "utf8");
 for (const expected of [
   "MOFLUX_TYR_IMAGE=tyr-admission-controller:0.30.0",
-  "MOFLUX_LATCHFLO_IMAGE=latchflo-control-plane:0.15.0",
+  "MOFLUX_LATCHFLO_IMAGE=latchflo-control-plane:0.16.0",
 ]) {
   if (!example.includes(expected)) {
     findings.push(`demo/moflux/.env.example: missing pinned runtime ${expected}`);
@@ -413,8 +413,8 @@ if (
     "package.json: the unlent-concurrency contention dry-run, single-seed and verify commands are required",
   );
 }
-if (pkg.version !== "0.35.0") {
-  findings.push("package.json: the current benchmark release must be version 0.35.0");
+if (pkg.version !== "0.36.0") {
+  findings.push("package.json: the current benchmark release must be version 0.36.0");
 }
 if (
   !pkg.scripts?.["demo:restoration"]?.includes("--restoration-ladder") ||
@@ -573,7 +573,8 @@ for (const required of [
   "h4aNoUnsafeCapacityTransfer",
   "h4bNoBorrowingAfterProtectedDemandReturn",
   "unlent-concurrency-1",
-  "borrower-class-ceiling",
+  "latchflo-native-unlent-concurrency",
+  "globalUnlentProtectedConcurrent",
   "unlentProtectedConcurrent",
 ]) {
   if (!localContentionLib.includes(required)) {

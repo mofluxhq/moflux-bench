@@ -18,6 +18,7 @@ import {
   BORROWED_ADMISSION_SLOT_RELEASE_MECHANISM,
   buildBorrowedAdmissionSlotPolicy,
   buildRestorationContract,
+  latchfloUnlentConcurrencyExpected,
   latchfloUnlentFloorExpected,
   restorationEnforceability,
   tyrBorrowedSlotDeadlinesExpected,
@@ -51,6 +52,8 @@ assert.equal(tyrBorrowedSlotDeadlinesExpected("0.31.2"), true);
 assert.equal(tyrBorrowedSlotDeadlinesExpected("1.0.0"), true);
 assert.equal(latchfloUnlentFloorExpected("0.15.0"), true);
 assert.equal(latchfloUnlentFloorExpected("0.14.0"), false);
+assert.equal(latchfloUnlentConcurrencyExpected("0.16.0"), true);
+assert.equal(latchfloUnlentConcurrencyExpected("0.15.0"), false);
 assert.equal(latchfloUnlentFloorExpected("0.13.1"), false);
 // An unknown runtime is never credited with a capability.
 assert.equal(tyrBorrowedSlotDeadlinesExpected(undefined), false);
@@ -455,16 +458,33 @@ latchflo_admission_class_unlent_protected_in_flight_tokens{admission_class="nois
 latchflo_admission_class_unlent_protected_in_flight_tokens{admission_class="premium",pool="sim-unlent"} 4000
 latchflo_capacity_group_member_unlent_token_budget{capacity_group="grp-unlent",pool="sim-interactive"} 12000
 latchflo_capacity_group_member_unlent_token_budget{capacity_group="grp-unlent",pool="sim-batch"} 8000
+latchflo_admission_class_unlent_protected_concurrent{admission_class="premium",pool="sim-unlent"} 1
+latchflo_capacity_group_member_unlent_concurrent{capacity_group="grp-unlent",pool="sim-interactive"} 2
 `;
-const gauges = summarizeUnlentFloorGauges({ metricsTexts: [METRICS], latchfloVersion: "0.15.0" });
+const gauges = summarizeUnlentFloorGauges({ metricsTexts: [METRICS], latchfloVersion: "0.16.0" });
 assert.equal(gauges.status, "measured");
+assert.equal(gauges.concurrencyStatus, "measured");
 assert.equal(gauges.totalUnlentTokens, 42_000);
+assert.equal(gauges.totalUnlentConcurrent, 3);
+assert.equal(gauges.concurrentSamples, 2);
 assert.equal(gauges.admissionClasses.length, 2);
 assert.equal(gauges.capacityGroupMembers.length, 2);
+assert.equal(
+  gauges.admissionClasses.find((row) => row.admissionClass === "premium")?.unlentConcurrent,
+  1,
+);
 // The gauges are the allocator's own view. A run that only echoes its config
 // has not measured the control plane, so an empty scrape is not "measured".
 assert.equal(
   summarizeUnlentFloorGauges({ metricsTexts: [""], latchfloVersion: "0.15.0" }).status,
+  "not-configured",
+);
+assert.equal(
+  summarizeUnlentFloorGauges({ metricsTexts: [""], latchfloVersion: "0.15.0" }).concurrencyStatus,
+  "not-instrumented",
+);
+assert.equal(
+  summarizeUnlentFloorGauges({ metricsTexts: [""], latchfloVersion: "0.16.0" }).concurrencyStatus,
   "not-configured",
 );
 assert.equal(

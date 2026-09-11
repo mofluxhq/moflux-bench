@@ -49,6 +49,7 @@
 
 import { prometheusSamples } from "./admission-timing-lib.mjs";
 import {
+  latchfloUnlentConcurrencyExpected,
   latchfloUnlentFloorExpected,
   tyrBorrowedSlotDeadlinesExpected,
 } from "./restoration-contract-lib.mjs";
@@ -283,52 +284,90 @@ export function summarizeUnlentFloorGauges({
 } = {}) {
   // One Latchflo serves every pool in the deployment, so a single scrape
   // carries gauges for arms this one is being compared against. Attributing
-  // another arm's withheld tokens to this one would manufacture an enforced
+  // another arm's withheld capacity to this one would manufacture an enforced
   // floor out of a neighbour's configuration, so a caller measuring one arm
   // must name its pools.
   const wanted = pools === null ? null : new Set(pools);
   const included = (pool) => wanted === null || wanted.has(pool);
-  const classRows = [];
-  const memberRows = [];
+  const classRows = new Map();
+  const memberRows = new Map();
+
+  const classRow = (pool, admissionClass) => {
+    const key = `${pool}\u0000${admissionClass}`;
+    if (!classRows.has(key)) {
+      classRows.set(key, { pool, admissionClass, unlentTokens: null, unlentConcurrent: null });
+    }
+    return classRows.get(key);
+  };
+  const memberRow = (capacityGroup, pool) => {
+    const key = `${capacityGroup}\u0000${pool}`;
+    if (!memberRows.has(key)) {
+      memberRows.set(key, { capacityGroup, pool, unlentTokens: null, unlentConcurrent: null });
+    }
+    return memberRows.get(key);
+  };
+
   for (const text of metricsTexts) {
     for (const row of prometheusSamples(text, "latchflo_admission_class_unlent_protected_in_flight_tokens")) {
       const pool = row.labels.pool ?? "unknown";
       if (!included(pool)) continue;
-      classRows.push({
-        pool,
-        admissionClass: row.labels.admission_class ?? "unknown",
-        unlentTokens: row.value,
-      });
+      classRow(pool, row.labels.admission_class ?? "unknown").unlentTokens = row.value;
+    }
+    for (const row of prometheusSamples(text, "latchflo_admission_class_unlent_protected_concurrent")) {
+      const pool = row.labels.pool ?? "unknown";
+      if (!included(pool)) continue;
+      classRow(pool, row.labels.admission_class ?? "unknown").unlentConcurrent = row.value;
     }
     for (const row of prometheusSamples(text, "latchflo_capacity_group_member_unlent_token_budget")) {
       const pool = row.labels.pool ?? "unknown";
       if (!included(pool)) continue;
-      memberRows.push({
-        capacityGroup: row.labels.capacity_group ?? "unknown",
-        pool,
-        unlentTokens: row.value,
-      });
+      memberRow(row.labels.capacity_group ?? "unknown", pool).unlentTokens = row.value;
+    }
+    for (const row of prometheusSamples(text, "latchflo_capacity_group_member_unlent_concurrent")) {
+      const pool = row.labels.pool ?? "unknown";
+      if (!included(pool)) continue;
+      memberRow(row.labels.capacity_group ?? "unknown", pool).unlentConcurrent = row.value;
     }
   }
-  const observed = classRows.length + memberRows.length;
+
+  const classes = [...classRows.values()]
+    .sort((a, b) => `${a.pool}/${a.admissionClass}`.localeCompare(`${b.pool}/${b.admissionClass}`));
+  const members = [...memberRows.values()]
+    .sort((a, b) => `${a.capacityGroup}/${a.pool}`.localeCompare(`${b.capacityGroup}/${b.pool}`));
+  const observed = classes.length + members.length;
+  const concurrentSamples = [...classes, ...members]
+    .filter((row) => Number.isFinite(row.unlentConcurrent)).length;
+  const total = (rows, field) => rows.reduce(
+    (sum, row) => sum + (Number.isFinite(row[field]) ? row[field] : 0),
+    0,
+  );
+
   if (observed === 0) {
     return Object.freeze({
       status: latchfloUnlentFloorExpected(latchfloVersion) ? "not-configured" : "not-instrumented",
+      concurrencyStatus: latchfloUnlentConcurrencyExpected(latchfloVersion)
+        ? "not-configured"
+        : "not-instrumented",
       admissionClasses: Object.freeze([]),
       capacityGroupMembers: Object.freeze([]),
       totalUnlentTokens: 0,
+      totalUnlentConcurrent: 0,
+      concurrentSamples: 0,
     });
   }
   return Object.freeze({
     status: "measured",
-    admissionClasses: Object.freeze(
-      classRows.sort((a, b) => `${a.pool}/${a.admissionClass}`.localeCompare(`${b.pool}/${b.admissionClass}`)),
-    ),
-    capacityGroupMembers: Object.freeze(
-      memberRows.sort((a, b) => `${a.capacityGroup}/${a.pool}`.localeCompare(`${b.capacityGroup}/${b.pool}`)),
-    ),
-    totalUnlentTokens: classRows.reduce((sum, row) => sum + row.unlentTokens, 0) +
-      memberRows.reduce((sum, row) => sum + row.unlentTokens, 0),
+    concurrencyStatus: concurrentSamples > 0
+      ? "measured"
+      : latchfloUnlentConcurrencyExpected(latchfloVersion)
+        ? "not-configured"
+        : "not-instrumented",
+    admissionClasses: Object.freeze(classes.map((row) => Object.freeze({ ...row }))),
+    capacityGroupMembers: Object.freeze(members.map((row) => Object.freeze({ ...row }))),
+    totalUnlentTokens: total(classes, "unlentTokens") + total(members, "unlentTokens"),
+    totalUnlentConcurrent:
+      total(classes, "unlentConcurrent") + total(members, "unlentConcurrent"),
+    concurrentSamples,
   });
 }
 

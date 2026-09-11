@@ -65,6 +65,8 @@ export const REVIEWED_EVIDENCE = Object.freeze([
   // immutable and citable.
   "results/local-inference-contention-unlent-concurrency.json",
   "results/local-inference-contention-unlent-concurrency/",
+  "results/local-inference-contention-unlent-concurrency-v0.36.0.json",
+  "results/local-inference-contention-unlent-concurrency-v0.36.0/",
 ]);
 
 /** Directory under the results root that holds generated runs. */

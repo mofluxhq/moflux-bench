@@ -1,5 +1,51 @@
 # Changelog
 
+## 0.36.0 - 2026-09-10
+
+This release moves the successful one-slot local-inference reserve from an
+experimental borrower-ceiling workaround into Latchflo 0.16.0's native policy
+model. The published 0.34.0 baseline and 0.35.0 evidence remain historical
+artifacts; new runs identify the mechanism explicitly.
+
+### Changed
+
+- **Pin licensed runs to Latchflo 0.16.0.** Tyr remains 0.30.0,
+  async-bulkhead-llm remains 3.17.0, async-bulkhead-ts remains 1.0.1, and the
+  local runtime remains Ollama 0.12.3 with `qwen3:0.6b`. Existing generated
+  `.env` files migrate only the local default Latchflo image tag; custom registry
+  references remain untouched.
+- **Use native unlent concurrency in the local follow-up.** The
+  `unlent-concurrency-1` profile restores batch's `globalMaxConcurrent` from 3
+  to the baseline value 4 and sends
+  `globalUnlentProtectedConcurrent: 1` on interactive in the lending pool.
+  Latchflo may release at most two of interactive's three protected slots, so
+  the same one-slot reserve is now represented by the control-plane policy
+  rather than by narrowing the borrower. The profile records
+  `implementation: latchflo-native-unlent-concurrency`.
+
+### Added
+
+- **Native unlent-concurrency runtime proof.** The local capacity invariant now
+  checks the applied protected concurrency floor as well as the existing unlent
+  token floor. Any usable Tyr sample below the configured native concurrency
+  slice fails closed. The runner also scrapes Latchflo 0.16.0's
+  `latchflo_admission_class_unlent_protected_concurrent` gauge; a native-unlent
+  seed is invalid unless allocator-side evidence confirms the reserve.
+  `verify:local:contention:unlent` separately proves the configuration carries
+  the native field only on the lending arm and that a below-floor synthetic
+  sample is rejected.
+- **Dry-run mechanism visibility.** The local-contention plan now prints the
+  selected implementation, making it obvious before Docker starts whether a run
+  is using the historical fully-lendable baseline or the native-unlent profile.
+
+### Preserved
+
+- The 105-second workload, five deterministic publication seeds, 3/1 nominal
+  protected partition, token policy, 15-second grant TTL/restoration objective,
+  H1/H2 thresholds, direct-arm drain censoring, and exact Tyr/Latchflo H4
+  ordering proof are unchanged. This release changes the enforcement mechanism,
+  not the experiment's acceptance criteria.
+
 ## 0.35.0 - 2026-09-09
 
 This release adds the follow-up experiment prompted by the published 0.34.0 local-contention result. The baseline evidence remains a separate corpus and is not rewritten by this experiment.

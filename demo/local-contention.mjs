@@ -244,6 +244,7 @@ const plan = {
   benchmark: LOCAL_CONTENTION_SWEEP_NAME,
   profile: LOCAL_CONTENTION_PROFILE,
   interactiveUnlentConcurrent: CONTENTION_PROFILE.interactiveUnlentConcurrent,
+  implementation: CONTENTION_PROFILE.implementation,
   batchMaxConcurrent: CONTENTION_PROFILE.batchMaxConcurrent,
   model: OPT.model,
   arms: OPT.arms.join(","),
@@ -1044,7 +1045,7 @@ async function collectControlPlaneEvidence(arm, loadgenSummary, startedAtMs) {
     .filter(Number.isFinite);
   const earliestEventAtMs = eventTimes.length > 0 ? Math.min(...eventTimes) : null;
   const latestEventAtMs = eventTimes.length > 0 ? Math.max(...eventTimes) : null;
-  // Latchflo 0.15.0 serves /v1/events newest-first with a hard cap of 1000.
+  // Latchflo serves /v1/events newest-first with a hard cap of 1000.
   // If the page is full and its oldest event is newer than this arm's start,
   // earlier prepare/ACK evidence may have been evicted. That is inconclusive,
   // not proof of an unsafe commit.
@@ -1291,6 +1292,7 @@ try {
         lending: mofluxEvidence.lending,
         invariants: mofluxEvidence.invariants,
         handoff: mofluxEvidence.handoff,
+        unlentGauges: mofluxEvidence.unlentGauges ?? null,
         warmupRequestsPerClass: OPT.warmupRequestsPerClass,
       });
       const row = { seed, order, comparison, arms, evidence, proof };
@@ -1385,7 +1387,7 @@ if (OPT.doctor) {
         ...CONTENTION_PROFILE,
         note:
           CONTENTION_PROFILE.interactiveUnlentConcurrent > 0
-            ? "One physical concurrency slot is kept unreachable to batch by capping batch at three concurrent requests; this is enforced by Tyr's class ceiling because Latchflo 0.15.0 has no unlent-concurrency wire primitive."
+            ? "One interactive protected concurrency slot is allocation-enforced as unlent by Latchflo 0.16.0 through globalUnlentProtectedConcurrent; both classes retain the baseline maxConcurrent=4 ceiling."
             : "Baseline profile: all three interactive protected concurrency slots may be lent while interactive is idle.",
       },
       arms: OPT.arms,
@@ -1539,6 +1541,11 @@ if (OPT.doctor) {
       peakBorrowedConcurrent: lendingRows.reduce(
         (peak, row) => Math.max(peak, row.peakBorrowedConcurrent ?? 0),
         0,
+      ),
+      unlentConcurrentObserved: median(
+        rows
+          .map((row) => row.evidence?.moflux?.unlentGauges?.totalUnlentConcurrent)
+          .filter(Number.isFinite),
       ),
       unlentTokensObserved: median(
         rows
