@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.37.1 - 2026-09-22
+
+### Changed
+
+- **The vLLM experiment pins Latchflo 0.17.1.** The first Metal seed on the
+  0.37.0 pin (Latchflo 0.17.0, run `20260922T224322Z`) confirmed that lease
+  renewal works:
+  - The static arm renewed 19 times and had no zero-grant refusals, down from
+    seven.
+  - The seed was still invalid on `managedGrantContinuity`. One MoFlux batch
+    request was refused under Tyr's even fail-closed revision.
+
+  The retained Latchflo events show why. When interactive went idle, lending
+  its floor waited for the old lease to expire, which left a zero-capacity
+  window of about 370 ms. Latchflo 0.17.1 commits idle-floor lending
+  immediately. The one-second managed sampler missed the window; only the
+  refusal record and the retained events show it. The runner refuses any other
+  Latchflo release, and the publication check requires the 0.17.1 pin. The
+  other experiments keep Latchflo 0.16.0.
+
 ## 0.37.0 - 2026-09-22
 
 This release adds a GPU-backed vLLM contention experiment without replacing any

@@ -1,5 +1,17 @@
 # MoFlux Bench verification
 
+## 0.37.1 Latchflo pin
+
+`npm run verify:publication` requires `VLLM_LATCHFLO_VERSION = "0.17.1"`.
+`node demo/vllm-contention.mjs --dry-run` prints the pinned
+`latchflo-control-plane:0.17.1` image. It exits non-zero for any other release
+unless `MOFLUX_ALLOW_UNPINNED_IMAGES=true`. Latchflo 0.17.1's own suite covers
+the lending fix:
+- unit tests for immediate lending and for lending that becomes due by elapsed
+  idle time;
+- a packaged Tyr 0.25.0 test that fails if Tyr ever installs a zero-capacity
+  revision while a floor is lent.
+
 ## 0.37.0 vLLM experiment verification
 
 `npm run verify:vllm` is a GPU-free fixture check. It verifies the four-arm

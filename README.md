@@ -704,9 +704,10 @@ Tyr reports `budget_limit`. It is Tyr's fail-closed state between Latchflo
 grants, and all 178 `budget_limit` refusals in four pre-release Metal runs were
 of this kind. The load generator and summaries report it as `grantUnavailable`,
 outside the token and concurrency counts, and the `managedGrantContinuity` gate
-makes it invalidate the seed. This experiment pins Latchflo 0.17.0, which
-renews live leases before they expire; the other experiments keep their
-recorded Latchflo 0.16.0 runtime.
+makes it invalidate the seed. This experiment pins Latchflo 0.17.1, which
+renews live leases before they expire and commits idle-floor lending without
+waiting for expiry; the other experiments keep their recorded Latchflo 0.16.0
+runtime.
 
 CUDA fixed-output requests send `ignore_eos` and `min_tokens=max_tokens`.
 vLLM Metal 0.29.0 rejects `min_tokens`, so the Metal path intentionally sends

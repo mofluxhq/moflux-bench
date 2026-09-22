@@ -11,12 +11,13 @@ export const VLLM_VERSION = "0.18.0";
 export const DEFAULT_TYR_IMAGE = `tyr-admission-controller:${TYR_VERSION}`;
 export const DEFAULT_LATCHFLO_IMAGE = `latchflo-control-plane:${LATCHFLO_VERSION}`;
 /**
- * The vLLM contention experiment needs Latchflo 0.17.0's pre-expiry lease
- * renewal: its `managedGrantContinuity` gate invalidates any seed in which a
- * managed arm refused work while holding no live grant. Published experiments
- * keep LATCHFLO_VERSION so their recorded runtime stays reproducible.
+ * The vLLM contention experiment needs Latchflo 0.17.1: pre-expiry lease
+ * renewal (0.17.0) and immediate idle-floor lending (0.17.1). Its
+ * `managedGrantContinuity` gate invalidates any seed in which a managed arm
+ * refused work while holding no live grant. Published experiments keep
+ * LATCHFLO_VERSION so their recorded runtime stays reproducible.
  */
-export const VLLM_LATCHFLO_VERSION = "0.17.0";
+export const VLLM_LATCHFLO_VERSION = "0.17.1";
 export const DEFAULT_VLLM_LATCHFLO_IMAGE = `latchflo-control-plane:${VLLM_LATCHFLO_VERSION}`;
 export const DEFAULT_OLLAMA_IMAGE = `ollama/ollama:${OLLAMA_VERSION}`;
 export const DEFAULT_VLLM_IMAGE = `vllm/vllm-openai:v${VLLM_VERSION}`;

@@ -83,7 +83,7 @@ turn a non-contention run into evidence about contention.
 
 Prerequisites are Docker Compose, an NVIDIA GPU visible to `nvidia-smi`, the
 NVIDIA container runtime, OpenSSL, Node.js 22+, the licensed Tyr 0.30.0 and
-Latchflo 0.17.0 images, and network access for the first model download. vLLM's
+Latchflo 0.17.1 images, and network access for the first model download. vLLM's
 official container image is `vllm/vllm-openai`; this release pins `v0.18.0`.
 See the [official vLLM Docker guide](https://docs.vllm.ai/en/v0.18.0/deployment/docker/).
 
@@ -218,9 +218,13 @@ ID in `classes.*.grantUnavailableSnapshots`. The `managedGrantContinuity` gate
 makes any such refusal invalidate the seed. Before 0.37.0 shipped, four
 development Metal runs recorded 178 `budget_limit` refusals; all 178 were zero
 envelopes on a roughly 15-second lease cycle, and none were token pressure.
-Latchflo 0.17.0 renews a live lease before it expires, so this experiment pins
-`latchflo-control-plane:0.17.0` independently of the other experiments. If the
-image is missing, the runner builds it from a `latchflo-control-plane` 0.17.0
+Latchflo 0.17.0 renews a live lease before it expires. The first seed on 0.17.0
+(`20260922T224322Z`) had no gap refusals in the static arm, down from seven. Its
+MoFlux arm still had one: `batch-12` hit a window of about 370 ms at a lending
+transition. The lent floor was applied only when the old lease expired. Latchflo
+0.17.1 commits idle-floor lending immediately. This experiment therefore pins
+`latchflo-control-plane:0.17.1` independently of the other experiments. If the
+image is missing, the runner builds it from a `latchflo-control-plane` 0.17.1
 checkout beside `moflux-bench` or from `MOFLUX_LATCHFLO_SOURCE_DIR`. To use a
 differently tagged build of the same release, set
 `MOFLUX_VLLM_LATCHFLO_IMAGE`.
