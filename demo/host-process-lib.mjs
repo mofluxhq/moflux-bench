@@ -89,13 +89,13 @@ export function probeHttp(url, timeoutMs = 1200) {
  * A URL therefore cannot identify which server replied, so this refuses to
  * reuse a connection and callers still assert on what came back.
  */
-export function fetchTextFresh(url, timeoutMs = 2000) {
+export function fetchTextFresh(url, timeoutMs = 2000, headers = {}) {
   return new Promise((resolve, reject) => {
     const parsed = new URL(url);
     const get = parsed.protocol === "https:" ? httpsGet : httpGet;
     const request = get(
       parsed,
-      { agent: false, headers: { connection: "close" } },
+      { agent: false, headers: { ...headers, connection: "close" } },
       (response) => {
         const status = response.statusCode ?? 0;
         response.setEncoding("utf8");
@@ -146,9 +146,17 @@ export function describeChildExit(child) {
 }
 
 function recordOutput(child, stream, chunk) {
-  const lines = String(chunk).split("\n").filter((line) => line.trim().length > 0);
+  const lines = sanitizeOutput(child, chunk).split("\n").filter((line) => line.trim().length > 0);
   for (const line of lines) child.recentOutput.push(`${stream}: ${line}`);
   while (child.recentOutput.length > OUTPUT_LINES) child.recentOutput.shift();
+}
+
+function sanitizeOutput(child, chunk) {
+  let value = String(chunk);
+  for (const secret of child?.outputRedactions ?? []) {
+    if (secret) value = value.split(secret).join("[REDACTED]");
+  }
+  return value;
 }
 
 /**
@@ -168,16 +176,23 @@ export function childOutputTail(child) {
 function appendPersistentOutput(child, stream, chunk) {
   if (!child.outputLogFile) return;
   try {
-    appendFileSync(child.outputLogFile, `${stream}: ${String(chunk)}`);
-    if (!String(chunk).endsWith("\n")) appendFileSync(child.outputLogFile, "\n");
+    const safe = sanitizeOutput(child, chunk);
+    appendFileSync(child.outputLogFile, `${stream}: ${safe}`);
+    if (!safe.endsWith("\n")) appendFileSync(child.outputLogFile, "\n");
   } catch (error) {
     child.outputLogError ??= error instanceof Error ? error.message : String(error);
   }
 }
 
-export function launchNode(label, script, argv, { echo = false, logFile = null } = {}) {
-  const child = spawn(process.execPath, [path.join(ROOT, script), ...argv], {
-    cwd: ROOT,
+export function launchCommand(
+  label,
+  command,
+  argv,
+  { echo = false, logFile = null, cwd = ROOT, env = process.env, redactions = [] } = {},
+) {
+  const child = spawn(command, argv, {
+    cwd,
+    env,
     stdio: ["ignore", "pipe", "pipe"],
     detached: process.platform !== "win32",
   });
@@ -186,28 +201,39 @@ export function launchNode(label, script, argv, { echo = false, logFile = null }
   child.startedAt = Date.now();
   child.outputLogFile = logFile ? path.resolve(logFile) : null;
   child.outputLogError = null;
+  child.outputRedactions = [...redactions].filter(Boolean).map(String);
   if (child.outputLogFile) {
     mkdirSync(path.dirname(child.outputLogFile), { recursive: true });
     writeFileSync(
       child.outputLogFile,
-      `# ${label}\n# script: ${path.join(ROOT, script)}\n# startedAt: ${new Date(child.startedAt).toISOString()}\n`,
+      // Do not persist argv: callers may use command-line bearer credentials.
+      `# ${label}\n# command: ${command}\n# startedAt: ${new Date(child.startedAt).toISOString()}\n`,
     );
   }
   child.stdout.setEncoding("utf8");
   child.stdout.on("data", (chunk) => {
     recordOutput(child, "stdout", chunk);
     appendPersistentOutput(child, "stdout", chunk);
-    if (echo) process.stdout.write(`${DIM}[${label}] ${chunk}${OFF}`);
+    if (echo) process.stdout.write(`${DIM}[${label}] ${sanitizeOutput(child, chunk)}${OFF}`);
   });
   child.stderr.setEncoding("utf8");
   child.stderr.on("data", (chunk) => {
     recordOutput(child, "stderr", chunk);
     appendPersistentOutput(child, "stderr", chunk);
-    process.stderr.write(`${RED}[${label}] ${chunk}${OFF}`);
+    process.stderr.write(`${RED}[${label}] ${sanitizeOutput(child, chunk)}${OFF}`);
   });
   hostChildren.add(child);
   child.on("close", () => hostChildren.delete(child));
   return child;
+}
+
+export function launchNode(label, script, argv, options = {}) {
+  return launchCommand(
+    label,
+    process.execPath,
+    [path.join(ROOT, script), ...argv],
+    options,
+  );
 }
 
 

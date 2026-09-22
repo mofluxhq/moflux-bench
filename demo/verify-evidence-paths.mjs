@@ -50,6 +50,10 @@ check("the published sweep paths are declared reviewed", () => {
   assert.equal(isReviewedEvidence("results/curated/negative-fragmented-batch-floor/aggregate.json"), true);
   assert.equal(isReviewedEvidence("results/openai-live-overload-8-seed.json"), true);
   assert.equal(isReviewedEvidence("results/openai-live-overload-8-seed/seed-1/summary.json"), true);
+  assert.equal(isReviewedEvidence("results/vllm-contention.json"), true);
+  assert.equal(isReviewedEvidence("results/vllm-contention/seed-1/summary.json"), true);
+  assert.equal(isReviewedEvidence("results/vllm-metal-contention.json"), true);
+  assert.equal(isReviewedEvidence("results/vllm-metal-contention/seed-1/summary.json"), true);
 });
 
 check("generated run output is not reviewed", () => {
@@ -79,6 +83,14 @@ check("a file guard rejects the published summary", () => {
   );
   assert.doesNotThrow(() =>
     assertSafeOutputFile(path.join(RESULTS, "runs", "video-seed-sweep", "x", "summary.json"), ROOT),
+  );
+  assert.throws(
+    () => assertSafeOutputFile(path.join(RESULTS, "vllm-contention.json"), ROOT),
+    /reviewed evidence/,
+  );
+  assert.throws(
+    () => assertSafeOutputFile(path.join(RESULTS, "vllm-metal-contention.json"), ROOT),
+    /reviewed evidence/,
   );
 });
 

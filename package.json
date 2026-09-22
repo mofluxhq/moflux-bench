@@ -1,7 +1,7 @@
 {
   "name": "moflux-bench",
-  "version": "0.36.0",
-  "description": "Synthetic, self-hosted and live-provider benchmark harness for LLM admission control, including reproducible simulator sweeps, dynamic fleet-membership checks, unmetered local-inference compatibility and workload-contention benchmarks, and budget-capped OpenAI compatibility and overload experiments.",
+  "version": "0.37.0",
+  "description": "Synthetic, self-hosted, GPU-backed vLLM and live-provider benchmark harness for LLM admission control, including reproducible simulator sweeps, dynamic fleet-membership checks, local workload-contention benchmarks, and budget-capped OpenAI experiments.",
   "license": "Apache-2.0",
   "type": "module",
   "private": true,
@@ -42,6 +42,14 @@
     "demo:local:contention:single": "node demo/local-contention.mjs --seeds=7",
     "demo:local:contention:dry-run": "node demo/local-contention.mjs --dry-run",
     "demo:local:contention:doctor": "node demo/local-contention.mjs --doctor",
+    "demo:vllm": "node demo/vllm-contention.mjs --backend=nvidia --seeds=1-5 --require-proof",
+    "demo:vllm:single": "node demo/vllm-contention.mjs --backend=nvidia --seeds=7",
+    "demo:vllm:dry-run": "node demo/vllm-contention.mjs --backend=nvidia --dry-run",
+    "demo:vllm:doctor": "node demo/vllm-contention.mjs --backend=nvidia --doctor",
+    "demo:vllm:metal": "node demo/vllm-contention.mjs --backend=metal --seeds=1-5 --require-proof",
+    "demo:vllm:metal:single": "node demo/vllm-contention.mjs --backend=metal --seeds=7",
+    "demo:vllm:metal:dry-run": "node demo/vllm-contention.mjs --backend=metal --dry-run",
+    "demo:vllm:metal:doctor": "node demo/vllm-contention.mjs --backend=metal --doctor",
     "demo:progressive": "node demo/ensure-env.mjs --quiet && node demo/seed-sweep.mjs --seeds=1-5 --pause-ms=0 --provider-api=anthropic",
     "demo:prepare": "node demo/ensure-env.mjs",
     "demo:record": "node demo/seed-sweep.mjs --seeds=1-5 --step",
@@ -85,7 +93,8 @@
     "demo:local:contention:unlent": "node demo/local-contention-unlent.mjs --seeds=1-5 --require-proof",
     "demo:local:contention:unlent:single": "node demo/local-contention-unlent.mjs --seeds=7",
     "demo:local:contention:unlent:dry-run": "node demo/local-contention-unlent.mjs --dry-run",
-    "verify:local:contention:unlent": "node demo/verify-local-contention-unlent.mjs"
+    "verify:local:contention:unlent": "node demo/verify-local-contention-unlent.mjs",
+    "verify:vllm": "node demo/verify-vllm-contention.mjs"
   },
   "keywords": [
     "llm",

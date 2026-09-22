@@ -649,6 +649,83 @@ only after fresh demand from the measured run is visible to Latchflo.
 See `demo/VIDEO-DEMO.md` for the recording flow and narration. Stop the
 containers afterward with `npm run demo:down`.
 
+### vLLM contention: NVIDIA and Apple Silicon
+
+MoFlux Bench 0.37.0 adds a separate four-arm experiment on one GPU-backed vLLM
+server: direct FCFS, direct native priority, a rigid 3/1 protected admission
+partition, and MoFlux lending with the same 3/1 nominal partition. All arms use
+the same pinned vLLM image, immutable model commit, GPU and engine limits; the
+runner recreates vLLM before each arm and rejects runtime-identity drift.
+Apple Silicon is a separately named companion corpus: native vLLM Metal with
+the same four-arm design, never treated as CUDA-equivalent evidence.
+
+The backends intentionally use separate recorded workload profiles. NVIDIA's
+`nvidia-decode-heavy-v1` sends 128-token interactive and 768-token batch work at
+1/6 req/s. Metal's `metal-balanced-v1` sends 16-token interactive and 32-token
+batch work at 0.25/0.75 req/s, with interactive demand returning at 0.5 req/s.
+This keeps the mechanism transition measurable on an M1 instead of building a
+400-request queue from CUDA-sized work. Both profiles still require observed
+vLLM queueing; a host too fast to contend is inconclusive.
+
+```bash
+npm run demo:vllm:dry-run
+npm run demo:vllm:doctor
+npm run demo:vllm:single
+npm run demo:vllm
+
+# Apple Silicon / macOS 15+ after installing vLLM Metal
+npm run demo:vllm:metal:dry-run
+npm run demo:vllm:metal:doctor  # prerequisites/capabilities only; no inference
+npm run demo:vllm:metal:single
+npm run demo:vllm:metal
+```
+
+The harness measures client SLO goodput and TTFT alongside vLLM queue/running
+occupancy, KV-cache usage, preemptions, TTFT/ITL and queue/prefill/decode timing,
+plus host GPU utilization, memory, power and temperature on NVIDIA. Metal
+records native vLLM process-tree CPU/RSS instead; it does not relabel those as
+GPU utilization. A run with no observed vLLM queue, or with zero interactive
+contention-window SLO goodput in both direct arms, is inconclusive. Equality at
+zero cannot pass a performance hypothesis. MoFlux restoration remains an
+admission-grant claim; GPU work or KV-cache reclamation is explicitly not
+claimed.
+
+Metal scrapes vLLM and managed admission state every second and samples the
+native process tree asynchronously every five seconds. NVIDIA retains 250 ms
+vLLM scrapes and one-second GPU samples. Both backends use the same
+65,536-token admission envelope, fully reserved by the 49,152/16,384 protected
+token floors. A run is invalid if any admission is token-budget-limited. Compact
+class summaries retain the observed requested/available/budget ranges and exact
+global state for each token refusal; the critical-window digest retains token
+grants and occupancy, so that failure is diagnosable rather than waived.
+
+A refusal made with a zero capacity envelope is not token pressure, even when
+Tyr reports `budget_limit`. It is Tyr's fail-closed state between Latchflo
+grants, and all 178 `budget_limit` refusals in four pre-release Metal runs were
+of this kind. The load generator and summaries report it as `grantUnavailable`,
+outside the token and concurrency counts, and the `managedGrantContinuity` gate
+makes it invalidate the seed. This experiment pins Latchflo 0.17.0, which
+renews live leases before they expire; the other experiments keep their
+recorded Latchflo 0.16.0 runtime.
+
+CUDA fixed-output requests send `ignore_eos` and `min_tokens=max_tokens`.
+vLLM Metal 0.29.0 rejects `min_tokens`, so the Metal path intentionally sends
+`ignore_eos` plus `max_tokens` without that field. Unexpected HTTP responses,
+structured errors inside a 200 SSE stream, missing terminal frames, empty
+fixed-output streams, zero token totals, or unpopulated vLLM request histograms
+all invalidate the seed instead of being counted as fast successful inference.
+Its ephemeral local API key is passed as one `--api-key=<value>` token so a
+leading base64url `-` can never be mistaken for another vLLM option.
+For authenticated model downloads, export the current `HF_TOKEN` variable;
+`HUGGING_FACE_HUB_TOKEN` remains accepted as a compatibility alias. Registry
+credentials are never sent to the inference endpoint or written to evidence.
+
+No command writes reviewed vLLM evidence. New output is confined to
+`results/runs/vllm-contention/<run-id>/`, and an existing run directory is
+refused. Metal uses `results/runs/vllm-metal-contention/<run-id>/` and a separate
+reviewed target. See [`demo/VLLM-CONTENTION.md`](demo/VLLM-CONTENTION.md) for the exact
+matrix, workload, telemetry contract, acceptance gates, and publication path.
+
 ### Authenticated admission-class benchmark
 
 The four-arm admission-class benchmark introduced in MoFlux Bench 0.16.0 and
@@ -1553,6 +1630,8 @@ sim/sweep.mjs          sweeps σ and κ, fails if any point leaves tolerance
 arms/replica.mjs       one replica; --arm selects the admission policy
 arms/redis-client.mjs  dependency-free RESP client
 load/loadgen.mjs       open-loop multi-class generator
+load/rejection-lib.mjs classifies zero-capacity-envelope (no live grant) refusals
+load/diagnostics-lib.mjs credential redaction for retained diagnostics
 demo/seed-sweep.mjs    canonical paired multi-seed presenter (licensed images)
 demo/seed-sweep-lib.mjs pure aggregation helpers
 demo/present.mjs       verified single-pair presenter used by the sweep
@@ -1563,6 +1642,11 @@ demo/local-inference-lib.mjs locality guard, Ollama request body, per-arm aggreg
 demo/local-contention.mjs unmetered workload-isolation benchmark under local contention
 demo/local-contention-lib.mjs arm partitions, capacity invariants, localContentionProof
 demo/LOCAL-CONTENTION.md contention benchmark: arms, phases, acceptance, claim boundary
+demo/vllm-contention.mjs four-arm vLLM contention benchmark on CUDA or native Metal
+demo/vllm-contention-lib.mjs vLLM policies, workload profiles, vllmSeedProof
+demo/VLLM-CONTENTION.md vLLM benchmark: arms, validity gates, claim boundary
+demo/vllm/            vLLM CUDA and Metal stacks with Latchflo and two Tyr arms
+demo/diagnostics-lib.mjs saves logs, grants, events and Tyr stats before cleanup
 demo/ollama/          local inference stacks: compatibility, and contention with Latchflo
 demo/openai/          live OpenAI stacks for the compatibility and overload paths
 demo/restoration-contract-lib.mjs Latchflo 0.16.0 per-resource restoration contracts

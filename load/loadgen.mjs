@@ -24,6 +24,8 @@
 import { createServer } from "node:http";
 import { readFileSync, writeFileSync } from "node:fs";
 import { buildTrace, traceHash, validateTrace } from "./trace-lib.mjs";
+import { redactDiagnostic } from "./diagnostics-lib.mjs";
+import { zeroCapacityEnvelope } from "./rejection-lib.mjs";
 import { chooseRetryDelay } from "./retry-policy.mjs";
 
 // ── args ─────────────────────────────────────────────────────────────
@@ -44,6 +46,10 @@ const CONFIG = Object.freeze({
   batchTargets: str("batch-targets", str("targets", "http://127.0.0.1:8100")).split(",").filter(Boolean),
   interactiveIdentityToken: str("interactive-identity-token", ""),
   batchIdentityToken: str("batch-identity-token", ""),
+  // Optional credential for an authenticated OpenAI-compatible *local*
+  // upstream. It is sent through Tyr as Authorization and is always redacted
+  // from the emitted summary.
+  providerApiKey: str("provider-api-key", ""),
   metricsPort: num("metrics-port", 8200),
   metricsRelayUrl: str("metrics-relay-url", ""),
   metricsPushIntervalMs: num("metrics-push-interval-ms", 1000),
@@ -136,6 +142,29 @@ const CONFIG = Object.freeze({
    */
   temperature: args.has("temperature") ? Number(args.get("temperature")) : null,
   /**
+   * Optional OpenAI request priorities for schedulers such as vLLM's native
+   * priority policy. Lower numbers run first. They are omitted by default so
+   * every existing benchmark keeps its historical request body byte-for-byte.
+   */
+  interactivePriority: args.has("interactive-priority")
+    ? Number(args.get("interactive-priority"))
+    : null,
+  batchPriority: args.has("batch-priority") ? Number(args.get("batch-priority")) : null,
+  /**
+   * Ask an OpenAI-compatible local runtime to decode the complete token budget.
+   * This removes early-EOS variance from fixed-output contention experiments.
+   * It is opt-in because `ignore_eos` and `min_tokens` are vLLM extensions.
+   */
+  forceOutputLength: bool("force-output-length", false),
+  /**
+   * Send vLLM's `min_tokens=max_tokens` companion field when fixed output is
+   * enabled. CUDA vLLM supports it; vLLM Metal 0.29.0 rejects it because the
+   * plugin does not implement logits-processor-backed sampling controls. Metal
+   * can still force this benchmark's length with `ignore_eos` and `max_tokens`
+   * because the request supplies no independent stop sequence.
+   */
+  fixedOutputMinTokens: bool("fixed-output-min-tokens", true),
+  /**
    * Include every completion's offset, latency and TTFT in the summary.
    *
    * Off by default. `phaseSamples` is one record per completed request and the
@@ -163,6 +192,23 @@ if (CONFIG.temperature !== null && !Number.isFinite(CONFIG.temperature)) {
 }
 if (!["fail", "censor"].includes(CONFIG.drainTimeoutMode)) {
   throw new Error("--drain-timeout-mode must be fail or censor");
+}
+for (const [label, value] of [
+  ["--interactive-priority", CONFIG.interactivePriority],
+  ["--batch-priority", CONFIG.batchPriority],
+]) {
+  if (value !== null && !Number.isSafeInteger(value)) {
+    throw new Error(`${label} must be a safe integer when supplied`);
+  }
+}
+if (
+  CONFIG.providerApi !== "openai" &&
+  (CONFIG.forceOutputLength || CONFIG.interactivePriority !== null ||
+    CONFIG.batchPriority !== null || CONFIG.providerApiKey)
+) {
+  throw new Error(
+    "vLLM priority, fixed-output, and provider API-key options require --provider-api=openai",
+  );
 }
 if (CONFIG.interactiveResumeRps > 0) {
   const firstEndMs = CONFIG.interactiveStartMs + CONFIG.interactiveDurationMs;
@@ -230,6 +276,15 @@ for (const cls of classes) {
     borrowedDeadlineAbandoned: 0,
     borrowedDeadlineSnapshots: [],
     serverError: 0,
+    serverErrorSnapshots: [],
+    /**
+     * Unexpected client/protocol responses from the upstream request path.
+     * This includes non-admission 4xx responses and structured errors delivered
+     * inside an otherwise-200 OpenAI SSE stream.
+     */
+    requestError: 0,
+    requestErrorReasons: {},
+    requestErrorSnapshots: [],
     transportError: 0,
     exhausted: 0, // gave up after maxAttempts
     /**
@@ -255,6 +310,9 @@ for (const cls of classes) {
     localRejectPools: {},
     localRejectConstraints: {},
     localRejectDetails: {},
+    // Subset of localRejectReasons refused with a zero capacity envelope,
+    // keyed by the reason Tyr reported. See zeroCapacityEnvelope().
+    localRejectGrantUnavailable: {},
     // One evidence record per local rejection attempt. `detail` is Tyr's
     // complete admission-time capacity snapshot, preserved verbatim.
     localRejectSnapshots: [],
@@ -288,6 +346,34 @@ const startedAt = Date.now();
 const startedAtMonotonic = performance.now();
 let metricsRelayPushFailures = 0;
 const runAbort = new AbortController();
+const MAX_REQUEST_ERROR_SNAPSHOTS = 20;
+const MAX_REQUEST_ERROR_BODY_CHARS = 2_048;
+
+function boundedErrorBody(value) {
+  const text = typeof value === "string" ? value : JSON.stringify(value ?? null);
+  return redactDiagnostic(text, [CONFIG.providerApiKey, CONFIG.interactiveIdentityToken, CONFIG.batchIdentityToken]).slice(0, MAX_REQUEST_ERROR_BODY_CHARS);
+}
+
+function recordRequestError(s, {
+  entry,
+  requestClass,
+  attempt,
+  status,
+  reason,
+  body,
+}) {
+  s.requestError += 1;
+  s.requestErrorReasons[reason] = (s.requestErrorReasons[reason] ?? 0) + 1;
+  if (s.requestErrorSnapshots.length >= MAX_REQUEST_ERROR_SNAPSHOTS) return;
+  s.requestErrorSnapshots.push({
+    requestId: entry.id,
+    requestClass,
+    attempt: attempt + 1,
+    status,
+    reason,
+    body: boundedErrorBody(body),
+  });
+}
 
 function sleep(ms, signal = undefined) {
   return new Promise((resolve) => {
@@ -425,16 +511,25 @@ function sizeSummary(cls) {
  */
 function bindingConstraint(s) {
   const reasons = s.localRejectReasons ?? {};
-  const budget = reasons.budget_limit ?? 0;
-  const concurrency = (reasons.concurrency_limit ?? 0) + (reasons.queue_limit ?? 0);
+  const unavailable = s.localRejectGrantUnavailable ?? {};
+  const live = (reason) => (reasons[reason] ?? 0) - (unavailable[reason] ?? 0);
+  const budget = live("budget_limit");
+  const concurrency = live("concurrency_limit") + live("queue_limit");
   const total = budget + concurrency;
   return {
     budgetLimited: budget,
     concurrencyLimited: concurrency,
+    /**
+     * Refusals made while the pool had no capacity at all, whatever reason Tyr
+     * reported. They are neither token pressure nor contention, so they are
+     * excluded from the two counts above and from `tokenBoundShare`.
+     */
+    grantUnavailable: Object.values(unavailable).reduce((sum, n) => sum + n, 0),
     tokenBoundShare: total > 0 ? +(budget / total).toFixed(4) : null,
     exercisedTokenAwareness: budget > 0,
   };
 }
+
 
 function phaseWindows(s) {
   const boundaryMs = CONFIG.batchStartMs;
@@ -573,6 +668,22 @@ async function issue(entry) {
     // Version-2 traces carry a size per request; version-1 traces fall back to
     // the class constant, so an old trace replays byte-identically.
     max_tokens: entry.maxTokens ?? (isBatch ? CONFIG.batchMaxTokens : CONFIG.interactiveMaxTokens),
+    ...(CONFIG.providerApi === "openai" && CONFIG.forceOutputLength
+      ? {
+          ignore_eos: true,
+          ...(CONFIG.fixedOutputMinTokens
+            ? {
+                min_tokens:
+                  entry.maxTokens ??
+                  (isBatch ? CONFIG.batchMaxTokens : CONFIG.interactiveMaxTokens),
+              }
+            : {}),
+        }
+      : {}),
+    ...(CONFIG.providerApi === "openai" &&
+    Number.isSafeInteger(isBatch ? CONFIG.batchPriority : CONFIG.interactivePriority)
+      ? { priority: isBatch ? CONFIG.batchPriority : CONFIG.interactivePriority }
+      : {}),
     ...(Number.isFinite(CONFIG.temperature) ? { temperature: CONFIG.temperature } : {}),
     messages: [
       {
@@ -619,6 +730,9 @@ async function issue(entry) {
             "content-type": "application/json",
             ...(CONFIG.providerApi === "anthropic"
               ? { "anthropic-version": "2023-06-01", "x-api-key": "benchmark-local" }
+              : {}),
+            ...(CONFIG.providerApiKey
+              ? { authorization: `Bearer ${CONFIG.providerApiKey}` }
               : {}),
             "x-priority": isBatch ? "normal" : "high",
             ...((isBatch ? CONFIG.batchIdentityToken : CONFIG.interactiveIdentityToken)
@@ -718,6 +832,11 @@ async function issue(entry) {
                   : "unspecified"
               );
           s.localRejectReasons[reason] = (s.localRejectReasons[reason] ?? 0) + 1;
+          const grantUnavailable = zeroCapacityEnvelope(rejectionDetail);
+          if (grantUnavailable) {
+            s.localRejectGrantUnavailable[reason] =
+              (s.localRejectGrantUnavailable[reason] ?? 0) + 1;
+          }
           s.localRejectPools[pool] = (s.localRejectPools[pool] ?? 0) + 1;
           s.localRejectConstraints[capacityConstraint] =
             (s.localRejectConstraints[capacityConstraint] ?? 0) + 1;
@@ -739,6 +858,7 @@ async function issue(entry) {
             type: parsed?.error?.type ?? null,
             pool,
             reason,
+            grantUnavailable,
             admissionClass:
               responseAdmissionClass === "unclassified" ? null : responseAdmissionClass,
             admissionRevision:
@@ -760,10 +880,11 @@ async function issue(entry) {
           // and existing consumers. The full snapshot above is the evidence
           // source when the exact admission-time state matters.
           const tokenDetail = rejectionDetail?.tokenBudget;
-          const key = `${pool}/${reason}`;
+          const key = `${pool}/${reason}${grantUnavailable ? "/grant_unavailable" : ""}`;
           const aggregate = s.localRejectDetails[key] ?? {
             pool,
             reason,
+            grantUnavailable,
             count: 0,
             requestedMin: null,
             requestedMax: null,
@@ -802,7 +923,45 @@ async function issue(entry) {
         }
         if (response.status >= 500) {
           s.serverError += 1;
-          await response.arrayBuffer().catch(() => {});
+          const observedAt = new Date().toISOString();
+          const responseAtMs = +(performance.now() - startedAtMonotonic).toFixed(1);
+          const raw = await response.text().catch((error) => `body read failed: ${error.message}`);
+          if (s.serverErrorSnapshots.length < MAX_REQUEST_ERROR_SNAPSHOTS) {
+            s.serverErrorSnapshots.push({
+              requestId: entry.id,
+              requestClass: cls,
+              attempt: attempt + 1,
+              arrivalMs: entry.arrivalMs,
+              attemptStartedAtMs: +(attemptStartedAtMs - startedAtMonotonic).toFixed(1),
+              responseAtMs,
+              observedAt,
+              target: new URL(target).origin,
+              status: response.status,
+              headers: Object.fromEntries([
+                "content-type", "x-request-id", "x-admission-reason", "x-admission-revision",
+              ].map((name) => [name, response.headers.get(name)])
+                .filter(([, value]) => value !== null)
+                .map(([name, value]) => [name, boundedErrorBody(value)])),
+              body: boundedErrorBody(raw),
+              bodyTruncated: raw.length > MAX_REQUEST_ERROR_BODY_CHARS,
+            });
+          }
+          if (attempt + 1 < CONFIG.maxAttempts) {
+            touch("backoff");
+            await backoff(s, entry, attempt, response);
+          }
+          continue;
+        }
+        if (!response.ok) {
+          const raw = await response.text().catch(() => "");
+          recordRequestError(s, {
+            entry,
+            requestClass: cls,
+            attempt,
+            status: response.status,
+            reason: `http_${response.status}`,
+            body: raw,
+          });
           if (attempt + 1 < CONFIG.maxAttempts) {
             touch("backoff");
             await backoff(s, entry, attempt, response);
@@ -835,25 +994,36 @@ async function issue(entry) {
         let ttftMs = null;
         let outputTokens = 0;
         let inputTokens = null;
+        let streamError = null;
+        let sawDone = false;
+        let trailingStreamText = "";
         touch("streaming");
         if (response.body) {
           const decoder = new TextDecoder();
           let buffer = "";
+          streamChunks:
           for await (const chunk of response.body) {
             buffer += decoder.decode(chunk, { stream: true });
-            let idx;
-            while ((idx = buffer.indexOf("\n\n")) !== -1) {
-              const frame = buffer.slice(0, idx);
-              buffer = buffer.slice(idx + 2);
+            let boundary;
+            while ((boundary = /\r?\n\r?\n/u.exec(buffer)) !== null) {
+              const frame = buffer.slice(0, boundary.index);
+              buffer = buffer.slice(boundary.index + boundary[0].length);
               const dataLine = frame.split(/\r?\n/).find((line) => line.startsWith("data:"));
               if (!dataLine) continue;
               const raw = dataLine.slice(5).trim();
-              if (raw === "[DONE]") continue;
+              if (raw === "[DONE]") {
+                sawDone = true;
+                continue;
+              }
               let parsed;
               try {
                 parsed = JSON.parse(raw);
               } catch {
                 continue;
+              }
+              if (parsed?.error) {
+                streamError = parsed.error;
+                break streamChunks;
               }
               const openAIContent = parsed?.choices?.[0]?.delta?.content;
               const anthropicContent =
@@ -884,6 +1054,52 @@ async function issue(entry) {
               progress.updatedAt = Date.now();
             }
           }
+          trailingStreamText = buffer + decoder.decode();
+        }
+        if (streamError) {
+          recordRequestError(s, {
+            entry,
+            requestClass: cls,
+            attempt,
+            status: response.status,
+            reason: "stream_error",
+            body: streamError,
+          });
+          if (attempt + 1 < CONFIG.maxAttempts) {
+            touch("backoff");
+            await backoff(s, entry, attempt, response);
+          }
+          continue;
+        }
+        if (CONFIG.providerApi === "openai" && !sawDone) {
+          recordRequestError(s, {
+            entry,
+            requestClass: cls,
+            attempt,
+            status: response.status,
+            reason: "stream_missing_done",
+            body: trailingStreamText || "OpenAI stream closed without data: [DONE]",
+          });
+          if (attempt + 1 < CONFIG.maxAttempts) {
+            touch("backoff");
+            await backoff(s, entry, attempt, response);
+          }
+          continue;
+        }
+        if (CONFIG.forceOutputLength && !(outputTokens > 0)) {
+          recordRequestError(s, {
+            entry,
+            requestClass: cls,
+            attempt,
+            status: response.status,
+            reason: "fixed_output_empty",
+            body: "fixed-output request completed without observable output tokens",
+          });
+          if (attempt + 1 < CONFIG.maxAttempts) {
+            touch("backoff");
+            await backoff(s, entry, attempt, response);
+          }
+          continue;
         }
         s.success += 1;
         markSuccess(cls);
@@ -1018,7 +1234,7 @@ function renderMetrics() {
     for (const cls of classes) {
       for (const detail of Object.values(stats[cls].localRejectDetails)) {
         detailRows.push([
-          `{arm="${arm}",seed="${seed}",class="${promLabel(cls)}",pool="${promLabel(detail.pool)}",reason="${promLabel(detail.reason)}"}`,
+          `{arm="${arm}",seed="${seed}",class="${promLabel(cls)}",pool="${promLabel(detail.pool)}",reason="${promLabel(detail.reason)}",grant_unavailable="${detail.grantUnavailable === true}"}`,
           detail.count,
         ]);
       }
@@ -1026,7 +1242,7 @@ function renderMetrics() {
     emit(
       "counter",
       "bench_local_reject_reason_total",
-      "Local admission rejects split by pool and exact reason.",
+      "Local admission rejects split by pool, exact reason, and whether the pool had a zero capacity envelope.",
       detailRows,
     );
   }
@@ -1055,6 +1271,12 @@ function renderMetrics() {
     rows((s) => s.borrowedDeadlineAbandoned),
   );
   emit("counter", "bench_server_errors_total", "Unattributed 5xx responses.", rows((s) => s.serverError));
+  emit(
+    "counter",
+    "bench_request_errors_total",
+    "Unexpected non-admission HTTP or streamed protocol errors.",
+    rows((s) => s.requestError),
+  );
   emit("counter", "bench_transport_errors_total", "Connection failures.", rows((s) => s.transportError));
   emit("counter", "bench_exhausted_total", "Logical requests that never succeeded.", rows((s) => s.exhausted));
   emit("counter", "bench_output_tokens_total", "Output tokens delivered to clients.", rows((s) => Math.round(s.outputTokens)));
@@ -1268,6 +1490,7 @@ if (activeIssues.size > 0) {
 const {
   interactiveIdentityToken,
   batchIdentityToken,
+  providerApiKey,
   ...publicConfig
 } = CONFIG;
 const summary = {
@@ -1296,6 +1519,7 @@ const summary = {
     ...publicConfig,
     interactiveIdentityToken: interactiveIdentityToken ? "provided" : "",
     batchIdentityToken: batchIdentityToken ? "provided" : "",
+    providerCredentialConfigured: Boolean(providerApiKey),
     honorRetryHints: CONFIG.honorRetryHints,
     traceFile: CONFIG.traceFile ? "provided" : "",
     traceOut: CONFIG.traceOut ? "requested" : "",
@@ -1328,6 +1552,7 @@ for (const cls of classes) {
     localRejectPools: s.localRejectPools,
     localRejectConstraints: s.localRejectConstraints,
     localRejectDetails: Object.values(s.localRejectDetails),
+    localRejectGrantUnavailable: s.localRejectGrantUnavailable,
     localRejectSnapshots: s.localRejectSnapshots,
     admissionClassResponses: s.admissionClassResponses,
     upstreamReject: s.upstreamReject,
@@ -1335,6 +1560,10 @@ for (const cls of classes) {
     borrowedDeadlineAbandoned: s.borrowedDeadlineAbandoned,
     borrowedDeadlineSnapshots: s.borrowedDeadlineSnapshots,
     serverError: s.serverError,
+    serverErrorSnapshots: s.serverErrorSnapshots,
+    requestError: s.requestError,
+    requestErrorReasons: s.requestErrorReasons,
+    requestErrorSnapshots: s.requestErrorSnapshots,
     transportError: s.transportError,
     exhausted: s.exhausted,
     drainTimeoutCensored: s.drainTimeoutCensored,

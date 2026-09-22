@@ -8,9 +8,14 @@ import {
   DEFAULT_LOCAL_MODEL,
   DEFAULT_OLLAMA_IMAGE,
   DEFAULT_TYR_IMAGE,
+  DEFAULT_VLLM_IMAGE,
+  DEFAULT_VLLM_MODEL,
+  DEFAULT_VLLM_MODEL_REVISION,
+  DEFAULT_VLLM_SERVED_MODEL,
   LATCHFLO_VERSION,
   OLLAMA_VERSION,
   TYR_VERSION,
+  VLLM_VERSION,
   ensureDemoEnv,
   imageMatchesVersion,
 } from "./env-lib.mjs";
@@ -25,6 +30,10 @@ try {
   assert.match(text, new RegExp(`^MOFLUX_LATCHFLO_IMAGE=${DEFAULT_LATCHFLO_IMAGE}$`, "m"));
   assert.match(text, new RegExp(`^MOFLUX_OLLAMA_IMAGE=${DEFAULT_OLLAMA_IMAGE}$`, "m"));
   assert.match(text, new RegExp(`^MOFLUX_LOCAL_MODEL=${DEFAULT_LOCAL_MODEL}$`, "m"));
+  assert.match(text, new RegExp(`^MOFLUX_VLLM_IMAGE=${DEFAULT_VLLM_IMAGE}$`, "m"));
+  assert.match(text, new RegExp(`^MOFLUX_VLLM_MODEL=${DEFAULT_VLLM_MODEL}$`, "m"));
+  assert.match(text, new RegExp(`^MOFLUX_VLLM_SERVED_MODEL=${DEFAULT_VLLM_SERVED_MODEL}$`, "m"));
+  assert.match(text, new RegExp(`^MOFLUX_VLLM_MODEL_REVISION=${DEFAULT_VLLM_MODEL_REVISION}$`, "m"));
   assert.match(text, /^LATCHFLO_ADMIN_TOKEN=moflux-demo-admin-[A-Za-z0-9_-]{40,}$/m);
   assert.match(text, /^LATCHFLO_AGENT_BOOTSTRAP_TOKEN=moflux-demo-bootstrap-[A-Za-z0-9_-]{40,}$/m);
   assert.match(text, /^TYR_ROUTING_SECRET=moflux-demo-routing-[A-Za-z0-9_-]{40,}$/m);
@@ -32,6 +41,7 @@ try {
   assert.equal(imageMatchesVersion(DEFAULT_TYR_IMAGE, TYR_VERSION), true);
   assert.equal(imageMatchesVersion(DEFAULT_LATCHFLO_IMAGE, LATCHFLO_VERSION), true);
   assert.equal(imageMatchesVersion(DEFAULT_OLLAMA_IMAGE, OLLAMA_VERSION), true);
+  assert.equal(imageMatchesVersion(DEFAULT_VLLM_IMAGE, VLLM_VERSION), true);
   assert.equal(imageMatchesVersion("tyr-admission-controller:0.15.1", TYR_VERSION), false);
 
   writeFileSync(
@@ -59,6 +69,10 @@ try {
   // unset-variable error naming a variable the operator never chose to omit.
   assert.match(migratedText, new RegExp(`^MOFLUX_OLLAMA_IMAGE=${DEFAULT_OLLAMA_IMAGE}$`, "m"));
   assert.match(migratedText, new RegExp(`^MOFLUX_LOCAL_MODEL=${DEFAULT_LOCAL_MODEL}$`, "m"));
+  assert.match(migratedText, new RegExp(`^MOFLUX_VLLM_IMAGE=${DEFAULT_VLLM_IMAGE}$`, "m"));
+  assert.match(migratedText, new RegExp(`^MOFLUX_VLLM_MODEL=${DEFAULT_VLLM_MODEL}$`, "m"));
+  assert.match(migratedText, new RegExp(`^MOFLUX_VLLM_SERVED_MODEL=${DEFAULT_VLLM_SERVED_MODEL}$`, "m"));
+  assert.match(migratedText, new RegExp(`^MOFLUX_VLLM_MODEL_REVISION=${DEFAULT_VLLM_MODEL_REVISION}$`, "m"));
   assert.match(migratedText, /^LATCHFLO_AGENT_BOOTSTRAP_TOKEN=preserve-bootstrap$/m);
   assert.match(migratedText, /^TYR_ROUTING_SECRET=moflux-demo-routing-[A-Za-z0-9_-]{40,}$/m);
 
@@ -69,6 +83,10 @@ try {
       "MOFLUX_LATCHFLO_IMAGE=registry.example/latchflo@sha256:def",
       "MOFLUX_OLLAMA_IMAGE=registry.example/ollama@sha256:aaa",
       "MOFLUX_LOCAL_MODEL=llama3.2:1b",
+      "MOFLUX_VLLM_IMAGE=registry.example/vllm@sha256:bbb",
+      "MOFLUX_VLLM_MODEL=Example/Model",
+      "MOFLUX_VLLM_SERVED_MODEL=moflux-vllm",
+      "MOFLUX_VLLM_MODEL_REVISION=0123456789012345678901234567890123456789",
       "LATCHFLO_ADMIN_TOKEN=custom-admin",
       "LATCHFLO_AGENT_BOOTSTRAP_TOKEN=custom-bootstrap",
       "TYR_ROUTING_SECRET=custom-routing-secret-with-at-least-32-chars",

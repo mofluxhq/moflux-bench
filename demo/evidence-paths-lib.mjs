@@ -67,6 +67,16 @@ export const REVIEWED_EVIDENCE = Object.freeze([
   "results/local-inference-contention-unlent-concurrency/",
   "results/local-inference-contention-unlent-concurrency-v0.36.0.json",
   "results/local-inference-contention-unlent-concurrency-v0.36.0/",
+  // GPU-backed four-arm vLLM experiment. Runs remain under results/runs until
+  // explicitly reviewed and promoted; this target is protected in advance so
+  // no future runner can overwrite a cited vLLM corpus.
+  "results/vllm-contention.json",
+  "results/vllm-contention/",
+  // Apple-Silicon companion corpus. Kept distinct from CUDA because Metal,
+  // unified memory, and host-process telemetry are not interchangeable with
+  // NVIDIA device telemetry.
+  "results/vllm-metal-contention.json",
+  "results/vllm-metal-contention/",
 ]);
 
 /** Directory under the results root that holds generated runs. */

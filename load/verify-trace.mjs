@@ -71,18 +71,32 @@ const rejectionDetail = {
   },
 };
 
+// Tyr's even-revision fail-closed snapshot between Latchflo grants: it still
+// reports budget_limit, but its physical envelope is zero.
+const grantGapDetail = {
+  ...rejectionDetail,
+  limitRevision: 18,
+  constraint: "global",
+  maxConcurrent: 0,
+  maxQueue: 0,
+  tokenBudget: { ...rejectionDetail.tokenBudget, budget: 0, effectiveBudget: 0 },
+};
+
+let batchRejections = 0;
 const server = createServer(async (req, res) => {
   if (req.url !== "/v1/chat/completions") return res.writeHead(404).end();
   const chunks = [];
   for await (const chunk of req) chunks.push(chunk);
   const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
   if (String(body.model).includes("batch")) {
+    const grantGap = batchRejections++ % 2 === 1;
+    const detail = grantGap ? grantGapDetail : rejectionDetail;
     const payload = JSON.stringify({
       error: {
         type: "admission_rejected",
         reason: "budget_limit",
         pool: "sim-batch",
-        detail: rejectionDetail,
+        detail,
       },
     });
     res.writeHead(429, {
@@ -90,7 +104,7 @@ const server = createServer(async (req, res) => {
       "content-length": Buffer.byteLength(payload),
       "x-admission-reason": "budget_limit",
       "x-admission-class": "batch",
-      "x-admission-revision": "17",
+      "x-admission-revision": String(detail.limitRevision),
       "x-admission-retry-after-ms": "1250",
       "x-latchflo-grant-id": "grant-17",
       "x-latchflo-controller-epoch": "3",
@@ -139,15 +153,37 @@ try {
   assert.equal(summary.trace.hash, trace.hash);
   assert.equal(summary.classes.interactive.logical, trace.planned.interactive);
   assert.equal(summary.classes.batch.logical, trace.planned.batch);
+  const grantGaps = Math.floor(trace.planned.batch / 2);
+  const tokenRefusals = trace.planned.batch - grantGaps;
+  assert.ok(grantGaps > 0, "the trace must exercise at least one zero-envelope refusal");
   assert.equal(summary.classes.batch.localRejectReasons.budget_limit, trace.planned.batch);
-  assert.equal(summary.classes.batch.localRejectDetails[0].requestedMin, 9008);
-  assert.equal(summary.classes.batch.localRejectDetails[0].availableMax, 0);
+  assert.deepEqual(summary.classes.batch.localRejectGrantUnavailable, { budget_limit: grantGaps });
+  assert.deepEqual(
+    {
+      budgetLimited: summary.classes.batch.bindingConstraint.budgetLimited,
+      grantUnavailable: summary.classes.batch.bindingConstraint.grantUnavailable,
+      tokenBoundShare: summary.classes.batch.bindingConstraint.tokenBoundShare,
+    },
+    { budgetLimited: tokenRefusals, grantUnavailable: grantGaps, tokenBoundShare: 1 },
+    "Tyr's budget_limit reason alone must not make a grant gap count as token pressure",
+  );
+  const tokenDetail = summary.classes.batch.localRejectDetails.find((d) => !d.grantUnavailable);
+  const gapDetail = summary.classes.batch.localRejectDetails.find((d) => d.grantUnavailable);
+  assert.equal(tokenDetail.count, tokenRefusals);
+  assert.equal(tokenDetail.requestedMin, 9008);
+  assert.equal(tokenDetail.availableMax, 0);
+  assert.equal(gapDetail.count, grantGaps);
+  assert.equal(gapDetail.budgetMax, 0);
   assert.equal(
     summary.classes.batch.localRejectConstraints.admission_class_protection,
-    trace.planned.batch,
+    tokenRefusals,
   );
+  assert.equal(summary.classes.batch.localRejectConstraints.global, grantGaps);
   assert.equal(summary.classes.batch.localRejectSnapshots.length, trace.planned.batch);
-  const snapshot = summary.classes.batch.localRejectSnapshots[0];
+  const gapSnapshot = summary.classes.batch.localRejectSnapshots.find((x) => x.grantUnavailable);
+  assert.equal(gapSnapshot.admissionRevision, 18);
+  assert.deepEqual(gapSnapshot.detail, grantGapDetail);
+  const snapshot = summary.classes.batch.localRejectSnapshots.find((x) => !x.grantUnavailable);
   assert.equal(snapshot.requestClass, "batch");
   assert.equal(snapshot.attempt, 1);
   assert.match(snapshot.requestId, /^batch-/);
@@ -161,7 +197,7 @@ try {
   assert.deepEqual(snapshot.detail, rejectionDetail);
   assert.match(snapshot.target, /^http:\/\/127\.0\.0\.1:/);
   assert.ok(Number.isFinite(snapshot.rejectedAtMs));
-  console.log("PASS  immutable trace replay and full local-rejection snapshots");
+  console.log("PASS  immutable trace replay, full local-rejection snapshots, and zero-envelope classification");
 } finally {
   server.closeAllConnections?.();
   await new Promise((resolve) => server.close(resolve));

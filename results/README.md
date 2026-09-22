@@ -207,6 +207,73 @@ production-scale performance, or generalization from `qwen3:0.6b` on a CPU-only
 containerised server. The measured layer is admission: which requests Tyr let
 through, when, and what the caller then experienced.
 
+## GPU-backed vLLM contention
+
+`results/vllm-contention.json` and `results/vllm-contention/` are reserved,
+reviewed publication targets for the four-arm vLLM experiment. They are
+intentionally absent from the 0.37.0 source release: shipping the harness is not
+the same as claiming a GPU result.
+
+Real runs write only to
+`results/runs/vllm-contention/<run-id>/`. Each run retains the immutable request
+trace, per-arm client output, raw vLLM/Tyr/GPU telemetry, per-seed comparison,
+and aggregate proof. Publication requires at least five counterbalanced seeds,
+complete and populated request metrics, exact fixed-output token evidence,
+observed vLLM queueing, stable image/model/GPU identity, generator headroom,
+positive direct-arm SLO signal, zero HTTP/SSE/engine/transport errors, and the
+preregistered hypotheses. Missing evidence is `inconclusive`; a valid negative
+result is `fail` and remains publishable as negative evidence rather than being
+converted to a pass.
+
+Promote only after review:
+
+```bash
+npm run evidence:publish -- \
+  --run=results/runs/vllm-contention/<run-id> \
+  --as=vllm-contention
+```
+
+The promotion refuses an existing target unless `--force` is explicit. A vLLM
+summary's admission-grant restoration numbers must not be cited as GPU or
+KV-cache reclamation; those layers are observed separately and that limitation
+is embedded in `evidenceLimits`.
+
+## Apple-Silicon vLLM Metal contention
+
+`results/vllm-metal-contention.json` and
+`results/vllm-metal-contention/` are a separate reviewed target for the native
+Apple-Silicon companion. Runs write only to
+`results/runs/vllm-metal-contention/<run-id>/` and use the same five-seed,
+counterbalanced, fail-closed proof structure. Runtime identity pins vLLM,
+vllm-metal, model commit, Mac chip/memory, macOS and engine arguments; telemetry
+records vLLM metrics and native process-tree CPU/RSS.
+
+The Metal corpus records the `metal-balanced-v1` workload: 16-token interactive
+requests, 32-token batch requests, and an M1-sized offered-load envelope. It is
+not the CUDA `nvidia-decode-heavy-v1` trace, and cross-backend throughput ratios
+are invalid. Within each corpus, all four arms still replay an identical trace
+and must satisfy the same runtime-identity, queueing and evidence-integrity
+gates.
+
+Metal uses the same 65,536-token admission envelope as CUDA, fully reserved by
+the 49,152 interactive and 16,384 batch protected floors, with the same
+12,288-token native unlent slice and 3/1 concurrency partition. Any token-pressure
+`budget_limit` makes a seed inconclusive and is accompanied by compact rejection
+ranges plus critical-window token grant/occupancy state. A refusal made with a
+zero capacity envelope is reported separately as `grantUnavailable` and fails
+the `managedGrantContinuity` gate.
+
+Promote only to the Metal name:
+
+```bash
+npm run evidence:publish -- \
+  --run=results/runs/vllm-metal-contention/<run-id> \
+  --as=vllm-metal-contention
+```
+
+This corpus must not be pooled with or substituted for CUDA evidence. It makes
+no NVIDIA utilization claim and no MoFlux GPU/KV-cache reclamation claim.
+
 ## Published evidence status
 
 `video-seed-sweep.json` and `video-seed-sweep/` hold the reviewed five-seed
@@ -216,7 +283,7 @@ Latchflo 0.5.1**. Read that field rather than any prose description — prose dr
 and an earlier revision of this file and of `.gitignore` both described this
 corpus as Tyr 0.16.0 / Latchflo 0.5.0, which the files themselves contradict.
 
-New licensed runs use Tyr 0.30.0, Latchflo 0.15.0,
+New licensed runs use Tyr 0.30.0, Latchflo 0.16.0,
 async-bulkhead-llm 3.17.0, and async-bulkhead-ts 1.0.1. The main sweep retains
 one-hop capacity-aware routing, per-pool demand heartbeats, pool-level lending,
 and progressive reconciliation for Anthropic-shaped streams. Demand-aware pool

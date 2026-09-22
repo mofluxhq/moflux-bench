@@ -1,0 +1,101 @@
+version: 1
+
+server:
+  port: 8787
+  maxRequestBodyBytes: 1048576
+  maxOutputTokens: 1024
+
+upstreams:
+  # Native vLLM Metal is reachable from Docker Desktop through this host alias.
+  openai:
+    baseUrl: http://host.docker.internal:18000
+
+timeouts:
+  responseHeadersMs: 300000
+  streamIdleMs: 180000
+  clientStallMs: 180000
+
+shutdown:
+  drainTimeoutMs: 30000
+
+priority:
+  trustHeader: false
+
+identity:
+  jwt:
+    jwksUrl: https://host.docker.internal:9012/jwks
+    issuer: https://moflux-bench.local/
+    audience: moflux-bench
+    header: x-tyr-identity-token
+    algorithms: [RS256]
+    claims:
+      subject: sub
+      tenantId: tenant_id
+      applicationId: azp
+      roles: roles
+  roles:
+    invoke: [tyr.invoke]
+    operator: [tyr.operator]
+
+telemetry:
+  metrics:
+    enabled: true
+  audit:
+    enabled: false
+
+pools:
+  - name: vllm-static
+    modelPrefixes: [moflux-vllm]
+    estimatorModel: gpt-4o
+    maxConcurrent: 0
+    maxQueue: 0
+    limitsRevision: 0
+    admissionMode: enforce
+    inFlightTokenBudget: 0
+    defaultOutputReservation: 128
+    adaptiveEstimation:
+      enabled: true
+      smoothing: 0.2
+      minSamples: 5
+      minCorrection: 0.5
+      maxCorrection: 2
+      maxModels: 16
+    progressiveReconciliation:
+      enabled: true
+      updateStepTokens: 64
+      outputSafetyMarginTokens: 64
+    admissionClasses:
+      defaultClass: batch
+      classes:
+        interactive:
+          protectedConcurrent: 0
+          maxConcurrent: 0
+          protectedInFlightTokens: 0
+          maxInFlightTokens: 0
+        batch:
+          protectedConcurrent: 0
+          maxConcurrent: 0
+          protectedInFlightTokens: 0
+          maxInFlightTokens: 0
+      rules:
+        - admissionClass: interactive
+          tenantIds: [tenant-premium]
+
+controlPlane:
+  type: latchflo
+  url: http://latchflo:8080
+  instanceId: tyr-vllm-static-metal
+  pools: [vllm-static]
+  bootstrapTokenEnv: LATCHFLO_AGENT_BOOTSTRAP_TOKEN
+  agentTokenFile: /var/lib/tyr/latchflo-agent.token
+  retryIntervalMs: 250
+  retryMaxIntervalMs: 2000
+  requestTimeoutMs: 3000
+  metadata:
+    region: local
+    zone: vllm-metal-contention
+    version: 0.30.0
+    endpoint: http://tyr-static:8787
+    labels:
+      environment: benchmark
+      scenario: vllm-metal-contention

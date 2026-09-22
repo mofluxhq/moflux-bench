@@ -1,5 +1,157 @@
 # Changelog
 
+## 0.37.0 - 2026-09-22
+
+This release adds a GPU-backed vLLM contention experiment without replacing any
+existing evidence. The deliverable is source and verification only; real runs
+land under a unique ignored run directory and require explicit promotion.
+
+### Added
+
+- **Four-arm vLLM experiment.** `vllm-fcfs`, `vllm-priority`, `static`, and
+  `moflux` replay one deterministic trace against a freshly recreated single-GPU
+  vLLM 0.18.0 process. Image ID, immutable Hugging Face model commit, GPU UUID,
+  model alias, engine capacity and trace hash are recorded and gated.
+- **Engine and GPU evidence.** The runner captures vLLM running/waiting requests,
+  KV-cache pressure, preemptions and TTFT/ITL/queue/prefill/decode/inference
+  histograms, mandatory `nvidia-smi` telemetry, and optional local DCGM metrics.
+  MoFlux restoration is independently cross-checked against Latchflo
+  per-resource episodes, native unlent-floor gauges and acknowledged-handoff
+  event order.
+- **Fixed-work request support.** The generic OpenAI load generator now accepts
+  opt-in per-class integer priorities plus `ignore_eos`/`min_tokens` fixed-output
+  requests. Defaults and all earlier request bodies remain unchanged.
+- **Fail-closed proof.** Missing metrics, absent GPU telemetry, lack of observed
+  queueing, runtime drift, generator saturation, trace mismatch, or engine errors
+  make a seed inconclusive. Valid runs test priority, non-inferiority, lending
+  benefit and admission-grant restoration as separate preregistered hypotheses.
+- **Apple-Silicon companion backend.** The same four-arm design can run against
+  native vLLM Metal on macOS 15+. It has its own command family, runtime identity,
+  host-process CPU/RSS telemetry, proof gates, run namespace and reviewed target.
+  An ephemeral bearer key protects the Docker-to-host bridge and is redacted
+  from output. Metal and CUDA evidence are explicitly non-interchangeable.
+- **Authenticated local OpenAI upstreams.** The generic load generator accepts
+  an opt-in provider API key, forwards it as `Authorization`, and emits only a
+  boolean configuration marker rather than the credential.
+- **`managedGrantContinuity` validity gate.** A vLLM seed is inconclusive if a
+  managed arm refused any request with a zero capacity envelope. Such a refusal
+  measures a control-plane gap, not the 3/1 treatment. The gate's evidence
+  lists each refusal by arm, class, time, Tyr revision and grant.
+- **Latchflo 0.17.0 for the vLLM experiment.** The experiment pins
+  `latchflo-control-plane:0.17.0`, which renews a live lease before it expires,
+  so a healthy Tyr no longer fails closed at every lease boundary. The runner
+  refuses an image for any other release unless `MOFLUX_ALLOW_UNPINNED_IMAGES`
+  is set. A differently tagged build can be named with
+  `MOFLUX_VLLM_LATCHFLO_IMAGE`. A missing image is built from a 0.17.0
+  checkout beside `moflux-bench` or from `MOFLUX_LATCHFLO_SOURCE_DIR`. The
+  other experiments keep Latchflo 0.16.0, matching their recorded evidence.
+- **Control-plane diagnostics survive cleanup.** After every arm and again
+  before `docker compose down --volumes`, the vLLM runner saves the Compose
+  logs, the newest 1,000 Latchflo grants and events, and each managed Tyr's
+  `/stats` under
+  `diagnostics/<label>/` in the run directory. Files are owner-only, and
+  known credentials, bearer tokens and credential-named JSON fields are
+  redacted. One failed source does not discard the others, and a manifest
+  records each file's status. Managed samples also record Tyr's applied limit
+  revision and grant provenance. Together these make each zero-capacity window
+  attributable to a specific expiry and reissue.
+
+### Fixed
+
+- **Size the Apple-Silicon trace for Apple-Silicon service time.** Metal now
+  records and uses `metal-balanced-v1`: 16-token interactive requests at 0.25
+  req/s, 32-token batch requests at 0.75 req/s, and returning interactive demand
+  at 0.5 req/s. The NVIDIA corpus keeps `nvidia-decode-heavy-v1` unchanged. An
+  M1 development seed showed that replaying 768-token CUDA batch work on Metal
+  produced roughly three-minute requests, queues above 400, multi-minute
+  censored drains and starved telemetry. The corrected profile preserves the
+  same phases, four arms, 3/1 policy, SLOs and mandatory queueing gate without
+  pretending raw Metal and CUDA throughput are comparable.
+- **Separate grant gaps from token pressure.** Four M1 development runs
+  recorded 178 `budget_limit` refusals. Every one had a zero capacity envelope:
+  zero concurrency, queue and token budget under Tyr's even fail-closed
+  revision. They recurred on a roughly 15-second cycle because Latchflo 0.16.0
+  reissued a grant only after it expired. None were token pressure; four slots
+  of at most 256 tokens cannot exhaust the pool. A 262,144-token Metal ceiling
+  tried during development rested on the opposite reading and changed nothing,
+  so Metal keeps the same 65,536-token envelope as CUDA, fully reserved by the
+  49,152/16,384 protected floors. The load generator now counts such refusals
+  as `grantUnavailable`, per reported reason, and excludes them from
+  `budgetLimited`, `concurrencyLimited` and `tokenBoundShare` in every
+  experiment. Summaries add `grantUnavailableRejections` and
+  `grantUnavailableSnapshots` (revision and grant ID), and keep
+  `budgetRejectionSnapshots` to token refusals. The summaries classify from
+  Tyr's own rejection detail, so older results summarize consistently. The
+  token-pressure validity gate is unchanged: one token-budget-limited admission
+  still makes the seed inconclusive.
+- **Retain token-admission diagnostics in the compact result.** Class summaries
+  now keep the aggregate requested, available and budget ranges plus the exact
+  global concurrency/token state for every token-pressure `budget_limit`
+  decision; zero-envelope refusals are listed separately. The
+  critical-window digest also includes pool/class token grants, occupancy,
+  borrowing and release state. Full rejection snapshots and raw telemetry
+  remain in their per-arm files; `summary.json` is now sufficient to diagnose
+  another token-bound seed without weakening its validity failure.
+- **Make Metal evidence collection load-safe without weakening proof.** Metal
+  now scrapes vLLM and Tyr once per second, samples the native process tree
+  asynchronously every five seconds, uses backend-specific bounded timeouts,
+  and opens a fresh authenticated metrics connection after every recreated
+  server. This removes synchronous `ps` blocking and stale pooled connections;
+  any remaining scrape or process-sample error still invalidates the seed.
+- **Validate fixed output against the selected backend profile.** The seed
+  proof previously computed expected completion tokens from the CUDA constants
+  even during a Metal run. It now receives the exact recorded workload, with a
+  regression fixture proving a Metal result is rejected under the wrong
+  profile.
+- **Reject vacuous all-zero SLO comparisons.** At least one direct arm must now
+  produce positive contention-window interactive SLO goodput. A seed where
+  FCFS and native priority both deliver zero useful requests is inconclusive;
+  equality at zero can no longer appear as support for H1 or H2.
+- **Honor the current Hugging Face credential name.** Revision resolution,
+  native Metal inheritance, NVIDIA Compose and the summary marker now recognize
+  `HF_TOKEN`; `HUGGING_FACE_HUB_TOKEN` remains a compatibility alias. Neither
+  credential is written to evidence or sent to the inference endpoint.
+- **Unambiguous native vLLM API-key startup.** The ephemeral Metal key now has
+  a fixed alphabetic prefix and is bound as `--api-key=<value>` in one argv
+  token. A base64url key beginning with `-` can no longer be reinterpreted by
+  argparse as another option and make `vllm serve` exit with “expected at least
+  one argument.” The fixture pins the exact dash-prefixed regression case.
+- **vLLM Metal fixed-output compatibility.** vLLM Metal 0.29.0 rejects the
+  logits-processor-backed `min_tokens` sampling control. Metal requests now
+  omit that field while retaining `ignore_eos` and `max_tokens`; CUDA keeps
+  `min_tokens=max_tokens`. Excluded warm-up now parses the stream, rejects a
+  structured error frame even when HTTP status is 200, and requires observable
+  generated output instead of accepting any non-empty response body.
+- **Fail closed on false OpenAI-stream successes.** The load generator now
+  rejects unexpected non-2xx statuses, OpenAI SSE error objects, missing
+  terminal `[DONE]` frames, and empty fixed-output streams. It records bounded
+  status/body diagnostics and never adds these attempts to success, TTFT or
+  latency distributions. The vLLM proof independently requires exact expected
+  completion-token totals, prompt usage for every success, and positive TTFT
+  and end-to-end request histogram populations in every arm; metric names with
+  zero activity no longer satisfy the evidence gate.
+- **Current vLLM Metal capability detection.** The native preflight now queries
+  `vllm serve --help=all`. Current vLLM releases abbreviate plain `--help` by
+  configuration group, which made the runner falsely report that an installed
+  `--scheduling-policy` option was missing before any evidence was written.
+- **Log-safe Metal runtime inspection.** The Python runtime probe now prefixes
+  its JSON record with a unique marker and parses only that record. Informational
+  lines emitted while importing vLLM no longer make the preflight parse the
+  entire mixed stdout stream as JSON.
+
+### Evidence safety
+
+- Runs write only to `results/runs/vllm-contention/<run-id>/` and refuse an
+  existing directory. `results/vllm-contention.json` and its companion directory
+  are protected reviewed-evidence targets reachable only through explicit
+  publication. No vLLM result is included in this release.
+- Apple Silicon runs use `results/runs/vllm-metal-contention/<run-id>/`; their
+  reserved `results/vllm-metal-contention*` publication paths are independently
+  protected and cannot overwrite the CUDA corpus.
+- The summary states that MoFlux does not reclaim GPU execution or vLLM KV
+  cache. Grant restoration, occupancy recovery and engine preemption remain
+  distinct observations.
+
 ## 0.36.0 - 2026-09-11
 
 This release moves the successful one-slot local-inference reserve from an

@@ -40,6 +40,16 @@ const required = [
   "demo/local-contention-lib.mjs",
   "demo/verify-local-contention.mjs",
   "demo/LOCAL-CONTENTION.md",
+  "demo/vllm/compose.yaml",
+  "demo/vllm/compose-metal.yaml",
+  "demo/vllm/tyr-static.yaml",
+  "demo/vllm/tyr-moflux.yaml",
+  "demo/vllm/tyr-static-metal.yaml",
+  "demo/vllm/tyr-moflux-metal.yaml",
+  "demo/vllm-contention.mjs",
+  "demo/vllm-contention-lib.mjs",
+  "demo/verify-vllm-contention.mjs",
+  "demo/VLLM-CONTENTION.md",
 ];
 const ignoredDirectories = new Set([".git", "node_modules", "coverage", ".tmp", "tmp"]);
 const forbiddenNames = new Set([".DS_Store", "Thumbs.db"]);
@@ -55,7 +65,7 @@ function walk(dir) {
     // Ephemeral per-run TLS material for the two identity fixtures. Both are
     // gitignored and both are removed on a clean exit; a crashed run can leave
     // them behind, and that is a local artifact rather than a release defect.
-    if (rel === "demo/classes/runtime" || rel === "demo/ollama/runtime") continue;
+    if (rel === "demo/classes/runtime" || rel === "demo/ollama/runtime" || rel === "demo/vllm/runtime") continue;
     const stat = lstatSync(full);
     if (stat.isSymbolicLink()) findings.push(`${rel}: symbolic links are not allowed in a release`);
     if (entry.isDirectory()) {
@@ -132,9 +142,72 @@ const example = readFileSync(path.join(ROOT, "demo/moflux/.env.example"), "utf8"
 for (const expected of [
   "MOFLUX_TYR_IMAGE=tyr-admission-controller:0.30.0",
   "MOFLUX_LATCHFLO_IMAGE=latchflo-control-plane:0.16.0",
+  "MOFLUX_VLLM_IMAGE=vllm/vllm-openai:v0.18.0",
 ]) {
   if (!example.includes(expected)) {
     findings.push(`demo/moflux/.env.example: missing pinned runtime ${expected}`);
+  }
+}
+const vllmCompose = readFileSync(path.join(ROOT, "demo/vllm/compose.yaml"), "utf8");
+for (const expected of [
+  "${MOFLUX_VLLM_IMAGE:?Set MOFLUX_VLLM_IMAGE}",
+  "--scheduling-policy",
+  "${MOFLUX_VLLM_SCHEDULING_POLICY:-priority}",
+  "${MOFLUX_VLLM_GPU_DEVICE:-0}",
+  "--no-enable-prefix-caching",
+  "moflux-bench-vllm-hf-cache",
+  "HF_TOKEN: ${HF_TOKEN:-}",
+]) {
+  if (!vllmCompose.includes(expected)) findings.push(`demo/vllm/compose.yaml: missing ${expected}`);
+}
+const vllmMetalCompose = readFileSync(path.join(ROOT, "demo/vllm/compose-metal.yaml"), "utf8");
+if (/^  vllm:/mu.test(vllmMetalCompose)) {
+  findings.push("demo/vllm/compose-metal.yaml: native Metal mode must not start a Docker vLLM service");
+}
+for (const name of ["tyr-static-metal.yaml", "tyr-moflux-metal.yaml"]) {
+  const config = readFileSync(path.join(ROOT, "demo/vllm", name), "utf8");
+  if (!config.includes("baseUrl: http://host.docker.internal:18000")) {
+    findings.push(`demo/vllm/${name}: native vLLM host bridge is missing`);
+  }
+}
+const vllmRunner = readFileSync(path.join(ROOT, "demo/vllm-contention.mjs"), "utf8");
+for (const expected of [
+  "assertSafeRunDir(",
+  "createFreshRunDirectory()",
+  "refusing to reuse existing run directory",
+  "resolvedModelRevision",
+  "VLLM_EVIDENCE_LIMITS",
+  "VLLM_METAL_EVIDENCE_LIMITS",
+  'VLLM_METAL_USE_PAGED_ATTENTION: "1"',
+  'VLLM_METAL_MEMORY_FRACTION: "auto"',
+  "vllmApiKeyArgument(VLLM_API_KEY)",
+  '`moflux-${randomBytes(32).toString("base64url")}`',
+  "vllmFixedOutputFields(OPT.backend, 16)",
+  '--fixed-output-min-tokens=${IS_METAL ? "false" : "true"}',
+  "parseWarmupStream(raw)",
+  "vllmWorkloadForBackend",
+  "vllmSamplingForBackend",
+  "fetchTextFresh(",
+  "await readMetalProcessTree()",
+  "workload: WORKLOAD",
+  "policy: POLICY",
+  "vllmPolicyForBackend(OPT.backend)",
+  "env.HF_TOKEN || env.HUGGING_FACE_HUB_TOKEN",
+]) {
+  if (!vllmRunner.includes(expected)) findings.push(`demo/vllm-contention.mjs: missing ${expected}`);
+}
+const vllmLibrary = readFileSync(path.join(ROOT, "demo/vllm-contention-lib.mjs"), "utf8");
+for (const expected of [
+  'profile: "nvidia-decode-heavy-v1"',
+  'profile: "metal-balanced-v1"',
+  "makeVllmPolicy(65_536)",
+  "export const VLLM_METAL_POLICY = makeVllmPolicy(65_536);",
+  '"managedGrantContinuity"',
+  "unlentProtectedTokens: Object.freeze({ interactive: 8_192, batch: 4_096 })",
+  '"interactiveSloSignal"',
+]) {
+  if (!vllmLibrary.includes(expected)) {
+    findings.push(`demo/vllm-contention-lib.mjs: missing ${expected}`);
   }
 }
 for (const name of ["LATCHFLO_ADMIN_TOKEN", "LATCHFLO_AGENT_BOOTSTRAP_TOKEN", "TYR_ROUTING_SECRET"]) {
@@ -281,6 +354,17 @@ if (!loadgen.includes('interactiveIdentityToken: interactiveIdentityToken ? "pro
     !loadgen.includes("admissionClassResponses")) {
   findings.push("load/loadgen.mjs: identity attribution or token redaction is missing");
 }
+for (const required of [
+  'fixedOutputMinTokens: bool("fixed-output-min-tokens", true)',
+  'reason: "stream_error"',
+  'reason: "stream_missing_done"',
+  'reason: "fixed_output_empty"',
+  "requestErrorSnapshots",
+]) {
+  if (!loadgen.includes(required)) {
+    findings.push(`load/loadgen.mjs: fail-closed OpenAI stream handling is missing ${required}`);
+  }
+}
 
 if (!loadgen.includes("firstResponseHeadersAtMs") ||
     !loadgen.includes("responseHeadersGapMs") ||
@@ -413,8 +497,8 @@ if (
     "package.json: the unlent-concurrency contention dry-run, single-seed and verify commands are required",
   );
 }
-if (pkg.version !== "0.36.0") {
-  findings.push("package.json: the current benchmark release must be version 0.36.0");
+if (pkg.version !== "0.37.0") {
+  findings.push("package.json: the current benchmark release must be version 0.37.0");
 }
 if (
   !pkg.scripts?.["demo:restoration"]?.includes("--restoration-ladder") ||

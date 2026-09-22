@@ -1,8 +1,85 @@
-# MoFlux Bench 0.34.0 verification
+# MoFlux Bench verification
 
-Verified 2026-09-04 in this build environment with Node.js 24.18.0, npm 12.0.1,
-Docker 29.7.2, and the pinned Tyr 0.30.0 / Latchflo 0.16.0 / Ollama 0.12.3
-images present locally.
+## 0.37.0 vLLM experiment verification
+
+`npm run verify:vllm` is a GPU-free fixture check. It verifies the four-arm
+matrix, 3/1 protected policy, native one-slot unlent reserve, counterbalanced
+order, the bounded `metal-balanced-v1` traces for all five publication seeds,
+backend-specific fixed-token proof, Prometheus parsing and histogram deltas,
+required vLLM metric set,
+`nvidia-smi` parsing, Apple process-tree CPU/RSS parsing, separate
+grant/occupancy restoration timing, three-state proof result, CUDA and Metal
+Compose topology, and the load generator's actual authenticated OpenAI request
+for priority plus fixed output length without leaking the provider key. It also
+proves that CUDA includes `min_tokens`, Metal omits the unsupported field, and
+both unexpected HTTP 422 responses and structured errors inside an HTTP 200 SSE
+stream remain failed requests with bounded diagnostics. A dash-prefixed API-key
+fixture also proves the Metal server receives `--api-key=<value>` as one argv
+token instead of an option followed by an ambiguously option-shaped value.
+It pins the shared 65,536-token envelope for CUDA and Metal, fully reserved by
+the 49,152/16,384-token protected floors, the dynamic 12,288-token
+unlent-floor gate, compact rejection/token-state diagnostics, fresh
+authenticated metrics connection, asynchronous Metal process sampling, and
+support for both `HF_TOKEN` and its legacy alias. It also proves that
+`managedGrantContinuity` fails a seed whose static arm refused work under Tyr's
+even fail-closed revision, without counting those refusals as token pressure.
+
+Zero-envelope classification is verified at three layers:
+- `load/verify-trace.mjs` drives the real load generator over HTTP. Half the
+  refusals carry Tyr's zero-envelope `budget_limit` detail. `budgetLimited`,
+  `grantUnavailable`, the split detail aggregates, and the snapshot flags must
+  each count only their own kind.
+- `demo/verify-local-contention.mjs` checks the shared summarizer against a
+  refusal recorded in a real Metal run.
+- `demo/verify-vllm-contention.mjs` checks the proof gate.
+
+Applied to the four pre-release Metal runs, the summarizer classifies all 178
+recorded `budget_limit` refusals as zero-envelope and none as token pressure.
+
+`npm run demo:vllm:dry-run` must print the full plan and create no directory.
+`npm run demo:vllm:doctor` checks Docker, the rendered Compose configuration,
+OpenSSL and access to the selected GPU without issuing inference. The real
+five-seed run is intentionally not part of CI: it requires an NVIDIA runtime,
+model weights, and the licensed Tyr/Latchflo images.
+
+`npm run demo:vllm:metal:dry-run` is portable and creates nothing.
+`npm run demo:vllm:metal:doctor` additionally requires Apple Silicon, macOS 15+,
+native vLLM/vllm-metal, and Docker Desktop. The Metal proof substitutes required
+host-process telemetry and pinned Mac/plugin identity for NVIDIA device gates;
+it does not weaken the required vLLM metric or queueing gates. The doctor reads
+`vllm serve --help=all` because current vLLM's plain grouped help omits engine
+options. It also extracts a uniquely marked runtime-identity record so vLLM
+import logs cannot corrupt JSON parsing. The GPU-free fixture pins both
+preflight behaviours, including a synthetic leading `INFO` line. Doctor is a
+prerequisite/capability check and intentionally issues no inference request;
+the excluded warm-up is the first live request-shape check.
+
+The Metal defaults deliberately reduce evidence pressure on unified-memory
+hosts: one-second vLLM/Tyr sampling and asynchronous five-second process-tree
+sampling, with longer bounded timeouts. A single scrape or process-sample error
+still makes the seed inconclusive; the fix changes collection pacing, not the
+integrity gate.
+
+Publication verification requires all vLLM source/config/documentation files,
+the pinned `vllm/vllm-openai:v0.18.0` example value, immutable-revision capture,
+safe-run-directory guards, and the explicit evidence-limit block. Reviewed
+vLLM paths are registered in the same central guard used by the runtime. This
+overlay contains no `results/runs/` output and no reviewed CUDA or Metal JSON.
+
+The experiment's validity gate requires all documented vLLM metrics, positive
+measured TTFT/end-to-end histogram populations, exact fixed completion-token
+totals, prompt-token usage for every success, GPU/process telemetry, an observed
+waiting queue, identical trace hashes and runtime identity, correct scheduler
+selection, positive SLO goodput in at least one direct arm, generator headroom,
+and zero engine, request-protocol or transport faults. A valid negative
+hypothesis is `fail`; missing evidence is
+`inconclusive`. Neither is rewritten as a passing result.
+
+Verified 2026-09-22 in this build environment with Node.js 24.19.0 and npm
+11.9.0: syntax, publication hygiene, all 48 GPU-free checks, and the simulator
+sweep passed. A live Metal run is deliberately not claimed from this Linux
+environment; validating `metal-balanced-v1` still requires a fresh Apple-
+Silicon development seed and then the five counterbalanced publication seeds.
 
 MoFlux Bench 0.33.0 introduced the local-inference contention benchmark in
 `demo/local-contention.mjs`; 0.33.1 corrected phase/proof semantics from the
@@ -172,4 +249,3 @@ the predecessor records, `handoffProofComplete` fails instead of converting an
 unknown ordering into either a pass or a fabricated safety violation. The local
 contention runner requests Latchflo's 1000-event maximum and records whether the
 window covers the measured arm.
-

@@ -25,6 +25,7 @@ import { fileURLToPath } from "node:url";
 import {
   assertHostPortFree,
   describeChildExit,
+  fetchTextFresh,
   isHostPortFree,
   killChildTree,
   launchNode,
@@ -270,21 +271,53 @@ try {
       [
         'console.log("diagnostic stdout marker");',
         'console.error("diagnostic stderr marker");',
+        'console.error(process.argv[2]);',
         'process.exit(9);',
       ].join("\n") + "\n",
     );
-    const child = launchNode("persistent-output", script, [secret], { logFile });
+    const child = launchNode("persistent-output", script, [secret], {
+      logFile,
+      redactions: [secret],
+    });
     await new Promise((resolve) => child.once("close", resolve));
     const persisted = readFileSync(logFile, "utf8");
     assert.match(persisted, /diagnostic stdout marker/, persisted);
     assert.match(persisted, /diagnostic stderr marker/, persisted);
     assert.match(persisted, /# startedAt:/, persisted);
+    assert.match(persisted, /\[REDACTED\]/, persisted);
     assert.doesNotMatch(
       persisted,
       new RegExp(secret),
       "persistent diagnostics must not copy potentially sensitive argv into the log header",
     );
-    console.log("  ok  persistent child diagnostics retain stdout/stderr without copying argv");
+    console.log("  ok  persistent child diagnostics retain output while redacting secrets and argv");
+  }
+
+  // ── 12. fresh scrapes forward auth without reusing a connection ──
+  {
+    let observedAuthorization = null;
+    let observedConnection = null;
+    const server = createServer((request, response) => {
+      observedAuthorization = request.headers.authorization ?? null;
+      observedConnection = request.headers.connection ?? null;
+      response.writeHead(200, { "content-type": "text/plain" });
+      response.end("metric 1\n");
+    });
+    await new Promise((resolve) => server.listen(PROBE_PORT, "127.0.0.1", resolve));
+    try {
+      const response = await fetchTextFresh(
+        `http://127.0.0.1:${PROBE_PORT}/metrics`,
+        2_000,
+        { authorization: "Bearer local-metrics-key" },
+      );
+      assert.equal(response.status, 200);
+      assert.equal(response.text, "metric 1\n");
+      assert.equal(observedAuthorization, "Bearer local-metrics-key");
+      assert.equal(observedConnection, "close");
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+    console.log("  ok  fresh metrics scrape forwards auth and closes its connection");
   }
 
   console.log("\nPASS  host process supervision reports why a startup failed");

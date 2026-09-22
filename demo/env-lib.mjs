@@ -7,9 +7,22 @@ export const LATCHFLO_VERSION = "0.16.0";
 export const ASYNC_BULKHEAD_LLM_VERSION = "3.17.0";
 export const ASYNC_BULKHEAD_TS_VERSION = "1.0.1";
 export const OLLAMA_VERSION = "0.12.3";
+export const VLLM_VERSION = "0.18.0";
 export const DEFAULT_TYR_IMAGE = `tyr-admission-controller:${TYR_VERSION}`;
 export const DEFAULT_LATCHFLO_IMAGE = `latchflo-control-plane:${LATCHFLO_VERSION}`;
+/**
+ * The vLLM contention experiment needs Latchflo 0.17.0's pre-expiry lease
+ * renewal: its `managedGrantContinuity` gate invalidates any seed in which a
+ * managed arm refused work while holding no live grant. Published experiments
+ * keep LATCHFLO_VERSION so their recorded runtime stays reproducible.
+ */
+export const VLLM_LATCHFLO_VERSION = "0.17.0";
+export const DEFAULT_VLLM_LATCHFLO_IMAGE = `latchflo-control-plane:${VLLM_LATCHFLO_VERSION}`;
 export const DEFAULT_OLLAMA_IMAGE = `ollama/ollama:${OLLAMA_VERSION}`;
+export const DEFAULT_VLLM_IMAGE = `vllm/vllm-openai:v${VLLM_VERSION}`;
+export const DEFAULT_VLLM_MODEL = "Qwen/Qwen2.5-1.5B-Instruct";
+export const DEFAULT_VLLM_SERVED_MODEL = "moflux-vllm";
+export const DEFAULT_VLLM_MODEL_REVISION = "main";
 
 /**
  * Default weights for the local inference benchmark.
@@ -26,7 +39,7 @@ function token(prefix) {
 }
 
 export function imageMatchesVersion(image, version) {
-  return typeof image === "string" && new RegExp(`:${version.replaceAll(".", "\\.")}$`).test(image.trim());
+  return typeof image === "string" && new RegExp(`:v?${version.replaceAll(".", "\\.")}$`).test(image.trim());
 }
 
 function migrateDefaultImage(text, key, repository, expectedImage) {
@@ -34,7 +47,7 @@ function migrateDefaultImage(text, key, repository, expectedImage) {
   const match = pattern.exec(text);
   if (!match) return { text, changed: false };
   const configured = match[1].trim();
-  const localDefault = new RegExp(`^${repository}:\\d+\\.\\d+\\.\\d+$`);
+  const localDefault = new RegExp(`^${repository}:v?\\d+\\.\\d+\\.\\d+$`);
   if (!localDefault.test(configured) || configured === expectedImage) {
     return { text, changed: false };
   }
@@ -67,6 +80,7 @@ function migrateExistingEnv(file, { quiet }) {
     ["MOFLUX_TYR_IMAGE", "tyr-admission-controller", DEFAULT_TYR_IMAGE],
     ["MOFLUX_LATCHFLO_IMAGE", "latchflo-control-plane", DEFAULT_LATCHFLO_IMAGE],
     ["MOFLUX_OLLAMA_IMAGE", "ollama/ollama", DEFAULT_OLLAMA_IMAGE],
+    ["MOFLUX_VLLM_IMAGE", "vllm/vllm-openai", DEFAULT_VLLM_IMAGE],
   ]) {
     const migrated = migrateDefaultImage(text, key, repository, expectedImage);
     text = migrated.text;
@@ -83,6 +97,10 @@ function migrateExistingEnv(file, { quiet }) {
   for (const [key, value] of [
     ["MOFLUX_OLLAMA_IMAGE", DEFAULT_OLLAMA_IMAGE],
     ["MOFLUX_LOCAL_MODEL", DEFAULT_LOCAL_MODEL],
+    ["MOFLUX_VLLM_IMAGE", DEFAULT_VLLM_IMAGE],
+    ["MOFLUX_VLLM_MODEL", DEFAULT_VLLM_MODEL],
+    ["MOFLUX_VLLM_SERVED_MODEL", DEFAULT_VLLM_SERVED_MODEL],
+    ["MOFLUX_VLLM_MODEL_REVISION", DEFAULT_VLLM_MODEL_REVISION],
   ]) {
     const ensured = ensureEnvLine(text, key, value, /^MOFLUX_LATCHFLO_IMAGE=[^\r\n]+$/m);
     text = ensured.text;
@@ -114,6 +132,12 @@ export function ensureDemoEnv(file, { quiet = false } = {}) {
     MOFLUX_LATCHFLO_IMAGE: process.env.MOFLUX_LATCHFLO_IMAGE || DEFAULT_LATCHFLO_IMAGE,
     MOFLUX_OLLAMA_IMAGE: process.env.MOFLUX_OLLAMA_IMAGE || DEFAULT_OLLAMA_IMAGE,
     MOFLUX_LOCAL_MODEL: process.env.MOFLUX_LOCAL_MODEL || DEFAULT_LOCAL_MODEL,
+    MOFLUX_VLLM_IMAGE: process.env.MOFLUX_VLLM_IMAGE || DEFAULT_VLLM_IMAGE,
+    MOFLUX_VLLM_MODEL: process.env.MOFLUX_VLLM_MODEL || DEFAULT_VLLM_MODEL,
+    MOFLUX_VLLM_SERVED_MODEL:
+      process.env.MOFLUX_VLLM_SERVED_MODEL || DEFAULT_VLLM_SERVED_MODEL,
+    MOFLUX_VLLM_MODEL_REVISION:
+      process.env.MOFLUX_VLLM_MODEL_REVISION || DEFAULT_VLLM_MODEL_REVISION,
     LATCHFLO_ADMIN_TOKEN: process.env.LATCHFLO_ADMIN_TOKEN || token("moflux-demo-admin"),
     LATCHFLO_AGENT_BOOTSTRAP_TOKEN:
       process.env.LATCHFLO_AGENT_BOOTSTRAP_TOKEN || token("moflux-demo-bootstrap"),
@@ -129,6 +153,10 @@ export function ensureDemoEnv(file, { quiet = false } = {}) {
     `MOFLUX_LATCHFLO_IMAGE=${values.MOFLUX_LATCHFLO_IMAGE}`,
     `MOFLUX_OLLAMA_IMAGE=${values.MOFLUX_OLLAMA_IMAGE}`,
     `MOFLUX_LOCAL_MODEL=${values.MOFLUX_LOCAL_MODEL}`,
+    `MOFLUX_VLLM_IMAGE=${values.MOFLUX_VLLM_IMAGE}`,
+    `MOFLUX_VLLM_MODEL=${values.MOFLUX_VLLM_MODEL}`,
+    `MOFLUX_VLLM_SERVED_MODEL=${values.MOFLUX_VLLM_SERVED_MODEL}`,
+    `MOFLUX_VLLM_MODEL_REVISION=${values.MOFLUX_VLLM_MODEL_REVISION}`,
     `LATCHFLO_ADMIN_TOKEN=${values.LATCHFLO_ADMIN_TOKEN}`,
     `LATCHFLO_AGENT_BOOTSTRAP_TOKEN=${values.LATCHFLO_AGENT_BOOTSTRAP_TOKEN}`,
     `TYR_ROUTING_SECRET=${values.TYR_ROUTING_SECRET}`,

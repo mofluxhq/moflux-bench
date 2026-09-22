@@ -75,7 +75,7 @@ async function runScenario({ localTimeout }) {
               detail: { limitRevision: 7 },
             },
           }
-        : { error: { type: "gateway_timeout" } }));
+        : { error: { type: "gateway_timeout", message: "Bearer test-secret " + "x".repeat(3000) } }));
     });
   });
   server.on("connection", (socket) => {
@@ -155,6 +155,18 @@ assert.equal(unmarked.attempts, 1);
 assert.equal(unmarked.localReject, 0);
 assert.equal(unmarked.serverError, 1);
 assert.equal(unmarked.transportError, 0);
+assert.equal(unmarked.serverErrorSnapshots.length, 1);
+const failure = unmarked.serverErrorSnapshots[0];
+assert.equal(failure.requestId, "interactive-1");
+assert.equal(failure.status, 504);
+assert.equal(failure.headers["content-type"], "application/json");
+assert.ok(failure.responseAtMs >= failure.attemptStartedAtMs);
+assert.ok(Number.isFinite(Date.parse(failure.observedAt)));
+assert.match(failure.body, /gateway_timeout/);
+assert.ok(!failure.body.includes("test-secret"));
+assert.ok(failure.body.length <= 2048);
+assert.equal(failure.bodyTruncated, true);
+assert.deepEqual(interactive.serverErrorSnapshots, []);
 assert.equal(unmarked.localRejectSnapshots.length, 0);
 assert.equal(armHealth(unattributed).ok, false, "unmarked 504 must still trip arm-health");
 

@@ -20,6 +20,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { buildTrace, traceVersion, validateTrace } from "../load/trace-lib.mjs";
+import { zeroCapacityEnvelope } from "../load/rejection-lib.mjs";
 import {
   IDENTITY_REFRESH_SKEW_SECONDS,
   IDENTITY_TOKEN_TTL_SECONDS,
@@ -1082,6 +1083,12 @@ assert.equal(digest.samples, 4);
 assert.ok(digest.retained >= 2 && digest.retained <= digest.samples);
 assert.equal(digest.series[0].atMs, 50_000);
 assert.equal(digest.series[digest.series.length - 1].atMs, 60_750);
+assert.equal(digest.series[0].poolTokenBudget, 4_000);
+assert.equal(
+  digest.series[0].classes.interactive.protectedInFlightTokens,
+  lentFloor.protectedInFlightTokens,
+);
+assert.equal(digest.series[0].classes.interactive.inFlightTokens, 0);
 assert.equal(digest.series[0].classes.interactive.demandActive, false);
 assert.equal(digest.series[digest.series.length - 1].classes.interactive.demandActive, true);
 assert.equal(digest.series[digest.series.length - 1].classes.batch.encroachment, 3);
@@ -1487,6 +1494,148 @@ assert.equal(summarized.batch.windows.borrow.completed, 5);
 assert.equal(summarized.batch.windows.contention.completed, 2);
 assert.equal(summarized.interactive.drainTimeoutCensored, 0);
 assert.equal(summarized.interactive.drainTimeoutCensoredContention, 0);
+
+const rejectionDetailFixture = loadgenFixture({
+  ttftContention: 400,
+  goodputContention: 0.3,
+  borrowCompleted: 5,
+});
+rejectionDetailFixture.classes.batch.localRejectDetails = [{
+  pool: "local-moflux",
+  reason: "budget_limit",
+  count: 2,
+  requestedMin: 8_001,
+  requestedMax: 8_192,
+  availableMin: 0,
+  availableMax: 4_096,
+  budgetMin: 65_536,
+  budgetMax: 65_536,
+}];
+rejectionDetailFixture.classes.batch.localRejectSnapshots = [{
+  requestId: "batch-17",
+  requestClass: "batch",
+  attempt: 1,
+  rejectedAtMs: 18_432.1,
+  reason: "budget_limit",
+  detail: {
+    constraint: "global",
+    inFlight: 3,
+    maxConcurrent: 4,
+    pending: 0,
+    maxQueue: 0,
+    tokenBudget: {
+      budget: 65_536,
+      inFlightTokens: 61_440,
+      effectiveBudget: 65_536,
+      available: 4_096,
+      requested: 8_192,
+    },
+  },
+}];
+const rejectionDetailSummary = summarizeArmClasses(rejectionDetailFixture).batch;
+assert.equal(rejectionDetailSummary.grantUnavailableRejections, 0);
+assert.deepEqual(rejectionDetailSummary.grantUnavailableSnapshots, []);
+assert.deepEqual(rejectionDetailSummary.rejectionDetails, [{
+  pool: "local-moflux",
+  reason: "budget_limit",
+  grantUnavailable: false,
+  count: 2,
+  requestedMin: 8_001,
+  requestedMax: 8_192,
+  availableMin: 0,
+  availableMax: 4_096,
+  budgetMin: 65_536,
+  budgetMax: 65_536,
+}]);
+assert.deepEqual(rejectionDetailSummary.budgetRejectionSnapshots, [{
+  requestId: "batch-17",
+  requestClass: "batch",
+  attempt: 1,
+  rejectedAtMs: 18_432.1,
+  constraint: "global",
+  globalInFlight: 3,
+  globalMaxConcurrent: 4,
+  pending: 0,
+  maxQueue: 0,
+  tokenBudget: {
+    budget: 65_536,
+    inFlightTokens: 61_440,
+    effectiveBudget: 65_536,
+    available: 4_096,
+    requested: 8_192,
+  },
+}]);
+
+// Tyr's fail-closed state between Latchflo grants, as recorded by the
+// 20260922T210601Z vLLM Metal seed. Tyr reports budget_limit, but the physical
+// envelope is zero, so it is a grant gap rather than a token refusal. The
+// summary classifies from Tyr's detail, so pre-flag results agree.
+const grantGapFixture = loadgenFixture({
+  ttftContention: 400,
+  goodputContention: 0.3,
+  borrowCompleted: 5,
+});
+grantGapFixture.classes.batch.localRejectSnapshots = [
+  {
+    requestId: "batch-1",
+    requestClass: "batch",
+    attempt: 1,
+    rejectedAtMs: 27_507.2,
+    reason: "budget_limit",
+    admissionRevision: 130,
+    grant: { id: "ff3281a0-7303-4468-ae8a-4554f01dc375", controllerEpoch: 1 },
+    detail: {
+      limitRevision: 130,
+      constraint: "global",
+      inFlight: 1,
+      pending: 0,
+      maxConcurrent: 0,
+      maxQueue: 0,
+      tokenBudget: { budget: 0, inFlightTokens: 132, effectiveBudget: 0, available: 0, requested: 256 },
+    },
+  },
+  {
+    requestId: "batch-9",
+    requestClass: "batch",
+    attempt: 1,
+    rejectedAtMs: 30_101.5,
+    reason: "concurrency_limit",
+    admissionRevision: 133,
+    detail: {
+      limitRevision: 133,
+      constraint: "admission_class_protection",
+      inFlight: 1,
+      pending: 0,
+      maxConcurrent: 4,
+      maxQueue: 0,
+      tokenBudget: { budget: 65_536, inFlightTokens: 256, effectiveBudget: 65_536, available: 65_280, requested: 256 },
+    },
+  },
+];
+const grantGapSummary = summarizeArmClasses(grantGapFixture).batch;
+assert.equal(grantGapSummary.grantUnavailableRejections, 1);
+assert.deepEqual(grantGapSummary.grantUnavailableSnapshots, [{
+  requestId: "batch-1",
+  requestClass: "batch",
+  attempt: 1,
+  rejectedAtMs: 27_507.2,
+  reason: "budget_limit",
+  admissionRevision: 130,
+  grantId: "ff3281a0-7303-4468-ae8a-4554f01dc375",
+}]);
+assert.deepEqual(
+  grantGapSummary.budgetRejectionSnapshots,
+  [],
+  "a zero-envelope refusal is not token-pressure evidence",
+);
+assert.equal(zeroCapacityEnvelope({ maxConcurrent: 0, maxQueue: 0 }), true, "concurrency-only pools");
+assert.equal(zeroCapacityEnvelope({ maxConcurrent: 0, maxQueue: 2 }), false);
+assert.equal(
+  zeroCapacityEnvelope({ maxConcurrent: 0, maxQueue: 0, tokenBudget: { budget: 1 } }),
+  false,
+);
+assert.equal(zeroCapacityEnvelope({ maxQueue: 0, tokenBudget: { budget: 0 } }), false, "absent concurrency is not zero");
+assert.equal(zeroCapacityEnvelope(null), false);
 
 const censoredDirectFixture = loadgenFixture({
   ttftContention: 400,

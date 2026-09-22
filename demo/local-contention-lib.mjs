@@ -43,6 +43,7 @@ import {
   restorationEnforceability,
   validateUnlentSlice,
 } from "./restoration-contract-lib.mjs";
+import { zeroCapacityEnvelope } from "../load/rejection-lib.mjs";
 
 /**
  * Experiment profile selected before this module is loaded.
@@ -688,7 +689,7 @@ function phaseArrivalMs(sample) {
   return Number.isFinite(legacy) ? legacy : null;
 }
 
-function contentionSloGoodput(samples, loadgenSummary) {
+function contentionSloGoodput(samples, loadgenSummary, thresholds = HYPOTHESIS_THRESHOLDS) {
   const config = loadgenSummary?.config ?? {};
   const fromMs = Number(config.interactiveResumeStartMs ?? CONTENTION_WORKLOAD.interactiveResumeStartMs);
   const durationMs = Number(config.interactiveResumeDurationMs ?? CONTENTION_WORKLOAD.interactiveResumeDurationMs);
@@ -700,8 +701,8 @@ function contentionSloGoodput(samples, loadgenSummary) {
       arrivalMs !== null &&
       arrivalMs >= fromMs &&
       arrivalMs < toMs &&
-      Number(sample?.ttftMs) <= HYPOTHESIS_THRESHOLDS.interactiveSloTtftMaxMs &&
-      Number(sample?.latencyMs) <= HYPOTHESIS_THRESHOLDS.interactiveSloLatencyMaxMs
+      Number(sample?.ttftMs) <= thresholds.interactiveSloTtftMaxMs &&
+      Number(sample?.latencyMs) <= thresholds.interactiveSloLatencyMaxMs
     );
   }).length;
   return +(useful / (durationMs / 1000)).toFixed(4);
@@ -713,12 +714,64 @@ function contentionSloGoodput(samples, loadgenSummary) {
  * Every field is either something the client observed or something Tyr told it
  * in a response header. Nothing is inferred about the server's internal state.
  */
-export function summarizeArmClasses(loadgenSummary) {
+export function summarizeArmClasses(loadgenSummary, thresholds = HYPOTHESIS_THRESHOLDS) {
   const classes = loadgenSummary?.classes ?? {};
   const out = {};
   for (const workload of ["interactive", "batch"]) {
     const values = classes[workload] ?? {};
     const windows = values.windows ?? {};
+    const rejectionDetails = (Array.isArray(values.localRejectDetails)
+      ? values.localRejectDetails
+      : []
+    ).map((detail) => Object.freeze({
+      pool: detail?.pool ?? null,
+      reason: detail?.reason ?? null,
+      grantUnavailable: detail?.grantUnavailable === true,
+      count: count(detail?.count),
+      requestedMin: observed(detail?.requestedMin),
+      requestedMax: observed(detail?.requestedMax),
+      availableMin: observed(detail?.availableMin),
+      availableMax: observed(detail?.availableMax),
+      budgetMin: observed(detail?.budgetMin),
+      budgetMax: observed(detail?.budgetMax),
+    }));
+    const rejectSnapshots = Array.isArray(values.localRejectSnapshots)
+      ? values.localRejectSnapshots
+      : [];
+    // Classified from Tyr's own detail rather than the load generator's flag,
+    // so summaries of results recorded before the flag existed agree.
+    const grantUnavailableSnapshots = rejectSnapshots
+      .filter((snapshot) => zeroCapacityEnvelope(snapshot?.detail))
+      .map((snapshot) => Object.freeze({
+        requestId: snapshot?.requestId ?? null,
+        requestClass: snapshot?.requestClass ?? null,
+        attempt: observed(snapshot?.attempt),
+        rejectedAtMs: observed(snapshot?.rejectedAtMs),
+        reason: snapshot?.reason ?? null,
+        admissionRevision: observed(snapshot?.admissionRevision ?? snapshot?.detail?.limitRevision),
+        grantId: snapshot?.grant?.id ?? null,
+      }));
+    const budgetRejectionSnapshots = rejectSnapshots
+      .filter((snapshot) =>
+        snapshot?.reason === "budget_limit" && !zeroCapacityEnvelope(snapshot?.detail))
+      .map((snapshot) => Object.freeze({
+        requestId: snapshot?.requestId ?? null,
+        requestClass: snapshot?.requestClass ?? null,
+        attempt: observed(snapshot?.attempt),
+        rejectedAtMs: observed(snapshot?.rejectedAtMs),
+        constraint: snapshot?.detail?.constraint ?? null,
+        globalInFlight: observed(snapshot?.detail?.inFlight),
+        globalMaxConcurrent: observed(snapshot?.detail?.maxConcurrent),
+        pending: observed(snapshot?.detail?.pending),
+        maxQueue: observed(snapshot?.detail?.maxQueue),
+        tokenBudget: Object.freeze({
+          budget: observed(snapshot?.detail?.tokenBudget?.budget),
+          inFlightTokens: observed(snapshot?.detail?.tokenBudget?.inFlightTokens),
+          effectiveBudget: observed(snapshot?.detail?.tokenBudget?.effectiveBudget),
+          available: observed(snapshot?.detail?.tokenBudget?.available),
+          requested: observed(snapshot?.detail?.tokenBudget?.requested),
+        }),
+      }));
     const logical = count(values.logical);
     const success = count(values.success);
     const samples = Array.isArray(values.phaseSamples) ? values.phaseSamples : [];
@@ -751,7 +804,7 @@ export function summarizeArmClasses(loadgenSummary) {
     );
     const spanSeconds = durationMs / 1000;
     const interactiveSloGoodput =
-      workload === "interactive" ? contentionSloGoodput(samples, loadgenSummary) : null;
+      workload === "interactive" ? contentionSloGoodput(samples, loadgenSummary, thresholds) : null;
     out[workload] = Object.freeze({
       logical,
       attempts: count(values.attempts),
@@ -770,15 +823,28 @@ export function summarizeArmClasses(loadgenSummary) {
       }),
       completionTokens: count(values.outputTokens),
       promptTokens: count(values.inputTokens),
+      promptTokenReports: count(values.inputTokensReported),
       totalTokens: count(values.outputTokens) + count(values.inputTokens),
       /** Admission refusals: Tyr said no before any upstream work was spent. */
       rejectedAdmissions: count(values.localReject),
       rejectionReasons: Object.freeze({ ...(values.localRejectReasons ?? {}) }),
       rejectionConstraints: Object.freeze({ ...(values.localRejectConstraints ?? {}) }),
+      /** Compact admission-time token ranges; full snapshots stay in the arm file. */
+      rejectionDetails: Object.freeze(rejectionDetails),
+      /** Exact binding state for token refusals, without unrelated rejection payloads. */
+      budgetRejectionSnapshots: Object.freeze(budgetRejectionSnapshots),
+      /**
+       * Refusals made with a zero capacity envelope (no live grant), under any
+       * reported reason. A control-plane gap, not token pressure or contention.
+       */
+      grantUnavailableRejections: grantUnavailableSnapshots.length,
+      grantUnavailableSnapshots: Object.freeze(grantUnavailableSnapshots),
       /** Zero by construction: no arm here configures a borrowed-slot deadline. */
       deadlineAbandonments: count(values.borrowedDeadlineAbandoned),
       tornStreams: count(values.transportError),
       serverErrors: count(values.serverError),
+      requestErrors: count(values.requestError),
+      requestErrorReasons: Object.freeze({ ...(values.requestErrorReasons ?? {}) }),
       upstreamRejects: count(values.upstreamReject),
       exhausted: count(values.exhausted),
       /**
@@ -1517,8 +1583,11 @@ function ceilingOverAllocation(violations, offsetMs, admissionClass, applied, no
  *     for the moment the protected class could actually use its floor. Quoting
  *     only the first would price restoration at zero.
  */
-export function summarizeLendingEpisodes(samples, { restorationSloMs } = {}) {
-  const nominalGrant = nominalClassGrant();
+export function summarizeLendingEpisodes(
+  samples,
+  { restorationSloMs, nominalGrant: configuredNominalGrant } = {},
+) {
+  const nominalGrant = configuredNominalGrant ?? nominalClassGrant();
   const nominal = nominalGrant.interactive;
   const slo = Number.isFinite(restorationSloMs)
     ? restorationSloMs
@@ -1757,8 +1826,9 @@ export function summarizeDemandTransitions({
   workload = CONTENTION_WORKLOAD,
   startedAtEpochMs = null,
   admissionClass = "interactive",
+  nominalGrant: configuredNominalGrant = null,
 } = {}) {
-  const nominalGrant = nominalClassGrant();
+  const nominalGrant = configuredNominalGrant ?? nominalClassGrant();
   const nominal = nominalGrant[admissionClass] ?? nominalGrant.interactive;
   const resumeStartMs = Number(
     loadgenSummary?.config?.interactiveResumeStartMs ?? workload.interactiveResumeStartMs,
@@ -2004,12 +2074,16 @@ export function summarizeDemandTransitions({
  * which its owner is back. At 250 ms that is eighty samples per arm per seed,
  * most of them identical, so only samples at which something tracked changed
  * are kept — plus the first and last, so the boundaries of the interval are
- * never inferred from a gap.
+ * never inferred from a gap. Token grants and occupancy are retained alongside
+ * concurrency so a `budget_limit` result remains diagnosable from summary.json.
  */
-export function criticalWindowDigest(samples, { fromMs, toMs } = {}) {
+export function criticalWindowDigest(
+  samples,
+  { fromMs, toMs, nominalGrant: configuredNominalGrant } = {},
+) {
   const from = Number.isFinite(fromMs) ? fromMs : 50_000;
   const to = Number.isFinite(toMs) ? toMs : 70_000;
-  const nominalGrant = nominalClassGrant();
+  const nominalGrant = configuredNominalGrant ?? nominalClassGrant();
   const rows = [...samples]
     .sort((a, b) => Number(a.offsetMs ?? 0) - Number(b.offsetMs ?? 0))
     .filter((sample) => {
@@ -2020,6 +2094,8 @@ export function criticalWindowDigest(samples, { fromMs, toMs } = {}) {
       Object.freeze({
         atMs: Number(sample.offsetMs ?? 0),
         poolMaxConcurrent: Number(sample?.pool?.maxConcurrent ?? 0),
+        poolTokenBudget: Number(sample?.pool?.tokenBudget ?? 0),
+        poolInFlight: Number(sample?.pool?.inFlight ?? 0),
         classes: Object.freeze(
           Object.fromEntries(
             Object.keys(nominalGrant).map((admissionClass) => {
@@ -2029,8 +2105,15 @@ export function criticalWindowDigest(samples, { fromMs, toMs } = {}) {
                 admissionClass,
                 Object.freeze({
                   protectedConcurrent: Number(observed?.limits?.protectedConcurrent ?? 0),
+                  maxConcurrent: Number(observed?.limits?.maxConcurrent ?? 0),
+                  protectedInFlightTokens: Number(
+                    observed?.limits?.protectedInFlightTokens ?? 0,
+                  ),
+                  maxInFlightTokens: Number(observed?.limits?.maxInFlightTokens ?? 0),
                   inFlight: Number(observed?.inFlight ?? 0),
+                  inFlightTokens: Number(observed?.inFlightTokens ?? 0),
                   borrowedConcurrent: Number(observed?.borrowedConcurrent ?? 0),
+                  borrowedInFlightTokens: Number(observed?.borrowedInFlightTokens ?? 0),
                   encroachment: classEncroachment(sample, admissionClass, nominalGrant),
                   admitted: Number(observed?.admitted ?? 0),
                   rejected: Number(observed?.rejected ?? 0),
@@ -2038,6 +2121,7 @@ export function criticalWindowDigest(samples, { fromMs, toMs } = {}) {
                   demandActive: activity.active,
                   demandEvidence: activity.reason,
                   releasedConcurrent: Number(observed?.releasedConcurrent ?? 0),
+                  releasedTokens: Number(observed?.releasedTokens ?? 0),
                   restorationPending: observed?.restorationPending === true,
                 }),
               ];

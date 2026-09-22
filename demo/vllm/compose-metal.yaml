@@ -1,0 +1,83 @@
+# Apple-Silicon companion stack. vLLM Metal runs natively on the macOS host;
+# Docker contains only Latchflo and the two Tyr admission arms. The runner
+# starts a fresh, bearer-authenticated host vLLM process for every arm.
+
+x-tyr-arm: &tyr-arm
+  image: ${MOFLUX_TYR_IMAGE:?Set MOFLUX_TYR_IMAGE}
+  restart: "no"
+  user: "${MOFLUX_TYR_USER:-0:0}"
+  environment:
+    TYR_CONFIG_FILE: /etc/tyr/config.yaml
+    LATCHFLO_AGENT_BOOTSTRAP_TOKEN: ${LATCHFLO_AGENT_BOOTSTRAP_TOKEN:?Set LATCHFLO_AGENT_BOOTSTRAP_TOKEN}
+    NODE_EXTRA_CA_CERTS: /etc/tyr/benchmark-ca.pem
+  depends_on:
+    latchflo:
+      condition: service_healthy
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  healthcheck:
+    test:
+      - CMD
+      - node
+      - -e
+      - >-
+        fetch('http://127.0.0.1:8787/healthz')
+        .then(response => { if (!response.ok) process.exit(1); })
+        .catch(() => process.exit(1))
+    interval: 1s
+    timeout: 2s
+    start_period: 2s
+    retries: 60
+
+services:
+  latchflo:
+    image: ${MOFLUX_LATCHFLO_IMAGE:?Set MOFLUX_LATCHFLO_IMAGE}
+    restart: "no"
+    environment:
+      LATCHFLO_HOST: 0.0.0.0
+      LATCHFLO_PORT: "8080"
+      LATCHFLO_DATABASE_PATH: /app/data/latchflo-control-plane.db
+      LATCHFLO_ADMIN_TOKEN: ${LATCHFLO_ADMIN_TOKEN:?Set LATCHFLO_ADMIN_TOKEN}
+      LATCHFLO_AGENT_BOOTSTRAP_TOKEN: ${LATCHFLO_AGENT_BOOTSTRAP_TOKEN:?Set LATCHFLO_AGENT_BOOTSTRAP_TOKEN}
+      LATCHFLO_HEARTBEAT_INTERVAL_MS: "500"
+      LATCHFLO_POLL_INTERVAL_MS: "250"
+      LATCHFLO_AGENT_TIMEOUT_MS: "8000"
+      LATCHFLO_RECONCILE_INTERVAL_MS: "250"
+    ports:
+      - "127.0.0.1:18086:8080"
+    volumes:
+      - vllm-metal-latchflo-data:/app/data
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - >-
+          fetch('http://127.0.0.1:8080/readyz')
+          .then(response => { if (!response.ok) process.exit(1); })
+          .catch(() => process.exit(1))
+      interval: 1s
+      timeout: 2s
+      start_period: 3s
+      retries: 60
+
+  tyr-static:
+    <<: *tyr-arm
+    ports: ["127.0.0.1:18125:8787"]
+    volumes:
+      - ./tyr-static-metal.yaml:/etc/tyr/config.yaml:ro
+      - ./runtime/ca.pem:/etc/tyr/benchmark-ca.pem:ro
+      - vllm-metal-tyr-static-data:/var/lib/tyr
+
+  tyr-moflux:
+    <<: *tyr-arm
+    ports: ["127.0.0.1:18126:8787"]
+    volumes:
+      - ./tyr-moflux-metal.yaml:/etc/tyr/config.yaml:ro
+      - ./runtime/ca.pem:/etc/tyr/benchmark-ca.pem:ro
+      - vllm-metal-tyr-moflux-data:/var/lib/tyr
+
+volumes:
+  vllm-metal-latchflo-data:
+  vllm-metal-tyr-static-data:
+  vllm-metal-tyr-moflux-data:
