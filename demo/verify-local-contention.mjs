@@ -20,7 +20,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { buildTrace, traceVersion, validateTrace } from "../load/trace-lib.mjs";
-import { zeroCapacityEnvelope } from "../load/rejection-lib.mjs";
+import { summarizeServerErrorCauses, zeroCapacityEnvelope } from "../load/rejection-lib.mjs";
 import {
   IDENTITY_REFRESH_SKEW_SECONDS,
   IDENTITY_TOKEN_TTL_SECONDS,
@@ -1636,6 +1636,19 @@ assert.equal(
 );
 assert.equal(zeroCapacityEnvelope({ maxQueue: 0, tokenBudget: { budget: 0 } }), false, "absent concurrency is not zero");
 assert.equal(zeroCapacityEnvelope(null), false);
+
+// 5xx causes: Tyr 0.30.0 bodies (recorded in 20260922T232052Z) carry only the
+// type; Tyr 0.31.0 adds the transport code; anything unparseable keeps status.
+assert.deepEqual(
+  summarizeServerErrorCauses([
+    { status: 502, body: '{"error":{"type":"upstream_error","message":"fetch failed"}}' },
+    { status: 502, body: '{"error":{"type":"upstream_error","message":"fetch failed","cause":{"name":"SocketError","code":"UND_ERR_SOCKET"}}}' },
+    { status: 502, body: '{"error":{"type":"upstream_error","message":"fetch failed","cause":{"name":"SocketError","code":"UND_ERR_SOCKET"}}}' },
+    { status: 503, body: "<html>bad gateway</html>" },
+  ]),
+  { upstream_error: 1, "upstream_error:UND_ERR_SOCKET": 2, http_503: 1 },
+);
+assert.deepEqual(summarizeServerErrorCauses(undefined), {});
 
 const censoredDirectFixture = loadgenFixture({
   ttftContention: 400,

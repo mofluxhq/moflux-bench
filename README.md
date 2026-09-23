@@ -706,8 +706,11 @@ of this kind. The load generator and summaries report it as `grantUnavailable`,
 outside the token and concurrency counts, and the `managedGrantContinuity` gate
 makes it invalidate the seed. This experiment pins Latchflo 0.17.1, which
 renews live leases before they expire and commits idle-floor lending without
-waiting for expiry; the other experiments keep their recorded Latchflo 0.16.0
-runtime.
+waiting for expiry. It also pins Tyr 0.31.0, whose 502 responses name the
+transport cause. The other experiments keep their recorded Latchflo 0.16.0 and
+Tyr 0.30.0 runtime. Metal arms also report host memory pressure, swap and
+thermal state as `hostPressure`. That is diagnostic evidence for runs that
+struggle, not a validity gate.
 
 CUDA fixed-output requests send `ignore_eos` and `min_tokens=max_tokens`.
 vLLM Metal 0.29.0 rejects `min_tokens`, so the Metal path intentionally sends

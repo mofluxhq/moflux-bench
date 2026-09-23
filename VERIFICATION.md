@@ -1,5 +1,23 @@
 # MoFlux Bench verification
 
+## 0.38.0 upstream-failure and host-pressure diagnostics
+
+`npm run verify:vllm` checks the host-pressure parsers against `vm_stat`,
+`sysctl` and `pmset -g therm` output recorded on the Apple M1 development host:
+- page size, gauges and cumulative counters;
+- pressure-level mapping;
+- swap usage;
+- the quiet and warned thermal forms.
+
+The per-arm summary must report 6,400 swapped-out 16 KiB pages as 100 MiB and
+count pressure levels and thermal-warning samples. It must keep sampling errors
+without failing. The same verifier requires `noEngineOrTransportErrors` evidence
+to carry `serverErrorCauses`. `demo/verify-local-contention.mjs` checks the cause
+key for a Tyr 0.30.0 body, a Tyr 0.31.0 body with `cause.code`, and a
+non-JSON 503. `npm run verify:publication` requires the Tyr 0.31.0 and
+Latchflo 0.17.1 pins. The parsers were also run against this host's live
+commands.
+
 ## 0.37.1 Latchflo pin
 
 `npm run verify:publication` requires `VLLM_LATCHFLO_VERSION = "0.17.1"`.

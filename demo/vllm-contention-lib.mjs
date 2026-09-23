@@ -792,6 +792,127 @@ export function summarizeProcessTelemetry(samples = [], errors = []) {
   });
 }
 
+// ── macOS host pressure (Metal) ──────────────────────────────────────
+//
+// vLLM Metal shares unified memory with the Docker VM that runs Tyr and
+// Latchflo. Process CPU/RSS cannot show memory pressure, swap, or thermal
+// throttling, so the runner samples them from commands that need no root.
+
+const MEMORY_PRESSURE_LEVELS = Object.freeze({ 1: "normal", 2: "warn", 4: "critical" });
+const VM_STAT_FIELDS = Object.freeze({
+  "Pages free": "freePages",
+  "Pages active": "activePages",
+  "Pages inactive": "inactivePages",
+  "Pages speculative": "speculativePages",
+  "Pages wired down": "wiredPages",
+  "Pages occupied by compressor": "compressorPages",
+  "Pageins": "pageins",
+  "Pageouts": "pageouts",
+  "Swapins": "swapins",
+  "Swapouts": "swapouts",
+  "Compressions": "compressions",
+  "Decompressions": "decompressions",
+});
+
+/** Parses `vm_stat`. Counters are cumulative since boot; gauges are current. */
+export function parseVmStat(text) {
+  const pageSize = /page size of (\d+) bytes/u.exec(String(text))?.[1];
+  if (pageSize === undefined) throw new Error("vm_stat output has no page size");
+  const out = { pageSizeBytes: Number(pageSize) };
+  for (const line of String(text).split(/\r?\n/u)) {
+    const match = /^"?([^":]+)"?:\s+(\d+)\.?\s*$/u.exec(line.trim());
+    const key = match ? VM_STAT_FIELDS[match[1]] : undefined;
+    if (key !== undefined) out[key] = Number(match[2]);
+  }
+  for (const key of Object.values(VM_STAT_FIELDS)) {
+    if (!Number.isFinite(out[key])) throw new Error(`vm_stat output has no ${key}`);
+  }
+  return Object.freeze(out);
+}
+
+/** Parses `sysctl kern.memorystatus_vm_pressure_level vm.swapusage`. */
+export function parseMemorySysctl(text) {
+  const levelRaw = /kern\.memorystatus_vm_pressure_level:\s*(\d+)/u.exec(String(text))?.[1];
+  const swap = /vm\.swapusage:\s*total = ([\d.]+)M\s+used = ([\d.]+)M\s+free = ([\d.]+)M/u
+    .exec(String(text));
+  if (levelRaw === undefined || swap === null) {
+    throw new Error("sysctl output lacks memory pressure level or swap usage");
+  }
+  const level = Number(levelRaw);
+  return Object.freeze({
+    pressureLevel: level,
+    pressure: MEMORY_PRESSURE_LEVELS[level] ?? "unknown",
+    swapTotalMiB: Number(swap[1]),
+    swapUsedMiB: Number(swap[2]),
+    swapFreeMiB: Number(swap[3]),
+  });
+}
+
+/**
+ * Parses `pmset -g therm`. Apple Silicon prints only "Note: No ... has been
+ * recorded" lines when nothing is limited; any other line is a recorded
+ * thermal, performance, or CPU power condition and is kept verbatim (bounded).
+ */
+export function parsePmsetTherm(text) {
+  const lines = String(text).split(/\r?\n/u).map((line) => line.trim()).filter(Boolean);
+  const recorded = lines.filter((line) => !/^Note: No .* has been recorded$/u.test(line));
+  return Object.freeze({
+    thermalWarning: !lines.some((line) => /No thermal warning level has been recorded/u.test(line)),
+    performanceWarning: !lines.some((line) => /No performance warning level has been recorded/u.test(line)),
+    recordedLines: Object.freeze(recorded.slice(0, 8).map((line) => line.slice(0, 160))),
+  });
+}
+
+export function summarizeHostPressure(samples = [], errors = []) {
+  const valid = samples.filter((sample) => sample?.vm && sample?.memory && sample?.therm);
+  const first = valid[0];
+  const last = valid.at(-1);
+  const mib = (pages, pageSizeBytes) => round((pages * pageSizeBytes) / 1_048_576, 1);
+  const pressureCounts = { normal: 0, warn: 0, critical: 0, unknown: 0 };
+  for (const sample of valid) pressureCounts[sample.memory.pressure] += 1;
+  const swapUsed = valid.map((sample) => sample.memory.swapUsedMiB);
+  const freeMiB = valid.map((sample) => mib(sample.vm.freePages, sample.vm.pageSizeBytes));
+  const compressorMiB = valid.map((sample) =>
+    mib(sample.vm.compressorPages, sample.vm.pageSizeBytes));
+  const delta = (key) =>
+    first === undefined ? null : last.vm[key] - first.vm[key];
+  const worst = ["critical", "warn", "normal"].find((level) => pressureCounts[level] > 0) ?? null;
+  return Object.freeze({
+    sampleCount: valid.length,
+    errors: [...errors],
+    pressureSamples: Object.freeze(pressureCounts),
+    worstPressure: worst,
+    swapUsedMiB: valid.length === 0
+      ? null
+      : Object.freeze({
+          start: swapUsed[0],
+          end: swapUsed.at(-1),
+          max: Math.max(...swapUsed),
+          delta: round(swapUsed.at(-1) - swapUsed[0], 1),
+        }),
+    freeMiB: valid.length === 0
+      ? null
+      : Object.freeze({ min: Math.min(...freeMiB), p50: round(percentile(freeMiB, 0.5), 1) }),
+    compressorMiBMax: valid.length === 0 ? null : Math.max(...compressorMiB),
+    pagesDuringArm: first === undefined
+      ? null
+      : Object.freeze({
+          swapouts: delta("swapouts"),
+          swapins: delta("swapins"),
+          pageouts: delta("pageouts"),
+          pageins: delta("pageins"),
+          compressions: delta("compressions"),
+          decompressions: delta("decompressions"),
+        }),
+    swapoutMiBDuringArm: first === undefined ? null : mib(delta("swapouts"), first.vm.pageSizeBytes),
+    thermalWarningSamples: valid.filter((sample) => sample.therm.thermalWarning).length,
+    performanceWarningSamples: valid.filter((sample) => sample.therm.performanceWarning).length,
+    thermalRecordedLines: Object.freeze([
+      ...new Set(valid.flatMap((sample) => sample.therm.recordedLines)),
+    ].slice(0, 8)),
+  });
+}
+
 export function summarizeManagedRecovery(
   samples = [],
   workload = VLLM_WORKLOAD,
@@ -1199,6 +1320,10 @@ export function vllmSeedProof({
         Number(arms[id]?.classes?.[cls]?.tornStreams ?? 0) === 0)),
     Object.fromEntries(VLLM_ARM_IDS.map((id) => [id, {
       serverErrors: ["interactive", "batch"].reduce((sum, cls) => sum + Number(arms[id]?.classes?.[cls]?.serverErrors ?? 0), 0),
+      serverErrorCauses: Object.fromEntries(["interactive", "batch"].map((cls) => [
+        cls,
+        arms[id]?.classes?.[cls]?.serverErrorCauses ?? {},
+      ])),
       requestErrors: ["interactive", "batch"].reduce((sum, cls) => sum + Number(arms[id]?.classes?.[cls]?.requestErrors ?? 0), 0),
       tornStreams: ["interactive", "batch"].reduce((sum, cls) => sum + Number(arms[id]?.classes?.[cls]?.tornStreams ?? 0), 0),
     }])),

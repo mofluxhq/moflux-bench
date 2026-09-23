@@ -25,6 +25,10 @@ import {
   snapshotVllmMetrics,
   summarizeGpuTelemetry,
   summarizeProcessTelemetry,
+  summarizeHostPressure,
+  parseVmStat,
+  parseMemorySysctl,
+  parsePmsetTherm,
   summarizeManagedRecovery,
   summarizeVllmTelemetry,
   vllmApiKeyArgument,
@@ -235,6 +239,65 @@ const hostProcess = summarizeProcessTelemetry([
 assert.equal(hostProcess.sampleCount, 2);
 assert.equal(hostProcess.rssMiB.max, 400);
 
+// Host pressure parsers, from real `vm_stat`, `sysctl`, and `pmset -g therm`
+// output on the Apple M1 (16 GiB) development host.
+const vmStatText = (swapouts, free, compressor) => `Mach Virtual Memory Statistics: (page size of 16384 bytes)
+Pages free:                                     ${free}.
+Pages active:                                 349011.
+Pages inactive:                               346811.
+Pages speculative:                              1466.
+Pages throttled:                                   0.
+Pages wired down:                             167690.
+Pages purgeable:                                7722.
+"Translation faults":                     7248601833.
+Pages occupied by compressor:                 ${compressor}.
+Decompressions:                           1041148480.
+Compressions:                             1197560900.
+Pageins:                                   249608879.
+Pageouts:                                    3164157.
+Swapins:                                    42055680.
+Swapouts:                                   ${swapouts}.
+`;
+const vmStat = parseVmStat(vmStatText(46304874, 3588, 131419));
+assert.equal(vmStat.pageSizeBytes, 16_384);
+assert.equal(vmStat.freePages, 3588);
+assert.equal(vmStat.compressorPages, 131_419);
+assert.equal(vmStat.swapouts, 46_304_874);
+assert.throws(() => parseVmStat("Pages free: 1."), /page size/u);
+const memory = parseMemorySysctl(
+  "kern.memorystatus_vm_pressure_level: 2\nvm.swapusage: total = 7168.00M  used = 5674.56M  free = 1493.44M  (encrypted)\n",
+);
+assert.deepEqual(memory, {
+  pressureLevel: 2,
+  pressure: "warn",
+  swapTotalMiB: 7168,
+  swapUsedMiB: 5674.56,
+  swapFreeMiB: 1493.44,
+});
+const quietTherm = parsePmsetTherm(
+  "Note: No thermal warning level has been recorded\nNote: No performance warning level has been recorded\nNote: No CPU power status has been recorded\n",
+);
+assert.deepEqual(quietTherm, { thermalWarning: false, performanceWarning: false, recordedLines: [] });
+const hotTherm = parsePmsetTherm(
+  "Thermal warning level: 1\nNote: No performance warning level has been recorded\n",
+);
+assert.equal(hotTherm.thermalWarning, true);
+assert.deepEqual(hotTherm.recordedLines, ["Thermal warning level: 1"]);
+const hostPressure = summarizeHostPressure([
+  { atMs: 0, vm: vmStat, memory: { ...memory, pressure: "normal", pressureLevel: 1 }, therm: quietTherm },
+  { atMs: 5_000, vm: parseVmStat(vmStatText(46_304_874 + 6_400, 1_200, 140_000)), memory, therm: hotTherm },
+], ["sysctl timed out"]);
+assert.equal(hostPressure.sampleCount, 2);
+assert.equal(hostPressure.worstPressure, "warn");
+assert.deepEqual(hostPressure.pressureSamples, { normal: 1, warn: 1, critical: 0, unknown: 0 });
+assert.equal(hostPressure.pagesDuringArm.swapouts, 6_400);
+assert.equal(hostPressure.swapoutMiBDuringArm, 100, "6,400 x 16 KiB pages = 100 MiB swapped out");
+assert.equal(hostPressure.freeMiB.min, 18.8);
+assert.equal(hostPressure.thermalWarningSamples, 1);
+assert.deepEqual(hostPressure.thermalRecordedLines, ["Thermal warning level: 1"]);
+assert.deepEqual(hostPressure.errors, ["sysctl timed out"]);
+assert.equal(summarizeHostPressure([], []).worstPressure, null);
+
 const managedSamples = [
   { offsetMs: 30_000, pool: { maxConcurrent: 4 }, classes: {
     interactive: { limits: { protectedConcurrent: 1 }, inFlight: 0 },
@@ -410,6 +473,17 @@ assert.ok(
   !grantGapProof.failed.some(({ gate }) => gate === "concurrencyAdmissionExercised"),
   "zero-envelope refusals are not token pressure",
 );
+const upstreamErrorArms = structuredClone(arms);
+upstreamErrorArms.moflux.classes.interactive.serverErrors = 1;
+upstreamErrorArms.moflux.classes.interactive.serverErrorCauses = { "upstream_error:ECONNRESET": 1 };
+const upstreamErrorGate = vllmSeedProof({
+  arms: upstreamErrorArms,
+  evidence: { moflux: { recovery, controlPlane } },
+}).failed.find(({ gate }) => gate === "noEngineOrTransportErrors");
+assert.ok(upstreamErrorGate);
+assert.deepEqual(upstreamErrorGate.observed.moflux.serverErrorCauses.interactive, {
+  "upstream_error:ECONNRESET": 1,
+});
 const noInferenceArms = structuredClone(arms);
 for (const arm of Object.values(noInferenceArms)) {
   for (const workload of ["interactive", "batch"]) {

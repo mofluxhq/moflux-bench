@@ -82,7 +82,7 @@ turn a non-contention run into evidence about contention.
 ## Run it on NVIDIA
 
 Prerequisites are Docker Compose, an NVIDIA GPU visible to `nvidia-smi`, the
-NVIDIA container runtime, OpenSSL, Node.js 22+, the licensed Tyr 0.30.0 and
+NVIDIA container runtime, OpenSSL, Node.js 22+, the licensed Tyr 0.31.0 and
 Latchflo 0.17.1 images, and network access for the first model download. vLLM's
 official container image is `vllm/vllm-openai`; this release pins `v0.18.0`.
 See the [official vLLM Docker guide](https://docs.vllm.ai/en/v0.18.0/deployment/docker/).
@@ -240,6 +240,26 @@ Files are owner-only, and credentials are redacted. Each managed sample also
 records Tyr's applied `limitsRevision` and grant provenance. Together these tie
 any zero-capacity window to a specific expiry and reissue instead of leaving it
 to inference.
+
+The experiment pins Tyr 0.31.0. When Tyr's own call to vLLM fails, its
+`502 upstream_error` names the transport cause, for example
+`cause.code: "ECONNRESET"` or `"UND_ERR_SOCKET"`. Tyr also writes a
+`tyr.diagnostic.v1` line with the detail to its log, which the Compose logs
+above retain. Class summaries count these as `serverErrorCauses`, and the
+`noEngineOrTransportErrors` gate reports them per arm. Under Tyr 0.30.0, run
+`20260922T232052Z` had three such 502s that vLLM's access log never recorded,
+and the cause could not be recovered.
+
+On Metal, the runner also samples host memory pressure on each five-second
+platform tick, because process CPU/RSS cannot show unified-memory contention:
+- `kern.memorystatus_vm_pressure_level` and `vm.swapusage`;
+- `vm_stat` swap, page and compressor counters;
+- `pmset -g therm` thermal and performance warnings.
+
+vLLM, Docker's VM, Tyr and Latchflo all share that memory. Each arm reports
+`hostPressure` and prints a one-line host summary. These samples are
+diagnostic. They do not invalidate a seed, but a run whose arms differ sharply
+in swap-outs or thermal warnings should not be read as an arm effect.
 
 The top-level result has three states:
 

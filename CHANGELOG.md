@@ -1,5 +1,54 @@
 # Changelog
 
+## 0.38.0 - 2026-09-22
+
+Run `20260922T232052Z` (Latchflo 0.17.1) was inconclusive for reasons the
+harness could not attribute:
+- three `502 upstream_error "fetch failed"` responses that vLLM never logged;
+- Tyr-to-Latchflo requests timing out;
+- inter-token latency about 45–80% higher in the MoFlux arm than in the static
+  arm or the previous MoFlux run.
+
+This release adds the evidence needed to attribute them. It changes no arm,
+workload, policy, or validity gate.
+
+### Added
+
+- **Host memory and thermal pressure on Metal.** On every five-second platform
+  tick, the runner samples:
+  - `kern.memorystatus_vm_pressure_level` and `vm.swapusage`;
+  - `vm_stat` counters;
+  - `pmset -g therm`.
+
+  None of these needs root. vLLM Metal shares unified memory with the Docker VM
+  that runs Tyr and Latchflo, and process CPU/RSS cannot show swap or throttling.
+  Each arm reports `hostPressure`:
+  - memory-pressure samples by level;
+  - swap used at start and end, and its peak;
+  - minimum free memory and peak compressor memory;
+  - page swap-outs, swap-ins, page-outs and compressions during the arm;
+  - thermal and performance warning samples, with any recorded `pmset` lines.
+
+  Raw samples go to the telemetry file, and each arm prints a one-line host
+  summary. Sampling errors are recorded but do not invalidate a seed; this is
+  diagnostic evidence, not a new gate.
+- **5xx causes in summaries.** Class summaries add `serverErrorCauses`. It is
+  keyed by Tyr's `error.cause.code` when present, else by `error.type`, else by
+  HTTP status. The `noEngineOrTransportErrors` gate evidence now carries these
+  causes per arm and class.
+
+### Changed
+
+- **The vLLM experiment pins Tyr 0.31.0**, which adds a bounded transport
+  `cause.code` to `502 upstream_error` (for example `ECONNRESET` or
+  `UND_ERR_SOCKET`). It also logs one `tyr.diagnostic.v1` line per upstream
+  failure; these lines reach the retained Compose logs. The runner builds a
+  missing `tyr-admission-controller:0.31.0` image from a sibling checkout or
+  `MOFLUX_TYR_SOURCE_DIR`. It refuses other Tyr releases unless
+  `MOFLUX_ALLOW_UNPINNED_IMAGES=true`, and `MOFLUX_VLLM_TYR_IMAGE` names a
+  differently tagged build. The other experiments keep Tyr 0.30.0. The
+  publication check requires both vLLM pins.
+
 ## 0.37.1 - 2026-09-22
 
 ### Changed

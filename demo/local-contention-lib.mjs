@@ -43,7 +43,7 @@ import {
   restorationEnforceability,
   validateUnlentSlice,
 } from "./restoration-contract-lib.mjs";
-import { zeroCapacityEnvelope } from "../load/rejection-lib.mjs";
+import { summarizeServerErrorCauses, zeroCapacityEnvelope } from "../load/rejection-lib.mjs";
 
 /**
  * Experiment profile selected before this module is loaded.
@@ -843,6 +843,8 @@ export function summarizeArmClasses(loadgenSummary, thresholds = HYPOTHESIS_THRE
       deadlineAbandonments: count(values.borrowedDeadlineAbandoned),
       tornStreams: count(values.transportError),
       serverErrors: count(values.serverError),
+      /** 5xx responses by Tyr's `error.cause.code`, else `error.type`, else status. */
+      serverErrorCauses: summarizeServerErrorCauses(values.serverErrorSnapshots),
       requestErrors: count(values.requestError),
       requestErrorReasons: Object.freeze({ ...(values.requestErrorReasons ?? {}) }),
       upstreamRejects: count(values.upstreamReject),

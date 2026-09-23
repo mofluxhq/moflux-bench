@@ -497,13 +497,18 @@ if (
     "package.json: the unlent-concurrency contention dry-run, single-seed and verify commands are required",
   );
 }
-if (pkg.version !== "0.37.1") {
-  findings.push("package.json: the current benchmark release must be version 0.37.1");
+if (pkg.version !== "0.38.0") {
+  findings.push("package.json: the current benchmark release must be version 0.38.0");
 }
 // Latchflo 0.17.0 still failed closed at lending transitions; the vLLM
 // experiment's grant-continuity gate needs 0.17.1.
-if (!readFileSync(path.join(ROOT, "demo/env-lib.mjs"), "utf8").includes('VLLM_LATCHFLO_VERSION = "0.17.1"')) {
+const envLibSource = readFileSync(path.join(ROOT, "demo/env-lib.mjs"), "utf8");
+if (!envLibSource.includes('VLLM_LATCHFLO_VERSION = "0.17.1"')) {
   findings.push("demo/env-lib.mjs: the vLLM experiment must pin Latchflo 0.17.1");
+}
+// Tyr 0.31.0 names the transport cause of a 502, which the 0.38.0 diagnostics read.
+if (!envLibSource.includes('VLLM_TYR_VERSION = "0.31.0"')) {
+  findings.push("demo/env-lib.mjs: the vLLM experiment must pin Tyr 0.31.0");
 }
 if (
   !pkg.scripts?.["demo:restoration"]?.includes("--restoration-ladder") ||

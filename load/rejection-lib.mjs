@@ -15,3 +15,20 @@ export function zeroCapacityEnvelope(detail) {
   const budget = detail.tokenBudget;
   return budget === undefined || budget === null || budget.budget === 0;
 }
+
+/**
+ * Counts 5xx responses by the most specific reason the body names: Tyr 0.31.0
+ * `error.cause.code`, else `error.type`, else the HTTP status.
+ */
+export function summarizeServerErrorCauses(snapshots = []) {
+  const counts = {};
+  for (const snapshot of Array.isArray(snapshots) ? snapshots : []) {
+    let error = null;
+    try { error = JSON.parse(String(snapshot?.body ?? ""))?.error ?? null; } catch { /* keep null */ }
+    const cause = typeof error?.cause?.code === "string"
+      ? `${error.type ?? "error"}:${error.cause.code}`
+      : typeof error?.type === "string" ? error.type : `http_${snapshot?.status ?? "unknown"}`;
+    counts[cause] = (counts[cause] ?? 0) + 1;
+  }
+  return Object.freeze(counts);
+}

@@ -28,9 +28,10 @@ import {
   DEFAULT_VLLM_MODEL,
   DEFAULT_VLLM_MODEL_REVISION,
   DEFAULT_VLLM_LATCHFLO_IMAGE,
+  DEFAULT_VLLM_TYR_IMAGE,
   DEFAULT_VLLM_SERVED_MODEL,
-  TYR_VERSION,
   VLLM_LATCHFLO_VERSION,
+  VLLM_TYR_VERSION,
   VLLM_VERSION,
   ensureDemoEnv,
   imageMatchesVersion,
@@ -97,10 +98,14 @@ import {
   compareVllmArms,
   parseMetalRuntimeProbeOutput,
   parseNvidiaSmiRow,
+  parseMemorySysctl,
+  parsePmsetTherm,
   parseProcessTreeSnapshot,
+  parseVmStat,
   parsePrometheus,
   snapshotVllmMetrics,
   summarizeGpuTelemetry,
+  summarizeHostPressure,
   summarizeProcessTelemetry,
   summarizeManagedRecovery,
   summarizeVllmTelemetry,
@@ -314,12 +319,24 @@ if (
   );
   process.exit(1);
 }
+const TYR_IMAGE = process.env.MOFLUX_VLLM_TYR_IMAGE ?? DEFAULT_VLLM_TYR_IMAGE;
+if (
+  !imageMatchesVersion(TYR_IMAGE, VLLM_TYR_VERSION) &&
+  process.env.MOFLUX_ALLOW_UNPINNED_IMAGES !== "true"
+) {
+  console.error(
+    `\nMOFLUX_VLLM_TYR_IMAGE must reference Tyr ${VLLM_TYR_VERSION}, ` +
+      `which names the transport cause of upstream failures; got ${TYR_IMAGE}`,
+  );
+  process.exit(1);
+}
 
 const plan = {
   benchmark: SWEEP_NAME,
   backend: OPT.backend,
   image: IS_METAL ? "native vllm-metal" : OPT.image,
   latchfloImage: LATCHFLO_IMAGE,
+  tyrImage: TYR_IMAGE,
   model: OPT.model,
   requestedRevision: OPT.modelRevision,
   servedModel: OPT.servedModel,
@@ -637,7 +654,7 @@ async function collectControlPlaneEvidence(arm, startedAtMs) {
     return !Number.isFinite(at) || at >= startedAtMs;
   });
   return {
-    tyrRestoration: summarizeTyrRestoration({ statsByPool, tyrVersion: TYR_VERSION }),
+    tyrRestoration: summarizeTyrRestoration({ statsByPool, tyrVersion: VLLM_TYR_VERSION }),
     latchfloEpisodes: summarizeLatchfloRestorationEpisodes({
       episodes: Array.isArray(episodesResponse?.body?.restorationEpisodes)
         ? episodesResponse.body.restorationEpisodes
@@ -786,6 +803,26 @@ async function readMetalProcessTree() {
   return parseProcessTreeSnapshot(stdout, metalProcess.pid);
 }
 
+async function readHostPressure() {
+  const run = async (command, args) => (await execFileAsync(command, args, {
+    cwd: ROOT,
+    env,
+    encoding: "utf8",
+    timeout: SAMPLING.platformTimeoutMs,
+    maxBuffer: 1024 * 1024,
+  })).stdout;
+  const [memory, vm, therm] = await Promise.all([
+    run("sysctl", ["kern.memorystatus_vm_pressure_level", "vm.swapusage"]),
+    run("vm_stat", []),
+    run("pmset", ["-g", "therm"]),
+  ]);
+  return {
+    memory: parseMemorySysctl(memory),
+    vm: parseVmStat(vm),
+    therm: parsePmsetTherm(therm),
+  };
+}
+
 function dcgmSnapshot(text) {
   const selected = new Set([
     "DCGM_FI_DEV_GPU_UTIL",
@@ -811,6 +848,8 @@ async function startTelemetry(startedAt) {
   const gpuErrors = [];
   const processSamples = [];
   const processErrors = [];
+  const hostPressureSamples = [];
+  const hostPressureErrors = [];
   const dcgmSamples = [];
   const dcgmErrors = [];
   let running = true;
@@ -826,6 +865,10 @@ async function startTelemetry(startedAt) {
         if (IS_METAL) {
           try { processSamples.push({ atMs, ...(await readMetalProcessTree()) }); }
           catch (error) { processErrors.push(error instanceof Error ? error.message : String(error)); }
+          // Diagnostic only: unified-memory pressure, swap and thermal state
+          // are shared with the Docker VM running Tyr and Latchflo.
+          try { hostPressureSamples.push({ atMs, ...(await readHostPressure()) }); }
+          catch (error) { hostPressureErrors.push(error instanceof Error ? error.message : String(error)); }
         } else {
           try { gpuSamples.push({ atMs, ...readGpu() }); }
           catch (error) { gpuErrors.push(error instanceof Error ? error.message : String(error)); }
@@ -859,12 +902,15 @@ async function startTelemetry(startedAt) {
           gpuErrors,
           processSamples,
           processErrors,
+          hostPressureSamples,
+          hostPressureErrors,
           dcgmSamples,
           dcgmErrors,
         },
         vllm: summarizeVllmTelemetry({ samples: vllmSamples, start, end, errors: vllmErrors }),
         gpu: IS_METAL ? null : summarizeGpuTelemetry(gpuSamples, gpuErrors),
         hostProcess: IS_METAL ? summarizeProcessTelemetry(processSamples, processErrors) : null,
+        hostPressure: IS_METAL ? summarizeHostPressure(hostPressureSamples, hostPressureErrors) : null,
         dcgm: {
           configured: !IS_METAL && Boolean(OPT.dcgmUrl),
           sampleCount: dcgmSamples.length,
@@ -1194,6 +1240,7 @@ try {
       ...parseEnvFile(ENV_EXAMPLE),
       ...process.env,
       MOFLUX_LATCHFLO_IMAGE: LATCHFLO_IMAGE,
+      MOFLUX_TYR_IMAGE: TYR_IMAGE,
       MOFLUX_VLLM_GPU_DEVICE: OPT.gpuIndex,
       MOFLUX_VLLM_SCHEDULING_POLICY: "priority",
     };
@@ -1210,6 +1257,7 @@ try {
       ...parseEnvFile(ENV_FILE),
       ...process.env,
       MOFLUX_LATCHFLO_IMAGE: LATCHFLO_IMAGE,
+      MOFLUX_TYR_IMAGE: TYR_IMAGE,
       MOFLUX_VLLM_IMAGE: OPT.image,
       MOFLUX_VLLM_MODEL: OPT.model,
       MOFLUX_VLLM_SERVED_MODEL: OPT.servedModel,
@@ -1240,6 +1288,14 @@ try {
       repoName: "latchflo-control-plane",
       version: VLLM_LATCHFLO_VERSION,
       label: "Latchflo",
+    });
+    ensureRuntimeImage({
+      root: ROOT,
+      image: TYR_IMAGE,
+      envKey: "MOFLUX_TYR_SOURCE_DIR",
+      repoName: "tyr-admission-controller",
+      version: VLLM_TYR_VERSION,
+      label: "Tyr",
     });
     identity = await startIdentityFixture(IDENTITY_RUNTIME, { port: VLLM_IDENTITY_PORT });
     stackStarted = true;
@@ -1367,6 +1423,7 @@ try {
           vllm: measured.vllm,
           gpu: measured.gpu,
           hostProcess: measured.hostProcess,
+          hostPressure: measured.hostPressure,
           dcgm: measured.dcgm,
           managedSampleCount: managed.samples.length,
           managedSampleErrors: managed.errors,
@@ -1417,6 +1474,17 @@ try {
             `queue peak ${armSummary.vllm.gauges.waiting?.max ?? "n/a"}; ` +
             `preemptions ${armSummary.vllm.preemptions.delta ?? "n/a"}`,
         );
+        const pressure = armSummary.hostPressure;
+        if (pressure) {
+          console.log(
+            `seed ${seed} arm ${armId} host: memory pressure ${pressure.worstPressure ?? "n/a"} ` +
+              `(${JSON.stringify(pressure.pressureSamples)}); swap used ` +
+              `${pressure.swapUsedMiB?.start ?? "n/a"}→${pressure.swapUsedMiB?.end ?? "n/a"} MiB; ` +
+              `swapouts during arm ${pressure.swapoutMiBDuringArm ?? "n/a"} MiB; ` +
+              `min free ${pressure.freeMiB?.min ?? "n/a"} MiB; thermal warnings ` +
+              `${pressure.thermalWarningSamples}/${pressure.sampleCount}; errors ${pressure.errors.length}`,
+          );
+        }
         if (OPT.pauseMs > 0) await sleep(OPT.pauseMs);
       }
 
@@ -1476,7 +1544,8 @@ if (OPT.doctor) {
       "partition, and MoFlux lending compare on SLO goodput and resource pressure?",
     runtime: {
       mofluxBench: JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")).version,
-      tyr: TYR_VERSION,
+      tyr: VLLM_TYR_VERSION,
+      tyrImage: TYR_IMAGE,
       latchflo: VLLM_LATCHFLO_VERSION,
       latchfloImage: LATCHFLO_IMAGE,
       vllm: IS_METAL ? metalRuntime?.engineVersion ?? null : VLLM_VERSION,
