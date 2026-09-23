@@ -2,15 +2,15 @@
 
 ## 0.38.0 - 2026-09-22
 
-Run `20260922T232052Z` (Latchflo 0.17.1) was inconclusive for reasons the
-harness could not attribute:
-- three `502 upstream_error "fetch failed"` responses that vLLM never logged;
-- Tyr-to-Latchflo requests timing out;
-- inter-token latency about 45–80% higher in the MoFlux arm than in the static
-  arm or the previous MoFlux run.
+This release adds evidence for Metal failures the harness could not attribute
+before:
+- Tyr `502 upstream_error "fetch failed"` responses, where Node's `fetch`
+  hides the transport reason;
+- control-plane request timeouts inside Docker;
+- engine slowdowns on unified-memory hosts, which process CPU/RSS cannot
+  explain.
 
-This release adds the evidence needed to attribute them. It changes no arm,
-workload, policy, or validity gate.
+It changes no arm, workload, policy, or validity gate.
 
 ### Added
 
@@ -53,21 +53,18 @@ workload, policy, or validity gate.
 
 ### Changed
 
-- **The vLLM experiment pins Latchflo 0.17.1.** The first Metal seed on the
-  0.37.0 pin (Latchflo 0.17.0, run `20260922T224322Z`) confirmed that lease
-  renewal works:
-  - The static arm renewed 19 times and had no zero-grant refusals, down from
-    seven.
-  - The seed was still invalid on `managedGrantContinuity`. One MoFlux batch
-    request was refused under Tyr's even fail-closed revision.
-
-  The retained Latchflo events show why. When interactive went idle, lending
-  its floor waited for the old lease to expire, which left a zero-capacity
-  window of about 370 ms. Latchflo 0.17.1 commits idle-floor lending
-  immediately. The one-second managed sampler missed the window; only the
-  refusal record and the retained events show it. The runner refuses any other
-  Latchflo release, and the publication check requires the 0.17.1 pin. The
-  other experiments keep Latchflo 0.16.0.
+- **The vLLM experiment pins Latchflo 0.17.1.** Latchflo 0.17.0 renews
+  unchanged leases before they expire, but lending an idle class's floor still
+  waited for the old lease to expire. Tyr failed closed at that boundary until
+  the lent grant arrived, so a MoFlux arm could fail `managedGrantContinuity`
+  from its own lending transition. Latchflo 0.17.1 commits idle-floor lending
+  immediately.
+  - Such a window can be shorter than the one-second managed sampler interval.
+    The refusal record and the retained Latchflo events show it; the samples
+    may not.
+  - The runner refuses any other Latchflo release, and the publication check
+    requires the 0.17.1 pin.
+  - The other experiments keep Latchflo 0.16.0.
 
 ## 0.37.0 - 2026-09-22
 
@@ -130,21 +127,19 @@ land under a unique ignored run directory and require explicit promotion.
 - **Size the Apple-Silicon trace for Apple-Silicon service time.** Metal now
   records and uses `metal-balanced-v1`: 16-token interactive requests at 0.25
   req/s, 32-token batch requests at 0.75 req/s, and returning interactive demand
-  at 0.5 req/s. The NVIDIA corpus keeps `nvidia-decode-heavy-v1` unchanged. An
-  M1 development seed showed that replaying 768-token CUDA batch work on Metal
-  produced roughly three-minute requests, queues above 400, multi-minute
-  censored drains and starved telemetry. The corrected profile preserves the
-  same phases, four arms, 3/1 policy, SLOs and mandatory queueing gate without
-  pretending raw Metal and CUDA throughput are comparable.
-- **Separate grant gaps from token pressure.** Four M1 development runs
-  recorded 178 `budget_limit` refusals. Every one had a zero capacity envelope:
-  zero concurrency, queue and token budget under Tyr's even fail-closed
-  revision. They recurred on a roughly 15-second cycle because Latchflo 0.16.0
-  reissued a grant only after it expired. None were token pressure; four slots
-  of at most 256 tokens cannot exhaust the pool. A 262,144-token Metal ceiling
-  tried during development rested on the opposite reading and changed nothing,
-  so Metal keeps the same 65,536-token envelope as CUDA, fully reserved by the
-  49,152/16,384 protected floors. The load generator now counts such refusals
+  at 0.5 req/s. The NVIDIA corpus keeps `nvidia-decode-heavy-v1` unchanged. Its
+  768-token batch work is sized for an NVIDIA GPU, not Apple-Silicon service
+  time. The Metal profile preserves the same phases, four arms, 3/1 policy,
+  SLOs and mandatory queueing gate without pretending raw Metal and CUDA
+  throughput are comparable.
+- **Separate grant gaps from token pressure.** Tyr reports `budget_limit`
+  when a managed pool holds its even-revision fail-closed snapshot: zero
+  concurrency, queue and token budget. Latchflo 0.16.0 produced that snapshot
+  at every lease boundary, because it reissued a grant only after expiry. No
+  amount of free capacity could admit such a request, so it is not token
+  pressure. Metal uses the same 65,536-token envelope as CUDA, fully reserved by
+  the 49,152/16,384 protected floors. Four slots of at most 256 tokens cannot
+  exhaust it. The load generator now counts such refusals
   as `grantUnavailable`, per reported reason, and excludes them from
   `budgetLimited`, `concurrencyLimited` and `tokenBoundShare` in every
   experiment. Summaries add `grantUnavailableRejections` and
@@ -160,7 +155,7 @@ land under a unique ignored run directory and require explicit promotion.
   critical-window digest also includes pool/class token grants, occupancy,
   borrowing and release state. Full rejection snapshots and raw telemetry
   remain in their per-arm files; `summary.json` is now sufficient to diagnose
-  another token-bound seed without weakening its validity failure.
+  a token-bound seed without weakening its validity failure.
 - **Make Metal evidence collection load-safe without weakening proof.** Metal
   now scrapes vLLM and Tyr once per second, samples the native process tree
   asynchronously every five seconds, uses backend-specific bounded timeouts,
