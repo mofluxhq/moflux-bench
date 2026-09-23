@@ -629,6 +629,34 @@ function omitSeed(object) {
   return rest;
 }
 
+export function runtimeLabel(runtime) {
+  return `Tyr ${runtime?.tyr?.version ?? "unknown"} / Latchflo ${runtime?.latchflo?.version ?? "unknown"}`;
+}
+
+/**
+ * The Tyr/Latchflo runtime every seed's MoFlux arm ran on, or null when no
+ * seed ran MoFlux.
+ *
+ * Each seed spawns its own presenter, which reads the pinned runtime when it
+ * starts. A pin changed while a sweep is running would otherwise aggregate
+ * seeds measured on different releases as though they were one cohort.
+ */
+export function sweepRuntime(records) {
+  let expected = null;
+  for (const record of records) {
+    const runtime = record?.moflux?.runtime;
+    if (!runtime) continue;
+    expected ??= runtime;
+    if (JSON.stringify(runtime) !== JSON.stringify(expected)) {
+      throw new Error(
+        `seed ${record.seed} ran MoFlux on ${runtimeLabel(runtime)}, not ${runtimeLabel(expected)} ` +
+          "like the seeds before it",
+      );
+    }
+  }
+  return expected;
+}
+
 export function buildSweepSummary({ mode, fault, seeds, records, adaptiveProofContext = "default" }) {
   if (!new Set(["default", "headroom-compare"]).has(adaptiveProofContext)) {
     throw new Error(`unsupported adaptive proof context ${adaptiveProofContext}`);
@@ -675,6 +703,7 @@ export function buildSweepSummary({ mode, fault, seeds, records, adaptiveProofCo
       }
     }
   }
+  const runtime = sweepRuntime(records);
 
   // Every control arm present on every seed. An arm that appears on only some
   // seeds is dropped rather than aggregated across an inconsistent set, which
@@ -758,7 +787,8 @@ export function buildSweepSummary({ mode, fault, seeds, records, adaptiveProofCo
         }
       : null,
     capacityPolicy: firstCapacityPolicy,
-    headroomPolicy: headroomPolicyEvidence(firstCapacityPolicy, records),
+    runtime,
+headroomPolicy: headroomPolicyEvidence(firstCapacityPolicy, records),
     adaptiveProof: adaptiveProof(records, firstCapacityPolicy, { context: adaptiveProofContext }),
     runs: records.map((record) => ({
       seed: record.seed,

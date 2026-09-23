@@ -1387,7 +1387,7 @@ if (OPT.doctor) {
         ...CONTENTION_PROFILE,
         note:
           CONTENTION_PROFILE.interactiveUnlentConcurrent > 0
-            ? "One interactive protected concurrency slot is allocation-enforced as unlent by Latchflo 0.16.0 through globalUnlentProtectedConcurrent; both classes retain the baseline maxConcurrent=4 ceiling."
+            ? "One interactive protected concurrency slot is allocation-enforced as unlent by Latchflo through globalUnlentProtectedConcurrent; both classes retain the baseline maxConcurrent=4 ceiling."
             : "Baseline profile: all three interactive protected concurrency slots may be lent while interactive is idle.",
       },
       arms: OPT.arms,

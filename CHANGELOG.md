@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.40.0 - 2026-09-22
+
+Every licensed benchmark now runs on the runtime the vLLM experiment adopted in
+0.37.1 and 0.38.0. Saved results keep the runtime they recorded; new runs are a
+new runtime cohort.
+
+### Changed
+
+- **Pin licensed runs to Tyr 0.31.0 and Latchflo 0.17.1.** This covers the
+  adaptive, headroom and coordinator sweeps, class/restoration, membership,
+  live OpenAI, Ollama and vLLM. async-bulkhead-llm remains 3.17.0 and
+  async-bulkhead-ts remains 1.0.1. `demo:prepare` migrates the standard local
+  image tags in a generated `.env`; custom registry references remain
+  untouched. Replica metadata and runtime verification follow the new pins.
+  - Tyr 0.31.0 adds upstream transport-failure attribution and no admission
+    change.
+  - Latchflo 0.17.0 renews eligible independent-pool leases before they expire,
+    and 0.17.1 commits idle class-floor lending immediately. Capacity-group
+    pools, including the adaptive 28/4 group, are skipped by both and keep the
+    existing handoff and expiry paths.
+- Historical results and capability-boundary fixtures keep their recorded
+  runtime. The README documents the renewal benefit, the capacity-group
+  exclusion and the lease-expiry restoration tradeoff.
+
+### Added
+
+- **Runtime consistency for seed sweeps and the coordinator ladder.** Seed-sweep
+  summaries and the ladder report record the MoFlux arm's Tyr/Latchflo runtime.
+  - A sweep fails at the first seed whose runtime differs from the seeds before
+    it. Each seed starts its own presenter, so a pin changed mid-sweep would
+    otherwise pool two runtimes into one aggregate.
+  - A ladder refuses to fit rungs measured on different runtimes, and refuses
+    to resume a ladder recorded on other pins before it runs a new rung. A
+    ladder started on Tyr 0.30.0/Latchflo 0.16.0 must be restarted.
+  - The field is additive; seed-sweep `schemaVersion` stays 9 and the ladder
+    report stays 7.
+
 ## 0.39.0 - 2026-09-22
 
 Addresses the memory limits of 16 GB Apple-Silicon hosts.

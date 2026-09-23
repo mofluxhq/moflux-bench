@@ -76,6 +76,25 @@ try {
   assert.match(migratedText, /^LATCHFLO_AGENT_BOOTSTRAP_TOKEN=preserve-bootstrap$/m);
   assert.match(migratedText, /^TYR_ROUTING_SECRET=moflux-demo-routing-[A-Za-z0-9_-]{40,}$/m);
 
+  writeFileSync(file, [
+    "# Runtime compatibility: Tyr 0.30.0, Latchflo 0.16.0.",
+    "MOFLUX_TYR_IMAGE=tyr-admission-controller:0.30.0",
+    "MOFLUX_LATCHFLO_IMAGE=latchflo-control-plane:0.16.0",
+    "LATCHFLO_ADMIN_TOKEN=preserve-admin",
+    "LATCHFLO_AGENT_BOOTSTRAP_TOKEN=preserve-bootstrap",
+    "TYR_ROUTING_SECRET=preserve-routing-secret-at-least-32-characters",
+    "",
+  ].join("\n"));
+  assert.equal(ensureDemoEnv(file, { quiet: true }).updated, true);
+  const upgraded = readFileSync(file, "utf8");
+  assert.match(upgraded, /^MOFLUX_TYR_IMAGE=tyr-admission-controller:0\.31\.0$/m);
+  assert.match(upgraded, /^MOFLUX_LATCHFLO_IMAGE=latchflo-control-plane:0\.17\.1$/m);
+  assert.match(upgraded, /^# Runtime compatibility: Tyr 0\.31\.0, Latchflo 0\.17\.1\.$/m);
+  assert.match(upgraded, /^LATCHFLO_ADMIN_TOKEN=preserve-admin$/m);
+  assert.match(upgraded, /^LATCHFLO_AGENT_BOOTSTRAP_TOKEN=preserve-bootstrap$/m);
+  assert.match(upgraded, /^TYR_ROUTING_SECRET=preserve-routing-secret-at-least-32-characters$/m);
+  assert.equal(ensureDemoEnv(file, { quiet: true }).updated, false);
+
   writeFileSync(
     file,
     [

@@ -1,5 +1,21 @@
 # MoFlux Bench verification
 
+## 0.40.0 runtime alignment
+
+`npm run verify:publication` requires the Tyr 0.31.0 and Latchflo 0.17.1 image
+tags in `demo/moflux/.env.example` and Tyr 0.31.0 metadata in every
+`demo/moflux` and `demo/classes` replica config. `demo/verify-env.mjs` proves a
+generated `.env` pinned to Tyr 0.30.0/Latchflo 0.16.0 migrates its image tags
+and compatibility line, keeps its tokens and routing secret, and is unchanged by
+a second pass. `demo/verify-presenter.mjs` requires a presenter result to record
+the new runtime. `demo/verify-seed-sweep.mjs` checks that a sweep summary
+records the MoFlux runtime and rejects a seed that ran another Latchflo release.
+
+The ladder guard was exercised against synthetic ladders in a scratch copy of
+`demo/`. Rungs on one runtime were fitted and the runtime was reported. A rung on
+a different runtime was refused. So was resuming a ladder recorded on Tyr
+0.30.0/Latchflo 0.16.0, before any sweep started.
+
 ## 0.39.0 Metal memory headroom
 
 `npm run verify:vllm` pins the per-backend memory defaults (NVIDIA 0.85, Metal

@@ -39,8 +39,9 @@ import {
   pairedCrossover,
   pairedSensitivity,
 } from "./coordination-lib.mjs";
+import { LATCHFLO_VERSION, TYR_VERSION } from "./env-lib.mjs";
 import { runDir as runDirFor, runId as newRunId } from "./evidence-paths-lib.mjs";
-import { parseSeedSpec } from "./seed-sweep-lib.mjs";
+import { parseSeedSpec, runtimeLabel, sweepRuntime } from "./seed-sweep-lib.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const RESULTS = path.join(ROOT, "results");
@@ -269,6 +270,7 @@ function readRung(latencyMs) {
   // it wrote for each arm of each seed, so this reads what the run declared
   // rather than reconstructing filenames that only happen to match today.
   const perSeed = {};
+  const mofluxRecords = [];
   for (const run of summary.runs ?? []) {
     for (const [name, relative] of Object.entries(run.arms ?? {})) {
       const armPath = path.join(ROOT, relative);
@@ -286,6 +288,7 @@ function readRung(latencyMs) {
           `${relative} records rung ${recorded}ms, not ${latencyMs}ms`,
         );
       }
+      if (name === "moflux") mofluxRecords.push({ seed: run.seed, moflux: arm });
       const interactive = arm.classes?.interactive ?? {};
       (perSeed[name] ??= []).push({
         seed: run.seed,
@@ -304,6 +307,20 @@ function readRung(latencyMs) {
   for (const [name, points] of Object.entries(perSeed)) {
     if (!rung[name]) continue;
     rung[name].perSeed = points;
+  }
+  // A resumed ladder reuses rungs measured earlier. If the pinned Tyr or
+  // Latchflo release changed in between, the new rungs ran on a different
+  // runtime and a slope fitted across both would attribute that change to
+  // coordinator distance.
+  const rungRuntime = sweepRuntime(mofluxRecords);
+  if (rungRuntime) {
+    ladderRuntime ??= rungRuntime;
+    if (JSON.stringify(rungRuntime) !== JSON.stringify(ladderRuntime)) {
+      throw new Error(
+        `sweep at ${latencyMs}ms ran MoFlux on ${runtimeLabel(rungRuntime)}, but earlier rungs of ` +
+          `ladder ${LADDER_ID} ran on ${runtimeLabel(ladderRuntime)}; start a new ladder instead`,
+      );
+    }
   }
   // An instrumented run must show the coordinator arm actually paying for its
   // decisions. If any arm carries the counters and Redis does not, the
@@ -341,6 +358,8 @@ console.log(`   each rung is a complete paired sweep; run evidence lands in resu
 
 const ladder = new Map();
 const rungDiagnostics = new Map();
+/** The runtime every rung's MoFlux arm ran on, set by the first rung read. */
+let ladderRuntime = null;
 const EXECUTION_ORDER = executionOrder(RUNGS);
 const rungsExecuted = [];
 if (RUNG_ORDER !== "ascending" && !REANALYZE) {
@@ -355,6 +374,17 @@ for (const latencyMs of EXECUTION_ORDER) {
   ) {
     console.log(`\n${BOLD}=== coordinator latency ${latencyMs}ms (resume: reusing completed rung) ===${OFF}`);
   } else {
+    // Checked before paying for the rung: a reused rung already fixed the
+    // ladder's runtime, and this checkout would measure the rest on its pins.
+    if (
+      ladderRuntime &&
+      (ladderRuntime.tyr?.version !== TYR_VERSION || ladderRuntime.latchflo?.version !== LATCHFLO_VERSION)
+    ) {
+      throw new Error(
+        `ladder ${LADDER_ID} was measured on ${runtimeLabel(ladderRuntime)}, but this checkout pins ` +
+          `Tyr ${TYR_VERSION} / Latchflo ${LATCHFLO_VERSION}; start a new ladder instead of resuming it`,
+      );
+    }
     console.log(`\n${BOLD}=== coordinator latency ${latencyMs}ms ===${OFF}`);
     await runSweep(latencyMs);
   }
@@ -454,6 +484,7 @@ function buildReport() {
     reanalyzed: REANALYZE ? true : undefined,
     resumed: RESUME ? true : undefined,
     capacityProfile: CAPACITY_PROFILE || "historical-31-1",
+    runtime: ladderRuntime,
     adaptiveProof:
       CAPACITY_PROFILE === "adaptive-28-4"
         ? {

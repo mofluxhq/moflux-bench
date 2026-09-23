@@ -34,7 +34,12 @@ import {
 } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import { adaptiveProofFailureMessage, buildSweepSummary, parseSeedSpec } from "./seed-sweep-lib.mjs";
+import {
+  adaptiveProofFailureMessage,
+  buildSweepSummary,
+  parseSeedSpec,
+  sweepRuntime,
+} from "./seed-sweep-lib.mjs";
 import {
   assertSafeResultsDir,
   assertSafeRunDir,
@@ -646,6 +651,8 @@ try {
     await runPresenter(seed, index);
     const record = preserveSeed(seed);
     records.push(record);
+    // Fail at the seed that changed runtime, not after the remaining seeds.
+    sweepRuntime(records);
     console.log(`${GREEN}   ✓ preserved seed ${seed} evidence in ${relativePath(sweepDir)}${OFF}`);
   }
 
