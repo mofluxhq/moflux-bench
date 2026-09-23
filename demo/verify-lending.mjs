@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 /**
  * verify-lending.mjs — the lending analysis says "lending" only when it saw it.
  *
@@ -763,8 +764,23 @@ const starvedBatch = { success: 0, firstAttemptAtMs: 15_100, firstResponseHeader
     maxDemandingConcurrentLend: 2,
     maxDemandingTokenLend: 10000,
   };
+  const headroomGrants = [
+    { grantId: "headroom-interactive", instanceId: "tyr-r4", pool: "sim-interactive",
+      limits: { maxConcurrent: 26, tokenBudget: { budget: 14000 } } },
+    { grantId: "headroom-batch", instanceId: "tyr-r4", pool: "sim-batch",
+      limits: { maxConcurrent: 6, tokenBudget: { budget: 50000 } } },
+  ];
+  const correlatedCandidate = structuredClone(rawHeadroomCandidate);
+  correlatedCandidate.timeline[0].interactive.grants = [{ grantId: "headroom-interactive" }];
+  correlatedCandidate.timeline[0].batch = {
+    maxConcurrent: 6, tokenBudget: 50000, grants: [{ grantId: "headroom-batch" }],
+  };
   const correlatedHeadroom = summarizeControllerLending({
     events: [{
+      id: 89, type: "capacity_group.rebalanced", entityType: "capacity_group",
+      entityId: "sim-workloads", createdAt: "2026-08-01T20:00:09.999Z",
+      payload: { grants: headroomGrants },
+    }, {
       id: 90,
       type: "capacity_group.lending_observed",
       entityType: "capacity_group",
@@ -790,7 +806,7 @@ const starvedBatch = { success: 0, firstAttemptAtMs: 15_100, firstResponseHeader
     interactiveHeadroomLending: demandingHeadroomPolicy,
     loadgenStartedAtEpochMs: Date.parse("2026-08-01T20:00:00.000Z"),
     measuredRunDurationMs: 45000,
-    appliedCapacity: rawHeadroomCandidate,
+    appliedCapacity: correlatedCandidate,
   });
   check(
     "controller headroom plus a matching bounded Tyr split is correlated headroom proof",
@@ -905,6 +921,173 @@ const starvedBatch = { success: 0, firstAttemptAtMs: 15_100, firstResponseHeader
       result.headroomCandidateLendingObserved === true && result.headroomLendingObserved === false,
     );
   }
+}
+
+// Seed 4 regression: two handoffs fit between sampled batch-floor observations.
+// Controller history below is synthetic; the seed's actual history was not saved.
+{
+  const at = (ms) => new Date(Date.parse("2026-09-23T04:05:00Z") + ms).toISOString();
+  const event = (id, type, ms, payload) => ({
+    id, type: `capacity_group.${type}`, entityType: "capacity_group",
+    entityId: "sim-workloads", createdAt: at(ms), payload,
+  });
+  const grant = (grantId, pool, instanceId, maxConcurrent, tokens, role, fromGrantId) => ({
+    grantId, pool, instanceId, role, fromGrantId,
+    limits: { maxConcurrent, tokenBudget: { budget: tokens } },
+  });
+  const original = [
+    grant("i1", "sim-interactive", "tyr-r1", 7, 3956, "drain", "old-i1"),
+    grant("i2", "sim-interactive", "tyr-r2", 7, 3956, "drain", "old-i2"),
+    grant("i3", "sim-interactive", "tyr-r3", 6, 3955, "drain", "old-i3"),
+    grant("i4", "sim-interactive", "tyr-r4", 6, 3955, "drain", "old-i4"),
+    grant("batch-591", "sim-batch", "tyr-r4", 6, 48178, "staged", "old-batch"),
+  ];
+  const adjustment = [
+    grant("next-i1", "sim-interactive", "tyr-r1", 7, 3581, "drain", "i1"),
+    grant("next-i2", "sim-interactive", "tyr-r2", 7, 3580, "drain", "i2"),
+    grant("next-i3", "sim-interactive", "tyr-r3", 6, 3580, "drain", "i3"),
+    grant("next-i4", "sim-interactive", "tyr-r4", 6, 3580, "drain", "i4"),
+    grant("next-batch", "sim-batch", "tyr-r4", 6, 49679, "staged", "batch-591"),
+  ];
+  const events = [
+    event(280, "handoff_prepared", 31553, { handoffId: "origin", grants: original }),
+    event(281, "floor_restore_pending", 31554, { handoffId: "origin" }),
+    ...original.slice(0, 4).map((g, index) => ({
+      ...event(290 + index, "handoff_grant_applied", 32000 + index, {
+        handoffId: "origin", capacityGroup: "sim-workloads",
+      }), entityType: "grant", entityId: g.grantId,
+    })),
+    event(299, "handoff_committed", 32604, { handoffId: "origin", grants: original }),
+    event(300, "lending_observed", 32605, {
+      lenders: [{ pool: "sim-interactive", released: { maxConcurrent: 2, tokenBudget: 8178 },
+        demandState: "demanding", reason: "headroom" }],
+      borrowers: [{ pool: "sim-batch", borrowed: { maxConcurrent: 2, tokenBudget: 8178 } }],
+    }),
+    event(301, "handoff_prepared", 33208, { handoffId: "adjustment", grants: adjustment }),
+    event(302, "floor_restore_pending", 33209, { handoffId: "adjustment" }),
+  ];
+  const sample = {
+    observedAt: at(33463),
+    interactive: { maxConcurrent: 26, tokenBudget: 15447,
+      grants: ["i1", "i2", "i3", "next-i4"].map((grantId) => ({ grantId })) },
+    batch: { maxConcurrent: 6, tokenBudget: 48178, grants: [{ grantId: "batch-591" }] },
+  };
+  const admission = { admittedAt: at(33361), port: 8104, grant: { grantId: "batch-591" } };
+  const input = {
+    events,
+    grants: original.map((g) => ({ ...g, expiresAt: at(151553), secretToken: "must-not-persist" })),
+    batchGuaranteedMaxConcurrent: 4, batchGuaranteedTokenBudget: 40000,
+    interactiveGuaranteedMaxConcurrent: 28, interactiveGuaranteedTokenBudget: 24000,
+    interactiveHeadroomLending: { maxDemandingConcurrentLend: 2, maxDemandingTokenLend: 10000 },
+    loadgenStartedAtEpochMs: Date.parse(at(2715)), measuredRunDurationMs: 45000,
+    appliedCapacity: {
+      observedRestoredPartition: true, observedHeadroomTransfer: true,
+      restorationObservation: { ...sample, firstObservedAt: sample.observedAt },
+      headroomTransferObservation: { ...sample, firstObservedAt: sample.observedAt },
+      timeline: [sample],
+      admissionProvenance: { batch: { complete: true,
+        source: "tyr.stats.tyr.admissionProvenance", events: [admission], firstEventsByReplica: [admission] } },
+    },
+  };
+  const proof = summarizeControllerLending(input);
+  check("overlapping handoff is selected by the restored batch grant's issuer", proof.handoff.handoffId === "origin");
+  check("valid origin admissions are not classified against the later handoff", proof.handoff.exactAdmissionProof.proven === true);
+  check("a restrictive descendant lender grant preserves the original headroom proof", proof.handoff.appliedCapacity.observedHeadroomTransfer === true);
+  check("headroom proof names its authority event", proof.handoff.appliedCapacity.headroomTransferObservation?.authorityEventId === 299);
+  check("controller handoff history is retained for reanalysis", proof.controllerEvidence?.events.some((e) => e.id === 280) === true);
+  check("retained grants omit credential fields", !JSON.stringify(proof.controllerEvidence ?? {}).includes("must-not-persist"));
+
+  const missing = structuredClone(input);
+  missing.events = missing.events.filter((e) => e.payload.handoffId !== "origin");
+  const missingProof = summarizeControllerLending(missing);
+  check("missing origin is inconclusive rather than falling back to the later handoff", missingProof.handoff.observed === false);
+  check("missing authority cannot produce headroom proof", missingProof.handoff.appliedCapacity.observedHeadroomTransfer === false);
+
+  const ambiguous = structuredClone(input);
+  ambiguous.events.push(event(303, "handoff_prepared", 33210, { handoffId: "duplicate-origin", grants: original }));
+  check("ambiguous issuing handoffs cannot produce an exact ordering pass", summarizeControllerLending(ambiguous).handoff.exactAdmissionProof.proven === false);
+
+  const unsafe = structuredClone(input);
+  unsafe.appliedCapacity.admissionProvenance.batch.events.unshift({
+    admittedAt: at(32050), port: 8104, grant: { grantId: "old-batch" },
+  });
+  check("real predecessor admissions still fail the selected originating handoff", summarizeControllerLending(unsafe).handoff.exactAdmissionProof.violated === true);
+
+  const unrelated = structuredClone(input);
+  unrelated.appliedCapacity.timeline[0].interactive.grants[3].grantId = "unrelated-i4";
+  check("matching aggregates from an unrelated lender grant do not prove headroom", summarizeControllerLending(unrelated).handoff.appliedCapacity.observedHeadroomTransfer === false);
+  const unrelatedBatch = structuredClone(input);
+  unrelatedBatch.appliedCapacity.timeline[0].batch.grants[0].grantId = "unrelated-batch";
+  check("matching aggregates from another borrower episode do not prove headroom", summarizeControllerLending(unrelatedBatch).handoff.appliedCapacity.observedHeadroomTransfer === false);
+
+  const expanding = structuredClone(input);
+  expanding.events.find((e) => e.id === 301).payload.grants[3].limits.tokenBudget.budget = 4100;
+  expanding.appliedCapacity.timeline[0].interactive.tokenBudget = 15967;
+  check("an expanding descendant cannot stand in for a restrictive lender grant", summarizeControllerLending(expanding).handoff.appliedCapacity.observedHeadroomTransfer === false);
+
+  const future = structuredClone(input);
+  future.events.find((e) => e.id === 301).createdAt = at(34000);
+  check("future drain grants cannot justify earlier applied capacity", summarizeControllerLending(future).handoff.appliedCapacity.observedHeadroomTransfer === false);
+
+  const noLineage = structuredClone(input);
+  delete noLineage.appliedCapacity.timeline[0].interactive.grants;
+  delete noLineage.appliedCapacity.timeline[0].batch.grants;
+  check("aggregate-only samples remain diagnostic rather than exact headroom proof", summarizeControllerLending(noLineage).handoff.appliedCapacity.observedHeadroomTransfer === false);
+}
+
+// Retained seed 2 evidence from the 20260923T184716Z sweep. The first batch
+// admission used a drain successor of a committed expansion (561 -> 571).
+{
+  const input = JSON.parse(readFileSync(new URL("./fixtures/restrictive-batch-successor.json", import.meta.url)));
+  const rootId = "9797ef47-b66e-417c-a44d-f91b0d410729";
+  const drainId = "8b8bf10f-66bf-41a3-8fdf-9f719b383a61";
+  const originId = "530d403d-6a46-472f-9f22-4100ccd6e0b8";
+  const proof = summarizeControllerLending(input);
+  check("recorded seed 2 selects the committed expansion ancestor", proof.handoff.handoffId === originId);
+  check("recorded seed 2 proves admissions under its restrictive batch successor", proof.handoff.exactAdmissionProof.proven === true);
+  check("recorded seed 2 keeps original admission grant IDs", proof.handoff.exactAdmissionProof.firstEvents[0]?.grant.grantId === drainId);
+  check("recorded seed 2 records the successor's expansion root", proof.handoff.exactAdmissionProof.successorGrantLineage?.[0]?.rootGrantId === rootId);
+  check("recorded seed 2 retains the safe origin ACK barrier", proof.handoff.safeEventOrder === true);
+
+  const mutate = (change) => { const copy = structuredClone(input); change(copy); return summarizeControllerLending(copy); };
+  const child = (copy) => copy.events.find((e) => e.id === 317).payload.grants.find((g) => g.grantId === drainId);
+  for (const [label, change] of [
+    ["expanding token limit", (copy) => { child(copy).limits.tokenBudget.budget = 50000; }],
+    ["expanding concurrency", (copy) => { child(copy).limits.maxConcurrent = 7; }],
+    ["different owner", (copy) => { child(copy).instanceId = "tyr-r1"; }],
+    ["different pool", (copy) => { child(copy).pool = "sim-interactive"; }],
+    ["missing parent", (copy) => { child(copy).fromGrantId = "missing"; }],
+    ["cyclic lineage", (copy) => { child(copy).fromGrantId = drainId; }],
+    ["missing origin commit", (copy) => { copy.events = copy.events.filter((e) => e.id !== 315); }],
+    ["future origin commit", (copy) => { copy.events.find((e) => e.id === 315).createdAt = "2026-09-23T18:55:17Z"; }],
+    ["duplicate descendant", (copy) => { copy.events.find((e) => e.id === 317).payload.grants.push(structuredClone(child(copy))); }],
+  ]) {
+    check(`restrictive batch proof rejects ${label}`, mutate(change).handoff.exactAdmissionProof.proven === false);
+  }
+  const chained = mutate((copy) => {
+    const next = structuredClone(child(copy));
+    next.fromGrantId = drainId;
+    next.grantId = "second-restrictive-successor";
+    copy.events.push({
+      id: 325, type: "capacity_group.handoff_prepared", entityType: "capacity_group",
+      entityId: "sim-workloads", createdAt: "2026-09-23T18:55:16.590Z",
+      payload: { handoffId: "restrictive-chain", grants: [next] },
+    });
+    copy.appliedCapacity.restorationObservation.batch.grants[0].grantId = next.grantId;
+    for (const event of copy.appliedCapacity.admissionProvenance.batch.events) event.grant.grantId = next.grantId;
+  });
+  check("multiple restrictive successors resolve to the original expansion", chained.handoff.handoffId === originId && chained.handoff.exactAdmissionProof.proven === true);
+  const early = mutate((copy) => {
+    copy.appliedCapacity.admissionProvenance.batch.events[0].admittedAt = "2026-09-23T18:55:16.300Z";
+  });
+  check("admission before descendant preparation cannot use its later authority", early.handoff.exactAdmissionProof.status === "inconclusive_successor_lineage_timing");
+  const predecessor = mutate((copy) => {
+    copy.appliedCapacity.admissionProvenance.batch.events.unshift({
+      admittedAt: "2026-09-23T18:55:15Z", port: 8104,
+      grant: { grantId: "08352785-c264-489c-ae24-b02b465b9a49" },
+    });
+  });
+  check("real predecessor violation survives descendant admission proof", predecessor.handoff.exactAdmissionProof.violated === true);
 }
 
 console.log();

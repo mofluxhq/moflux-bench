@@ -1,5 +1,29 @@
 # MoFlux Bench verification
 
+## 0.40.1 handoff and headroom evidence
+
+The retained seed 2 fixture from sweep `20260923T184716Z` also covers a batch
+drain successor (revision 571) of the committed expansion (revision 561).
+Both handoff selection and admission proof follow that restrictive lineage.
+Regressions reject larger limits, owner/pool changes, missing or cyclic ancestry,
+duplicate definitions, missing commits, and admissions before preparation.
+Offline proof reanalysis of the five retained seeds passes all five, without
+changing the recorded run or executing a new workload.
+
+`demo/verify-lending.mjs` reproduces two handoffs within one sampling interval
+using synthetic controller history. It verifies that restoration proof follows
+the observed batch grant's issuing handoff, and that a restrictive lender
+successor preserves the original headroom transfer's proof. Missing or ambiguous
+origins, unrelated grants, expanding successors, and future grants remain
+unproven; actual predecessor admissions still fail.
+
+The lending, admission-provenance, adaptive-profile, seed-sweep,
+headroom-comparison, restoration-enforceability, and adaptive-seed-sweep checks
+passed, along with syntax checks for all 109 JavaScript modules. The new
+regression fails against the previous implementation. The historical seed 4
+controller history was not retained, so its original commit cannot be verified
+retroactively. Saved results remain unchanged; no live sweep was rerun.
+
 ## 0.40.0 runtime alignment
 
 `npm run verify:publication` requires the Tyr 0.31.0 and Latchflo 0.17.1 image

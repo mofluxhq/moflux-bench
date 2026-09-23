@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.40.1 - 2026-09-23
+
+### Fixed
+
+- Bind floor-restoration proof to the handoff that issued the first observed
+  restored batch grant. A later handoff prepared within the same sampling
+  interval no longer reclassifies valid admissions under that grant as early.
+  Missing or ambiguous issuing history remains unproven. Restrictive batch
+  successors are traced back to the committed expansion in both handoff
+  selection and admission proof, preserving the actual admission grant IDs.
+- Correlate headroom evidence with the issuing controller event and its grant
+  IDs. A sampled restrictive lender successor can preserve an earlier transfer's
+  proof; unrelated grants and aggregate-only snapshots cannot prove it.
+
+### Added
+
+- Retain relevant controller events and credential-free grant records in lending
+  results, including endpoint-limit diagnostics, for later lineage analysis.
+  Historical results are unchanged; missing controller history cannot be
+  reconstructed from sampled limits.
+
 ## 0.40.0 - 2026-09-22
 
 Every licensed benchmark now runs on the runtime the vLLM experiment adopted in

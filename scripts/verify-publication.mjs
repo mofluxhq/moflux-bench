@@ -500,8 +500,8 @@ if (
     "package.json: the unlent-concurrency contention dry-run, single-seed and verify commands are required",
   );
 }
-if (pkg.version !== "0.40.0") {
-  findings.push("package.json: the current benchmark release must be version 0.40.0");
+if (pkg.version !== "0.40.1") {
+  findings.push("package.json: the current benchmark release must be version 0.40.1");
 }
 // Latchflo 0.17.0 still failed closed at lending transitions; the vLLM
 // experiment's grant-continuity gate needs 0.17.1.

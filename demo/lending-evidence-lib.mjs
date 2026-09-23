@@ -1,3 +1,4 @@
+import { selectRestorationHandoff, correlateHeadroomByGrant, restrictiveGrantLineage } from "./handoff-lineage-lib.mjs";
 import { proveAdmissionUsesSuccessorGrant } from "./admission-provenance-lib.mjs";
 import {
   buildRestorationContract,
@@ -267,27 +268,11 @@ export function summarizeControllerLending({
         );
       });
     });
-  const restorationObservedAtHint = Date.parse(
-    appliedCapacity?.restorationObservation?.firstObservedAt ?? "",
+  const restorationSelection = selectRestorationHandoff(
+    restorationPreparedCandidates, pending, appliedCapacity?.restorationObservation,
+    { events: relevant, batchPool },
   );
-  const candidatesBeforeObservedRestoration = Number.isFinite(restorationObservedAtHint)
-    ? restorationPreparedCandidates.filter((event) => {
-        const preparedAt = eventTime(event);
-        return preparedAt !== null && preparedAt <= restorationObservedAtHint;
-      })
-    : restorationPreparedCandidates;
-  const candidatePool = candidatesBeforeObservedRestoration.length > 0
-    ? candidatesBeforeObservedRestoration
-    : restorationPreparedCandidates;
-  const pendingHandoffIds = new Set(
-    pending.map((event) => event?.payload?.handoffId).filter(Boolean),
-  );
-  const pendingCandidates = candidatePool.filter((event) =>
-    pendingHandoffIds.has(event?.payload?.handoffId),
-  );
-  const restorationPrepared = (pendingCandidates.length > 0
-    ? pendingCandidates
-    : candidatePool).at(-1) ?? null;
+  const restorationPrepared = restorationSelection.event;
   const handoffId = restorationPrepared?.payload?.handoffId ?? null;
   const handoffEvents = handoffId === null
     ? []
@@ -553,6 +538,9 @@ export function summarizeControllerLending({
   const exactAdmissionProof = proveAdmissionUsesSuccessorGrant({
     provenance: appliedCapacity?.admissionProvenance?.batch ?? null,
     successorGrantIds: successorBatchGrantIds,
+    successorGrantLineage: restrictiveGrantLineage({
+      rootEntries: stagedBatchEntries, events: relevant, committedAt: committed?.createdAt,
+    }),
     predecessorGrantIds: predecessorBatchGrantIds,
     notBeforeAt: preparedAt,
   });
@@ -618,79 +606,20 @@ export function summarizeControllerLending({
   const batchTokenGuarantee = finiteNumber(batchGuaranteedTokenBudget);
 
   const headroomTransferCorrelations = headroomLending.flatMap((event) => {
-    const eventAt = eventTime(event);
-    if (eventAt === null) return [];
-    const lenders = Array.isArray(event?.payload?.lenders) ? event.payload.lenders : [];
-    const borrowers = Array.isArray(event?.payload?.borrowers) ? event.payload.borrowers : [];
-    const lender = lenders.find((member) => member?.pool === "sim-interactive") ?? null;
-    const borrower = borrowers.find((member) => member?.pool === batchPool) ?? null;
-    if (!lender || !borrower) return [];
-    const releasedConcurrent = finiteNumber(lender?.released?.maxConcurrent) ?? 0;
-    const releasedTokens = finiteNumber(lender?.released?.tokenBudget) ?? 0;
-    const borrowedConcurrent = finiteNumber(borrower?.borrowed?.maxConcurrent) ?? 0;
-    const borrowedTokens = finiteNumber(borrower?.borrowed?.tokenBudget) ?? 0;
-
-    const sample = appliedTimeline.find((candidate) => {
-      const observedAt = parsedTime(candidate?.observedAt);
-      if (observedAt === null || observedAt < eventAt || !withinMeasuredRun(observedAt)) return false;
-      if (
-        interactiveConcurrentGuarantee === null || interactiveTokenGuarantee === null ||
-        batchConcurrentGuarantee === null || batchTokenGuarantee === null
-      ) {
-        return false;
-      }
-      const interactiveConcurrent = finiteNumber(candidate?.interactive?.maxConcurrent);
-      const interactiveTokens = finiteNumber(candidate?.interactive?.tokenBudget);
-      const batchConcurrent = finiteNumber(candidate?.batch?.maxConcurrent);
-      const batchTokens = finiteNumber(candidate?.batch?.tokenBudget);
-      if ([interactiveConcurrent, interactiveTokens, batchConcurrent, batchTokens].some((value) => value === null)) {
-        return false;
-      }
-      const actualReleasedConcurrent = interactiveConcurrentGuarantee - interactiveConcurrent;
-      const actualReleasedTokens = interactiveTokenGuarantee - interactiveTokens;
-      const actualBorrowedConcurrent = batchConcurrent - batchConcurrentGuarantee;
-      const actualBorrowedTokens = batchTokens - batchTokenGuarantee;
-      const concurrentMatches = releasedConcurrent <= 0 && borrowedConcurrent <= 0
-        ? true
-        : actualReleasedConcurrent > 0 && actualBorrowedConcurrent > 0 &&
-          actualReleasedConcurrent <= releasedConcurrent && actualBorrowedConcurrent <= borrowedConcurrent;
-      const tokenMatches = releasedTokens <= 0 && borrowedTokens <= 0
-        ? true
-        : actualReleasedTokens > 0 && actualBorrowedTokens > 0 &&
-          actualReleasedTokens <= releasedTokens && actualBorrowedTokens <= borrowedTokens;
-      return concurrentMatches && tokenMatches;
-    }) ?? null;
-
-    if (sample) {
-      return [{
-        controllerEventId: event?.id ?? null,
-        controllerObservedAt: event?.createdAt ?? null,
-        source: "latchflo.capacity_group.lending_observed+tyr.stats.applied_limits",
-        firstObservedAt: sample.observedAt ?? null,
-        interactive: sample.interactive ?? null,
-        batch: sample.batch ?? null,
-      }];
-    }
-
-    // Compatibility for callers that provide only the compact raw candidate,
-    // not the sampled timeline. The controller event is still mandatory and
-    // must precede the candidate observation.
-    const rawObservedAt = parsedTime(rawHeadroomTransferObservation?.firstObservedAt ?? null);
-    if (
-      rawHeadroomTransferCandidateObserved && rawObservedAt !== null && rawObservedAt >= eventAt &&
-      withinMeasuredRun(rawObservedAt) &&
-      (interactiveConcurrentGuarantee === null || interactiveTokenGuarantee === null)
-    ) {
-      return [{
-        controllerEventId: event?.id ?? null,
-        controllerObservedAt: event?.createdAt ?? null,
-        source: "latchflo.capacity_group.lending_observed+tyr.stats.applied_limits",
-        firstObservedAt: rawHeadroomTransferObservation?.firstObservedAt ?? null,
-        interactive: rawHeadroomTransferObservation?.interactive ?? null,
-        batch: rawHeadroomTransferObservation?.batch ?? null,
-      }];
-    }
-    return [];
+    const correlation = correlateHeadroomByGrant({
+      event,
+      events: relevant,
+      timeline: appliedTimeline,
+      batchPool,
+      guarantees: {
+        interactiveConcurrent: interactiveConcurrentGuarantee,
+        interactiveTokens: interactiveTokenGuarantee,
+        batchConcurrent: batchConcurrentGuarantee,
+        batchTokens: batchTokenGuarantee,
+      },
+      withinRun: withinMeasuredRun,
+    });
+    return correlation ? [correlation] : [];
   });
   const correlatedHeadroomTransferObservation = headroomTransferCorrelations.at(0) ?? null;
   const correlatedAppliedCapacity = appliedCapacity === null || appliedCapacity === undefined
@@ -741,6 +670,28 @@ export function summarizeControllerLending({
     group: groupName,
     demandAware: finalRebalance?.demandAware === true,
     lendingObserved: lending.length > 0,
+    controllerEvidence: {
+      schema: "moflux.controller-lending-evidence.v1",
+      eventLimitReached: events.length >= 1000,
+      grantLimitReached: grants.length >= 1000,
+      events: relevant.filter((event) => [
+        "capacity_group.handoff_prepared", "capacity_group.handoff_grant_applied",
+        "capacity_group.handoff_committed", "capacity_group.handoff_aborted",
+        "capacity_group.floor_restore_pending", "capacity_group.rebalanced",
+        "capacity_group.lending_observed",
+      ].includes(event.type)),
+      grants: grants.filter((grant) => ["sim-interactive", batchPool].includes(grant.pool)).map((grant) => ({
+        grantId: grant.grantId,
+        instanceId: grant.instanceId,
+        pool: grant.pool,
+        controllerEpoch: grant.controllerEpoch,
+        revision: grant.revision,
+        issuedAt: grant.issuedAt,
+        expiresAt: grant.expiresAt,
+        limits: grant.limits,
+        lifecycle: grant.lifecycle,
+      })),
+    },
     lendingEvents: lending.map((event) => ({
       id: event.id,
       createdAt: event.createdAt,
@@ -779,6 +730,11 @@ export function summarizeControllerLending({
     handoff: {
       observed: restorationPrepared !== null,
       handoffId,
+      selection: {
+        source: restorationSelection.source,
+        status: restorationSelection.status,
+        grantIds: restorationSelection.grantIds,
+      },
       drainGrants: drainGrants.length,
       appliedDrainGrants: appliedDrainIds.size,
       everyDrainApplied,

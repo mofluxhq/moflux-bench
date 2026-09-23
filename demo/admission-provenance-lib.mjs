@@ -145,12 +145,16 @@ export function summarizeAdmissionProvenance(samples, { pool = "batch" } = {}) {
 export function proveAdmissionUsesSuccessorGrant({
   provenance,
   successorGrantIds = [],
+  successorGrantLineage = [],
   predecessorGrantIds = [],
   notBeforeAt = null,
 } = {}) {
   const successors = new Set(successorGrantIds.filter(Boolean));
   const predecessors = new Set(predecessorGrantIds.filter(Boolean));
-  const lineage = new Set([...successors, ...predecessors]);
+  const descendants = new Map(successorGrantLineage
+    .filter((entry) => successors.has(entry.rootGrantId) && Number.isFinite(Date.parse(entry.notBeforeAt)))
+    .map((entry) => [entry.grantId, entry]));
+  const lineage = new Set([...successors, ...predecessors, ...descendants.keys()]);
   const fallbackFirstEvents = Array.isArray(provenance?.firstEventsByReplica)
     ? provenance.firstEventsByReplica
     : [];
@@ -217,9 +221,18 @@ export function proveAdmissionUsesSuccessorGrant({
     };
   }
 
+  const invalidDescendant = scopedEvents.find((event) => {
+    const entry = descendants.get(event?.grant?.grantId);
+    return entry && !(Date.parse(event.admittedAt) >= Date.parse(entry.notBeforeAt));
+  });
+  if (invalidDescendant) return {
+    proven: false, violated: false, status: "inconclusive_successor_lineage_timing",
+    source: provenance.source, firstEvents,
+  };
+
   const allSuccessor =
     successors.size > 0 &&
-    firstEvents.every((event) => successors.has(event?.grant?.grantId));
+    firstEvents.every((event) => successors.has(event?.grant?.grantId) || descendants.has(event?.grant?.grantId));
   if (allSuccessor) {
     return {
       proven: true,
@@ -228,6 +241,7 @@ export function proveAdmissionUsesSuccessorGrant({
       source: provenance.source,
       firstEvents,
       successorGrantIds: [...successors],
+      successorGrantLineage: [...descendants.values()],
     };
   }
 
