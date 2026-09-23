@@ -287,14 +287,46 @@ function makeVllmPolicy(tokenBudget) {
 export const VLLM_NVIDIA_POLICY = makeVllmPolicy(65_536);
 
 /**
- * Metal uses the same 65,536-token envelope as CUDA. A 262,144-token ceiling
- * was tried during 0.37.0 development after an M1 smoke seed recorded five
- * `budget_limit` decisions, but every one was made with a zero capacity
- * envelope: Tyr's fail-closed state between Latchflo grants, not token
- * pressure. Four slots of at most 256 tokens cannot exhaust this pool, so the
- * larger ceiling changed nothing and was reverted.
+ * Metal uses the same 65,536-token envelope as CUDA. Four slots of at most 256
+ * tokens cannot exhaust it, so a Metal `budget_limit` refusal is either a real
+ * validity failure or, with a zero capacity envelope, Tyr's fail-closed state
+ * between Latchflo grants. A larger ceiling would hide neither.
  */
 export const VLLM_METAL_POLICY = makeVllmPolicy(65_536);
+
+/**
+ * vLLM `--gpu-memory-utilization` per backend.
+ *
+ * CUDA keeps its preregistered 0.85 of dedicated GPU memory. On Apple Silicon,
+ * vLLM Metal budgets KV cache as this fraction of the unified-memory Metal
+ * working-set limit, minus model weights and overhead, so it competes directly
+ * with macOS and the Docker VM running Tyr and Latchflo. The workload can hold
+ * at most maxNumSeqs x maxModelLen = 16,384 KV tokens, about 450 MiB for
+ * Qwen2.5-1.5B (28 layers x 2 x 2 KV heads x 128 dims x 2 bytes per token).
+ * At 0.4 on a 16 GB M1 that still leaves about three times that KV capacity
+ * after roughly 3.6 GB of weights and overhead, without the multi-gigabyte
+ * reservation that forces the host to swap.
+ */
+export const VLLM_GPU_MEMORY_UTILIZATION = Object.freeze({ nvidia: 0.85, metal: 0.4 });
+
+export function vllmGpuMemoryUtilizationForBackend(backend) {
+  const value = VLLM_GPU_MEMORY_UTILIZATION[backend];
+  if (value === undefined) throw new Error(`unknown vLLM memory backend ${JSON.stringify(backend)}`);
+  return value;
+}
+
+/**
+ * A Metal seed is valid only if the host kept memory headroom in every arm.
+ * vLLM, macOS, and the Docker VM share unified memory; once the host swaps,
+ * Docker-to-host connections, control-plane requests, and engine latency all
+ * degrade together, and later arms degrade more. That is host contention, not
+ * an arm effect. A healthy arm swaps out almost nothing; 256 MiB tolerates
+ * incidental background paging while failing a host that is thrashing.
+ */
+export const VLLM_METAL_HOST_PRESSURE_LIMITS = Object.freeze({
+  maxSwapoutMiBPerArm: 256,
+  maxCriticalPressureSamples: 0,
+});
 
 /** Backward-compatible policy name for the canonical NVIDIA experiment. */
 export const VLLM_POLICY = VLLM_NVIDIA_POLICY;
@@ -1016,11 +1048,14 @@ export function vllmSeedProof({
   backend = "nvidia",
   workload = VLLM_WORKLOAD,
   policy = VLLM_POLICY,
+  gpuMemoryUtilization,
 } = {}) {
   if (!["nvidia", "metal"].includes(backend)) {
     throw new Error(`unknown vLLM proof backend ${JSON.stringify(backend)}`);
   }
   const metal = backend === "metal";
+  const expectedGpuMemoryUtilization =
+    gpuMemoryUtilization ?? vllmGpuMemoryUtilizationForBackend(backend);
   const gates = [];
   gates.push(gate(
     "allArmsPresent",
@@ -1123,6 +1158,32 @@ export function vllmSeedProof({
     "zero scrape/sample errors",
     "missing intervals can hide the short queue, KV, or restoration transition under test",
   ));
+  if (metal) {
+    const limits = VLLM_METAL_HOST_PRESSURE_LIMITS;
+    const byArm = Object.fromEntries(VLLM_ARM_IDS.map((id) => {
+      const pressure = arms[id]?.hostPressure;
+      return [id, {
+        samples: pressure?.sampleCount ?? 0,
+        errors: pressure?.errors ?? null,
+        worstPressure: pressure?.worstPressure ?? null,
+        criticalSamples: pressure?.pressureSamples?.critical ?? null,
+        swapoutMiB: pressure?.swapoutMiBDuringArm ?? null,
+        minFreeMiB: pressure?.freeMiB?.min ?? null,
+      }];
+    }));
+    gates.push(gate(
+      "hostMemoryHeadroom",
+      Object.values(byArm).every((arm) =>
+        arm.samples > 0 &&
+        Array.isArray(arm.errors) && arm.errors.length === 0 &&
+        arm.criticalSamples !== null && arm.criticalSamples <= limits.maxCriticalPressureSamples &&
+        arm.swapoutMiB !== null && arm.swapoutMiB <= limits.maxSwapoutMiBPerArm),
+      byArm,
+      `per arm: pressure samples present and error-free, critical <= ${limits.maxCriticalPressureSamples}, ` +
+        `swap-out <= ${limits.maxSwapoutMiBPerArm} MiB`,
+      "a swapping host degrades Docker networking, control-plane requests, and engine latency together; that is host contention, not an arm effect",
+    ));
+  }
   gates.push(gate(
     "managedSamplerIntegrity",
     ["static", "moflux"].every((id) =>
@@ -1276,7 +1337,7 @@ export function vllmSeedProof({
       (metal || (typeof value.gpuUuid === "string" && value.gpuUuid.length > 0)) &&
       value.maxNumSeqs === VLLM_MAX_NUM_SEQS &&
       value.maxModelLen === 4_096 &&
-      value.gpuMemoryUtilization === 0.85 &&
+      value.gpuMemoryUtilization === expectedGpuMemoryUtilization &&
       value.prefixCaching === false),
     identities,
     metal

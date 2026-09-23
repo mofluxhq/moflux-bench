@@ -115,6 +115,7 @@ import {
   vllmNominalClassGrant,
   vllmPolicyForBackend,
   vllmPoolDefinition,
+  vllmGpuMemoryUtilizationForBackend,
   vllmSamplingForBackend,
   vllmSeedProof,
   vllmSweepProof,
@@ -222,6 +223,10 @@ try {
       DEFAULT_SAMPLING.platformIntervalMs,
     ),
     pauseMs: num("pause-ms", 2_000),
+    gpuMemoryUtilization: num(
+      "gpu-memory-utilization",
+      vllmGpuMemoryUtilizationForBackend(backend),
+    ),
     requireProof: flag("require-proof"),
     keepStack: flag("keep-stack"),
     dryRun: flag("dry-run"),
@@ -239,6 +244,13 @@ try {
     throw new Error(
       `--served-model must remain ${DEFAULT_VLLM_SERVED_MODEL}; both Tyr configs route that exact alias`,
     );
+  }
+  if (
+    !Number.isFinite(OPT.gpuMemoryUtilization) ||
+    OPT.gpuMemoryUtilization < 0.05 ||
+    OPT.gpuMemoryUtilization > 0.95
+  ) {
+    throw new Error("--gpu-memory-utilization must be a number from 0.05 to 0.95");
   }
   if (!Number.isSafeInteger(OPT.durationMs) || OPT.durationMs < 85_000) {
     throw new Error("--duration-ms must be an integer of at least 85000");
@@ -349,6 +361,7 @@ const plan = {
   minTokensSent: !IS_METAL,
   maxNumSeqs: VLLM_MAX_NUM_SEQS,
   tokenBudget: POLICY.physical.tokenBudget,
+  gpuMemoryUtilization: OPT.gpuMemoryUtilization,
   samplingMs:
     `vllm=${SAMPLING.vllmIntervalMs},managed=${SAMPLING.managedIntervalMs},` +
     `platform=${SAMPLING.platformIntervalMs}`,
@@ -374,6 +387,7 @@ let ADMIN_TOKEN = process.env.LATCHFLO_ADMIN_TOKEN ?? null;
 let identity = null;
 let metalProcess = null;
 let metalRuntime = null;
+let dockerVmMemoryBytes = null;
 let metalLaunchCount = 0;
 const VLLM_API_KEY = IS_METAL ? `moflux-${randomBytes(32).toString("base64url")}` : "";
 
@@ -499,7 +513,7 @@ function metalServerArgs(arm) {
     "--port", String(VLLM_PORT),
     "--max-num-seqs", String(VLLM_MAX_NUM_SEQS),
     "--max-model-len", "4096",
-    "--gpu-memory-utilization", "0.85",
+    "--gpu-memory-utilization", String(OPT.gpuMemoryUtilization),
     "--scheduling-policy", arm.schedulingPolicy,
     "--no-enable-prefix-caching",
     vllmApiKeyArgument(VLLM_API_KEY),
@@ -944,7 +958,7 @@ function runtimeIdentity(arm, gpu) {
       schedulingPolicy: arm.schedulingPolicy,
       maxNumSeqs: VLLM_MAX_NUM_SEQS,
       maxModelLen: 4_096,
-      gpuMemoryUtilization: 0.85,
+      gpuMemoryUtilization: OPT.gpuMemoryUtilization,
       prefixCaching: false,
       pagedAttention: true,
       authenticatedHostBridge: true,
@@ -1243,6 +1257,7 @@ try {
       MOFLUX_TYR_IMAGE: TYR_IMAGE,
       MOFLUX_VLLM_GPU_DEVICE: OPT.gpuIndex,
       MOFLUX_VLLM_SCHEDULING_POLICY: "priority",
+      MOFLUX_VLLM_GPU_MEMORY_UTILIZATION: String(OPT.gpuMemoryUtilization),
     };
     compose(["config", "--quiet"], { doctor: true });
     console.log(
@@ -1253,6 +1268,15 @@ try {
     );
   } else {
     ensureDemoEnv(ENV_FILE, { quiet: true });
+    if (IS_METAL) {
+      const info = runCommand("docker", ["info", "--format", "{{.MemTotal}}"], { allowFailure: true });
+      const bytes = Number(info.stdout.trim());
+      dockerVmMemoryBytes = Number.isSafeInteger(bytes) && bytes > 0 ? bytes : null;
+      console.log(
+        `unified memory: Docker VM ${dockerVmMemoryBytes === null ? "unknown" : `${(dockerVmMemoryBytes / 2 ** 30).toFixed(1)} GiB`}, ` +
+          `vLLM --gpu-memory-utilization=${OPT.gpuMemoryUtilization}`,
+      );
+    }
     env = {
       ...parseEnvFile(ENV_FILE),
       ...process.env,
@@ -1263,6 +1287,7 @@ try {
       MOFLUX_VLLM_SERVED_MODEL: OPT.servedModel,
       MOFLUX_VLLM_GPU_DEVICE: OPT.gpuIndex,
       MOFLUX_VLLM_SCHEDULING_POLICY: "priority",
+      MOFLUX_VLLM_GPU_MEMORY_UTILIZATION: String(OPT.gpuMemoryUtilization),
     };
     ADMIN_TOKEN = env.LATCHFLO_ADMIN_TOKEN ?? null;
     if (!ADMIN_TOKEN) throw new Error("LATCHFLO_ADMIN_TOKEN is not configured");
@@ -1495,6 +1520,7 @@ try {
         backend: OPT.backend,
         workload: WORKLOAD,
         policy: POLICY,
+        gpuMemoryUtilization: OPT.gpuMemoryUtilization,
       });
       const row = { seed, order, arms, evidence, comparison, proof };
       rows.push(row);
@@ -1549,6 +1575,8 @@ if (OPT.doctor) {
       latchflo: VLLM_LATCHFLO_VERSION,
       latchfloImage: LATCHFLO_IMAGE,
       vllm: IS_METAL ? metalRuntime?.engineVersion ?? null : VLLM_VERSION,
+      // Docker's VM shares the Mac's unified memory with vLLM Metal.
+      ...(IS_METAL ? { dockerVmMemoryBytes } : {}),
       ...(IS_METAL
         ? { vllmMetal: metalRuntime?.pluginVersion ?? null, platform: metalRuntime }
         : { image: OPT.image }),
@@ -1579,7 +1607,7 @@ if (OPT.doctor) {
       engine: {
         maxNumSeqs: VLLM_MAX_NUM_SEQS,
         maxModelLen: 4_096,
-        gpuMemoryUtilization: 0.85,
+        gpuMemoryUtilization: OPT.gpuMemoryUtilization,
         prefixCaching: false,
         ...(IS_METAL ? { pagedAttention: true } : {}),
       },

@@ -205,6 +205,9 @@ for (const expected of [
   '"managedGrantContinuity"',
   "unlentProtectedTokens: Object.freeze({ interactive: 8_192, batch: 4_096 })",
   '"interactiveSloSignal"',
+  '"hostMemoryHeadroom"',
+  "VLLM_GPU_MEMORY_UTILIZATION = Object.freeze({ nvidia: 0.85, metal: 0.4 })",
+  "maxSwapoutMiBPerArm: 256",
 ]) {
   if (!vllmLibrary.includes(expected)) {
     findings.push(`demo/vllm-contention-lib.mjs: missing ${expected}`);
@@ -497,8 +500,8 @@ if (
     "package.json: the unlent-concurrency contention dry-run, single-seed and verify commands are required",
   );
 }
-if (pkg.version !== "0.38.0") {
-  findings.push("package.json: the current benchmark release must be version 0.38.0");
+if (pkg.version !== "0.39.0") {
+  findings.push("package.json: the current benchmark release must be version 0.39.0");
 }
 // Latchflo 0.17.0 still failed closed at lending transitions; the vLLM
 // experiment's grant-continuity gate needs 0.17.1.

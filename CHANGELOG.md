@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.39.0 - 2026-09-23
+
+Addresses the memory limits of 16 GB Apple-Silicon hosts.
+
+### Added
+
+- **`hostMemoryHeadroom` validity gate (Metal).** A seed is inconclusive if, in
+  any arm:
+  - pressure samples are missing or failed;
+  - any sample reached `critical` memory pressure;
+  - more than 256 MiB was swapped out.
+
+  vLLM Metal, macOS, and the Docker VM running Tyr and Latchflo share unified
+  memory. Once the host swaps, Docker networking, control-plane requests and
+  engine latency degrade together, and later arms degrade more. That is host
+  contention, not an arm effect. `warn` pressure is reported but does not fail
+  the gate on its own. The 0.38.0 host-pressure samples were diagnostic only.
+- **`--gpu-memory-utilization`.** The value applies to every arm of a run and
+  appears in the plan and the recorded engine identity. The
+  `runtimeConfigurationObserved` gate now checks each arm's observed value
+  against the declared one, rather than a hard-coded 0.85. The NVIDIA Compose
+  service takes it from the runner.
+- **`runtime.dockerVmMemoryBytes`** is recorded for Metal runs and printed at
+  startup.
+
+### Changed
+
+- **Metal defaults to `--gpu-memory-utilization=0.4`; NVIDIA keeps 0.85.** vLLM
+  Metal budgets KV cache as this fraction of the unified-memory Metal
+  working-set limit, minus model weights and overhead. At 0.85 that reservation
+  is several gigabytes on a 16 GB Mac. This workload can hold at most
+  4 × 4,096 = 16,384 KV tokens, about 450 MiB for Qwen2.5-1.5B. At 0.4 the KV
+  budget is still about three times that. KV capacity never binds for this
+  workload, so scheduling and preemption behavior are unaffected. Metal
+  results recorded at 0.85 are not comparable with 0.4 results. The documented
+  Docker Desktop VM size for these runs is 2–4 GB.
+
 ## 0.38.0 - 2026-09-22
 
 This release adds evidence for Metal failures the harness could not attribute

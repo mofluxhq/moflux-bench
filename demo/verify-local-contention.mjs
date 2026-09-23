@@ -1566,10 +1566,10 @@ assert.deepEqual(rejectionDetailSummary.budgetRejectionSnapshots, [{
   },
 }]);
 
-// Tyr's fail-closed state between Latchflo grants, as recorded by the
-// 20260922T210601Z vLLM Metal seed. Tyr reports budget_limit, but the physical
-// envelope is zero, so it is a grant gap rather than a token refusal. The
-// summary classifies from Tyr's detail, so pre-flag results agree.
+// Tyr's fail-closed state between Latchflo grants, in the exact form Tyr
+// 0.30.0 reports it. Tyr says budget_limit, but the physical envelope is zero,
+// so it is a grant gap rather than a token refusal. The summary classifies from
+// Tyr's detail, so results recorded before the load-generator flag agree.
 const grantGapFixture = loadgenFixture({
   ttftContention: 400,
   goodputContention: 0.3,
@@ -1637,8 +1637,8 @@ assert.equal(
 assert.equal(zeroCapacityEnvelope({ maxQueue: 0, tokenBudget: { budget: 0 } }), false, "absent concurrency is not zero");
 assert.equal(zeroCapacityEnvelope(null), false);
 
-// 5xx causes: Tyr 0.30.0 bodies (recorded in 20260922T232052Z) carry only the
-// type; Tyr 0.31.0 adds the transport code; anything unparseable keeps status.
+// 5xx causes: Tyr 0.30.0 bodies carry only the type; Tyr 0.31.0 adds the
+// transport code; anything unparseable keeps its status.
 assert.deepEqual(
   summarizeServerErrorCauses([
     { status: 502, body: '{"error":{"type":"upstream_error","message":"fetch failed"}}' },

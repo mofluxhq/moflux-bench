@@ -1,5 +1,21 @@
 # MoFlux Bench verification
 
+## 0.39.0 Metal memory headroom
+
+`npm run verify:vllm` pins the per-backend memory defaults (NVIDIA 0.85, Metal
+0.4). It shows that the runtime gate accepts an explicitly declared override
+and rejects an observed value that differs from the declared one. It also proves
+that `hostMemoryHeadroom` fails a Metal seed when any single arm:
+- swaps out 6,000 MiB;
+- records one `critical` pressure sample;
+- has no pressure evidence;
+- has a pressure-sampling error.
+
+255.9 MiB of swap-out is tolerated, and a healthy seed still passes every gate.
+`node demo/vllm-contention.mjs --dry-run` shows 0.4 for Metal and 0.85 for
+NVIDIA, and it rejects values outside 0.05–0.95. `npm run verify:publication`
+requires the gate, the defaults, and the 256 MiB limit.
+
 ## 0.38.0 upstream-failure and host-pressure diagnostics
 
 `npm run verify:vllm` checks the host-pressure parsers against `vm_stat`,
@@ -60,11 +76,8 @@ Zero-envelope classification is verified at three layers:
   `grantUnavailable`, the split detail aggregates, and the snapshot flags must
   each count only their own kind.
 - `demo/verify-local-contention.mjs` checks the shared summarizer against a
-  refusal recorded in a real Metal run.
+  refusal in Tyr's exact zero-envelope form, beside a real concurrency refusal.
 - `demo/verify-vllm-contention.mjs` checks the proof gate.
-
-Applied to the four pre-release Metal runs, the summarizer classifies all 178
-recorded `budget_limit` refusals as zero-envelope and none as token pressure.
 
 `npm run demo:vllm:dry-run` must print the full plan and create no directory.
 `npm run demo:vllm:doctor` checks Docker, the rendered Compose configuration,

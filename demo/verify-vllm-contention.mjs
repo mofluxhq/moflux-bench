@@ -10,6 +10,8 @@ import { fileURLToPath } from "node:url";
 import { buildTrace } from "../load/trace-lib.mjs";
 import {
   VLLM_ARM_IDS,
+  VLLM_GPU_MEMORY_UTILIZATION,
+  VLLM_METAL_HOST_PRESSURE_LIMITS,
   VLLM_METAL_WORKLOAD,
   VLLM_METAL_POLICY,
   VLLM_METAL_RUNTIME_PROBE_PREFIX,
@@ -33,6 +35,7 @@ import {
   summarizeVllmTelemetry,
   vllmApiKeyArgument,
   vllmFixedOutputFields,
+  vllmGpuMemoryUtilizationForBackend,
   vllmNominalClassGrant,
   vllmPolicyForBackend,
   vllmPoolDefinition,
@@ -297,6 +300,16 @@ assert.equal(hostPressure.thermalWarningSamples, 1);
 assert.deepEqual(hostPressure.thermalRecordedLines, ["Thermal warning level: 1"]);
 assert.deepEqual(hostPressure.errors, ["sysctl timed out"]);
 assert.equal(summarizeHostPressure([], []).worstPressure, null);
+const healthyHostPressure = summarizeHostPressure([
+  { atMs: 0, vm: vmStat, memory: { ...memory, pressure: "normal", pressureLevel: 1 }, therm: quietTherm },
+  { atMs: 5_000, vm: vmStat, memory: { ...memory, pressure: "normal", pressureLevel: 1 }, therm: quietTherm },
+], []);
+assert.equal(healthyHostPressure.swapoutMiBDuringArm, 0);
+
+assert.deepEqual(VLLM_GPU_MEMORY_UTILIZATION, { nvidia: 0.85, metal: 0.4 });
+assert.equal(vllmGpuMemoryUtilizationForBackend("metal"), 0.4);
+assert.throws(() => vllmGpuMemoryUtilizationForBackend("other"), /unknown vLLM memory backend/u);
+assert.deepEqual(VLLM_METAL_HOST_PRESSURE_LIMITS, { maxSwapoutMiBPerArm: 256, maxCriticalPressureSamples: 0 });
 
 const managedSamples = [
   { offsetMs: 30_000, pool: { maxConcurrent: 4 }, classes: {
@@ -442,9 +455,9 @@ assert.ok(
   seedProof.gates.some(({ gate, passed }) => gate === "managedGrantContinuity" && passed),
   "a seed without zero-envelope refusals passes grant continuity",
 );
-// The 20260922T210601Z Metal seed: Tyr reported budget_limit while holding its
-// even fail-closed revision between Latchflo grants. That is a control-plane
-// gap, so it must invalidate the seed without being counted as token pressure.
+// Tyr reports budget_limit while holding its even fail-closed revision between
+// Latchflo grants. That is a control-plane gap, so it must invalidate the seed
+// without being counted as token pressure.
 const grantGapArms = structuredClone(arms);
 grantGapArms.static.bindingConstraint.batch.grantUnavailable = 2;
 grantGapArms.static.classes.batch.grantUnavailableRejections = 2;
@@ -515,6 +528,7 @@ const metalArms = Object.fromEntries(VLLM_ARM_IDS.map((id) => [id, {
   },
   gpu: null,
   hostProcess,
+  hostPressure: healthyHostPressure,
   runtimeIdentity: {
     backend: "metal",
     engineVersion: "0.29.0",
@@ -529,7 +543,7 @@ const metalArms = Object.fromEntries(VLLM_ARM_IDS.map((id) => [id, {
     macosVersion: "15.6.1",
     maxNumSeqs: 4,
     maxModelLen: 4096,
-    gpuMemoryUtilization: 0.85,
+    gpuMemoryUtilization: 0.4,
     prefixCaching: false,
     pagedAttention: true,
     schedulingPolicy: id === "vllm-fcfs" ? "fcfs" : "priority",
@@ -543,6 +557,66 @@ const metalSeedProof = vllmSeedProof({
   policy: VLLM_METAL_POLICY,
 });
 assert.equal(metalSeedProof.valid, true, JSON.stringify(metalSeedProof.failed));
+assert.ok(metalSeedProof.gates.some(({ gate, passed }) => gate === "hostMemoryHeadroom" && passed));
+const metalProofWith = (mutate, options = {}) => {
+  const variant = structuredClone(metalArms);
+  mutate(variant);
+  return vllmSeedProof({
+    arms: variant,
+    evidence: { moflux: { recovery, controlPlane } },
+    backend: "metal",
+    workload: VLLM_METAL_WORKLOAD,
+    policy: VLLM_METAL_POLICY,
+    ...options,
+  });
+};
+const failedGates = (proof) => proof.failed.map(({ gate }) => gate);
+// A host that swaps gigabytes during an arm cannot produce arm-effect evidence.
+const thrashing = metalProofWith((variant) => {
+  variant.moflux.hostPressure = { ...healthyHostPressure, swapoutMiBDuringArm: 6_000 };
+});
+assert.deepEqual(failedGates(thrashing), ["hostMemoryHeadroom"]);
+assert.equal(
+  thrashing.failed[0].observed.moflux.swapoutMiB,
+  6_000,
+);
+assert.deepEqual(
+  failedGates(metalProofWith((variant) => {
+    variant.static.hostPressure = {
+      ...healthyHostPressure,
+      pressureSamples: { normal: 1, warn: 0, critical: 1, unknown: 0 },
+    };
+  })),
+  ["hostMemoryHeadroom"],
+);
+assert.deepEqual(
+  failedGates(metalProofWith((variant) => { delete variant["vllm-fcfs"].hostPressure; })),
+  ["hostMemoryHeadroom"],
+  "missing pressure evidence fails closed",
+);
+assert.deepEqual(
+  failedGates(metalProofWith((variant) => {
+    variant["vllm-priority"].hostPressure = { ...healthyHostPressure, errors: ["vm_stat timed out"] };
+  })),
+  ["hostMemoryHeadroom"],
+);
+assert.ok(
+  metalProofWith((variant) => {
+    variant.moflux.hostPressure = { ...healthyHostPressure, swapoutMiBDuringArm: 255.9 };
+  }).valid,
+  "incidental paging under the limit is tolerated",
+);
+// The observed engine memory setting must match the run's declared value.
+const undeclared = metalProofWith((variant) => {
+  for (const arm of Object.values(variant)) arm.runtimeIdentity.gpuMemoryUtilization = 0.85;
+});
+assert.deepEqual(failedGates(undeclared), ["runtimeConfigurationObserved"]);
+assert.ok(
+  metalProofWith((variant) => {
+    for (const arm of Object.values(variant)) arm.runtimeIdentity.gpuMemoryUtilization = 0.85;
+  }, { gpuMemoryUtilization: 0.85 }).valid,
+  "an explicitly declared override is a controlled runtime",
+);
 const wrongMetalWorkloadProof = vllmSeedProof({
   arms: metalArms,
   evidence: { moflux: { recovery, controlPlane } },

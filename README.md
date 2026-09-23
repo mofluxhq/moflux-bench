@@ -701,16 +701,18 @@ grants and occupancy, so that failure is diagnosable rather than waived.
 
 A refusal made with a zero capacity envelope is not token pressure, even when
 Tyr reports `budget_limit`. It is Tyr's fail-closed state between Latchflo
-grants, and all 178 `budget_limit` refusals in four pre-release Metal runs were
-of this kind. The load generator and summaries report it as `grantUnavailable`,
+grants. The load generator and summaries report it as `grantUnavailable`,
 outside the token and concurrency counts, and the `managedGrantContinuity` gate
 makes it invalidate the seed. This experiment pins Latchflo 0.17.1, which
 renews live leases before they expire and commits idle-floor lending without
 waiting for expiry. It also pins Tyr 0.31.0, whose 502 responses name the
 transport cause. The other experiments keep their recorded Latchflo 0.16.0 and
 Tyr 0.30.0 runtime. Metal arms also report host memory pressure, swap and
-thermal state as `hostPressure`. That is diagnostic evidence for runs that
-struggle, not a validity gate.
+thermal state as `hostPressure`. The `hostMemoryHeadroom` gate makes a seed
+inconclusive if any arm hit critical pressure, swapped out more than 256 MiB,
+or lost its pressure samples. vLLM's `--gpu-memory-utilization` defaults to 0.4
+on Metal, down from 0.85, so its KV reservation leaves room for macOS and
+Docker's VM on a 16 GB Mac. CUDA keeps 0.85.
 
 CUDA fixed-output requests send `ignore_eos` and `min_tokens=max_tokens`.
 vLLM Metal 0.29.0 rejects `min_tokens`, so the Metal path intentionally sends

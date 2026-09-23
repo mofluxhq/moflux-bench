@@ -32,8 +32,10 @@ CUDA fixed-output workload:
 The runner recreates the vLLM service before **every** arm. On NVIDIA this is a
 container; on Apple Silicon it is a native vLLM Metal process. The model commit,
 served-model alias, hardware, `max-num-seqs=4`, `max-model-len=4096`,
-`gpu-memory-utilization=0.85`, and disabled prefix caching stay fixed. Only the
-declared scheduler and admission path change. A symbolic Hugging Face revision
+`gpu-memory-utilization`, and disabled prefix caching stay fixed. Only the
+declared scheduler and admission path change. The memory setting defaults to
+0.85 on NVIDIA and 0.4 on Metal. `--gpu-memory-utilization` overrides it for
+the whole run, and every arm's observed value must equal the declared one. A symbolic Hugging Face revision
 such as `main` is resolved once to an immutable commit before the stack starts;
 that same commit is supplied to all four processes.
 
@@ -215,14 +217,13 @@ grants. Summaries classify it as `grantUnavailable`: it is excluded from
 `budgetLimited` and `concurrencyLimited`, counted in
 `classes.*.grantUnavailableRejections`, and listed with its revision and grant
 ID in `classes.*.grantUnavailableSnapshots`. The `managedGrantContinuity` gate
-makes any such refusal invalidate the seed. Before 0.37.0 shipped, four
-development Metal runs recorded 178 `budget_limit` refusals; all 178 were zero
-envelopes on a roughly 15-second lease cycle, and none were token pressure.
-Latchflo 0.17.0 renews a live lease before it expires. The first seed on 0.17.0
-(`20260922T224322Z`) had no gap refusals in the static arm, down from seven. Its
-MoFlux arm still had one: `batch-12` hit a window of about 370 ms at a lending
-transition. The lent floor was applied only when the old lease expired. Latchflo
-0.17.1 commits idle-floor lending immediately. This experiment therefore pins
+makes any such refusal invalidate the seed. Latchflo 0.16.0 produced one at
+every lease boundary, because it reissued a grant only after expiry. Latchflo
+0.17.0 renews a live lease before it expires. In 0.17.0, lending an idle class's
+floor still waited for the old lease to expire; Latchflo 0.17.1 commits it
+immediately. Such a window can be shorter than the one-second managed sampler
+interval, so the refusal record and the retained Latchflo events are the
+authoritative evidence. This experiment therefore pins
 `latchflo-control-plane:0.17.1` independently of the other experiments. If the
 image is missing, the runner builds it from a `latchflo-control-plane` 0.17.1
 checkout beside `moflux-bench` or from `MOFLUX_LATCHFLO_SOURCE_DIR`. To use a
@@ -246,9 +247,9 @@ The experiment pins Tyr 0.31.0. When Tyr's own call to vLLM fails, its
 `cause.code: "ECONNRESET"` or `"UND_ERR_SOCKET"`. Tyr also writes a
 `tyr.diagnostic.v1` line with the detail to its log, which the Compose logs
 above retain. Class summaries count these as `serverErrorCauses`, and the
-`noEngineOrTransportErrors` gate reports them per arm. Under Tyr 0.30.0, run
-`20260922T232052Z` had three such 502s that vLLM's access log never recorded,
-and the cause could not be recovered.
+`noEngineOrTransportErrors` gate reports them per arm. Under Tyr 0.30.0 a 502
+carried only `fetch failed`, and nothing recorded why, so a failure that never
+reached vLLM could not be attributed.
 
 On Metal, the runner also samples host memory pressure on each five-second
 platform tick, because process CPU/RSS cannot show unified-memory contention:
@@ -257,9 +258,26 @@ platform tick, because process CPU/RSS cannot show unified-memory contention:
 - `pmset -g therm` thermal and performance warnings.
 
 vLLM, Docker's VM, Tyr and Latchflo all share that memory. Each arm reports
-`hostPressure` and prints a one-line host summary. These samples are
-diagnostic. They do not invalidate a seed, but a run whose arms differ sharply
-in swap-outs or thermal warnings should not be read as an arm effect.
+`hostPressure` and prints a one-line host summary. The `hostMemoryHeadroom`
+gate makes a Metal seed inconclusive if, in any arm:
+- pressure samples are missing or failed;
+- any sample reached `critical` memory pressure;
+- more than 256 MiB was swapped out.
+
+A swapping host degrades Docker networking, control-plane requests and engine
+latency together, and later arms degrade more. That is host contention, not an
+arm effect. `warn` pressure is reported but does not fail the gate on its own;
+swap-outs are the objective measure.
+
+Two settings keep a 16 GB Apple-Silicon Mac inside that budget:
+- **vLLM's KV reservation.** vLLM Metal budgets KV cache as a fraction of the
+  unified-memory Metal working-set limit. At 0.85 that reservation is several
+  gigabytes, while this workload can hold at most 4 × 4,096 = 16,384 KV tokens,
+  about 450 MiB for Qwen2.5-1.5B. The Metal default of 0.4 still leaves about
+  three times that capacity after the model weights.
+- **Docker Desktop's VM memory.** Tyr and Latchflo need little memory. Set the
+  VM to about 2–4 GB in Docker Desktop's resource settings. The runner prints
+  the VM's memory at startup and records it as `runtime.dockerVmMemoryBytes`.
 
 The top-level result has three states:
 
@@ -267,7 +285,8 @@ The top-level result has three states:
   request metrics, missing token evidence, missing NVIDIA GPU or Metal process
   samples, no observed queue, zero SLO goodput in both direct arms, trace
   mismatch, generator saturation, runtime identity drift, a managed-arm refusal
-  with no live grant, or an engine/request/transport error.
+  with no live grant, a Metal host that swapped or hit critical memory pressure
+  during an arm, or an engine/request/transport error.
 - `fail`: the run was valid but at least one preregistered performance or
   restoration hypothesis failed.
 - `pass`: the run was valid and every preregistered hypothesis passed.
