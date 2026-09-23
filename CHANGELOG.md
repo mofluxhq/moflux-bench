@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.39.0 - 2026-09-23
+## 0.39.0 - 2026-09-22
 
 Addresses the memory limits of 16 GB Apple-Silicon hosts.
 
