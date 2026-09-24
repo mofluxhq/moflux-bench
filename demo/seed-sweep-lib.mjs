@@ -5,6 +5,8 @@
  * without Docker or proprietary images.
  */
 
+import { HEADROOM_PROFILES } from "./capacity-lib.mjs";
+
 export function parseSeedSpec(spec) {
   const text = String(spec ?? "").trim();
   if (!text) throw new Error("seed specification must not be empty");
@@ -319,10 +321,9 @@ const ADAPTIVE_MIN_INTERACTIVE_SUCCESS_RATE = 0.9;
 const ADAPTIVE_MIN_BATCH_SUCCESSES = 4;
 
 function adaptiveProof(records, capacity, { context = "default" } = {}) {
-  const supportedProfiles = new Set(["adaptive-28-4", "adaptive-headroom-28-4"]);
-  if (!supportedProfiles.has(capacity?.profile)) return null;
+  const headroomProfile = HEADROOM_PROFILES[capacity?.profile] ?? null;
+  if (capacity?.profile !== "adaptive-28-4" && !headroomProfile) return null;
 
-  const headroomProfile = capacity.profile === "adaptive-headroom-28-4";
   const idleOccupancyRequired = context !== "headroom-compare";
   const interactivePool = capacity.pools?.find((pool) => pool.name === "sim-interactive");
   const batchPool = capacity.pools?.find((pool) => pool.name === "sim-batch");
@@ -350,11 +351,7 @@ function adaptiveProof(records, capacity, { context = "default" } = {}) {
     interactivePool?.ceilingMaxConcurrent === 32 &&
     interactivePool?.ceilingTokenBudget === 64_000 &&
     (headroomProfile
-      ? headroom?.minConcurrentHeadroom === 4 &&
-        headroom?.minTokenHeadroom === 4000 &&
-        headroom?.demandingSustainMs === 3000 &&
-        headroom?.maxDemandingConcurrentLend === 2 &&
-        headroom?.maxDemandingTokenLend === 10_000
+      ? Object.entries(headroomProfile).every(([key, value]) => headroom?.[key] === value)
       : headroom === undefined) &&
     batchPool?.guaranteedMaxConcurrent === 4 &&
     batchPool?.guaranteedTokenBudget === 40_000 &&

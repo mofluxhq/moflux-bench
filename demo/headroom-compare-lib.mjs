@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { HEADROOM_PROFILES } from "./capacity-lib.mjs";
 import { summarize } from "./seed-sweep-lib.mjs";
 
 export function readCompletedSweepSummary(file, result, profile) {
@@ -113,7 +114,7 @@ function normalizeThresholds(seedCount, comparison, overrides = {}) {
   const fundedLend = finite(comparison?.headroomCapacityExpectation?.effectiveFundedDemandingLend);
   if (fundedLend === null || fundedLend < 1) {
     throw new Error(
-      "adaptive-headroom-28-4 must fund at least one additional batch reservation during demanding-state lending",
+      "the headroom profile must fund at least one additional batch reservation during demanding-state lending",
     );
   }
   const baselineMedian =
@@ -282,8 +283,11 @@ export function buildHeadroomPolicyComparison(baseline, headroom, acceptanceOver
   if (baseline?.capacityPolicy?.profile !== "adaptive-28-4") {
     throw new Error("baseline sweep must use capacity profile adaptive-28-4");
   }
-  if (headroom?.capacityPolicy?.profile !== "adaptive-headroom-28-4") {
-    throw new Error("headroom sweep must use capacity profile adaptive-headroom-28-4");
+  const headroomProfile = headroom?.capacityPolicy?.profile;
+  if (!HEADROOM_PROFILES[headroomProfile]) {
+    throw new Error(
+      `headroom sweep must use a headroom capacity profile (${Object.keys(HEADROOM_PROFILES).join(", ")})`,
+    );
   }
   const baselineSeeds = baseline?.seeds ?? [];
   const headroomSeeds = headroom?.seeds ?? [];
@@ -360,7 +364,7 @@ export function buildHeadroomPolicyComparison(baseline, headroom, acceptanceOver
     kind: "headroom-policy-comparison",
     seeds: baselineSeeds,
     baselineProfile: "adaptive-28-4",
-    headroomProfile: "adaptive-headroom-28-4",
+    headroomProfile,
     sameScenarioTemplate: true,
     headroomEvidenceDefinition:
       "in-window demanding controller event + bounded correlated Tyr transfer",

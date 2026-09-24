@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { REVIEWED_EVIDENCE, RUNS_DIRNAME, isReviewedEvidence } from "../demo/evidence-paths-lib.mjs";
+import { HEADROOM_PROFILES } from "../demo/capacity-lib.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const required = [
@@ -423,7 +424,7 @@ for (const required of [
 }
 const presenter023 = readFileSync(path.join(ROOT, "demo/present.mjs"), "utf8");
 for (const required of [
-  "adaptive-headroom-28-4",
+  "HEADROOM_PROFILES",
   "headroomLending",
   "minConcurrentHeadroom",
   "minTokenHeadroom",
@@ -436,6 +437,16 @@ for (const required of [
   if (!presenter023.includes(required)) {
     findings.push(`demo/present.mjs: missing retained headroom/provenance feature ${required}`);
   }
+}
+// Saved evidence names this profile; its policy must never change under it.
+if (JSON.stringify(HEADROOM_PROFILES["adaptive-headroom-28-4"]) !== JSON.stringify({
+  minConcurrentHeadroom: 4,
+  minTokenHeadroom: 4000,
+  demandingSustainMs: 3000,
+  maxDemandingConcurrentLend: 2,
+  maxDemandingTokenLend: 10_000,
+})) {
+  findings.push("demo/capacity-lib.mjs: adaptive-headroom-28-4 must keep its published 4/4000/3000/2/10000 headroom policy");
 }
 
 if (pkg.scripts?.demo !== "node demo/seed-sweep.mjs --seeds=1-5 --pause-ms=0 --provider-api=anthropic" ||
@@ -500,8 +511,8 @@ if (
     "package.json: the unlent-concurrency contention dry-run, single-seed and verify commands are required",
   );
 }
-if (pkg.version !== "0.43.0") {
-  findings.push("package.json: the current benchmark release must be version 0.43.0");
+if (pkg.version !== "0.44.0") {
+  findings.push("package.json: the current benchmark release must be version 0.44.0");
 }
 // Latchflo 0.17.0 still failed closed at lending transitions; the vLLM
 // experiment's grant-continuity gate needs 0.17.1.

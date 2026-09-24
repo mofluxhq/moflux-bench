@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { HEADROOM_PROFILES } from "./capacity-lib.mjs";
 import { buildHeadroomPolicyComparison, readCompletedSweepSummary } from "./headroom-compare-lib.mjs";
 import { parseSeedSpec } from "./seed-sweep-lib.mjs";
 import {
@@ -27,6 +28,13 @@ for (const arg of process.argv.slice(2)) {
   else if (arg.startsWith("--")) raw.set(arg.slice(2), "true");
 }
 const seeds = parseSeedSpec(raw.get("seeds") ?? "1-5");
+// The policy compared against plain adaptive-28-4. Each name fixes its values.
+const HEADROOM_PROFILE = raw.get("headroom-profile") ?? "adaptive-headroom-28-4";
+if (!HEADROOM_PROFILES[HEADROOM_PROFILE]) {
+  throw new Error(
+    `--headroom-profile must be one of ${Object.keys(HEADROOM_PROFILES).join(", ")}, got "${HEADROOM_PROFILE}"`,
+  );
+}
 const baseId = raw.get("run-id") ?? runId();
 const baselineId = `${baseId}-adaptive`;
 const headroomId = `${baseId}-headroom`;
@@ -62,7 +70,7 @@ function runSweep(profile, id, cleanup = false) {
 const baselineFile = path.join(runDir(RESULTS, SWEEP_NAME, baselineId), "summary.json");
 const headroomFile = path.join(runDir(RESULTS, SWEEP_NAME, headroomId), "summary.json");
 
-console.log("\nMoFlux policy comparison — adaptive 28/4 vs headroom-aware 28/4");
+console.log(`\nMoFlux policy comparison — adaptive-28-4 vs ${HEADROOM_PROFILE}`);
 console.log(`seeds: ${seeds.join(", ")}`);
 console.log(
   `exercise workload: ${HEADROOM_EXERCISE_INTERACTIVE_RPS} interactive RPS, ` +
@@ -77,15 +85,15 @@ if (baselineResult.nonZeroExit) {
   );
 }
 const baseline = baselineResult.summary;
-const headroomRun = runSweep("adaptive-headroom-28-4", headroomId, raw.get("cleanup") === "true");
+const headroomRun = runSweep(HEADROOM_PROFILE, headroomId, raw.get("cleanup") === "true");
 const headroomResult = readCompletedSweepSummary(
   headroomFile,
   headroomRun,
-  "adaptive-headroom-28-4",
+  HEADROOM_PROFILE,
 );
 if (headroomResult.nonZeroExit) {
   console.warn(
-    `adaptive-headroom-28-4 sweep exited ${headroomRun.status} after preserving summary.json; ` +
+    `${HEADROOM_PROFILE} sweep exited ${headroomRun.status} after preserving summary.json; ` +
     "continuing so the paired comparison can report the failed acceptance result.",
   );
 }

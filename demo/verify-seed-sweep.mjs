@@ -523,6 +523,29 @@ assert.match(
   /no seed proved interactive-to-batch headroom lending/,
 );
 
+// The one-slot headroom profile is proven against its own fixed cap, and its
+// name cannot carry the original profile's two-slot cap.
+const lend1Records = structuredClone(headroomRecords);
+for (const record of lend1Records) {
+  record.moflux.capacity.profile = "adaptive-headroom-28-4-lend1";
+  record.moflux.capacity.capacityGroup.members
+    .find((member) => member.pool === "sim-interactive").headroomLending.maxDemandingConcurrentLend = 1;
+}
+const lend1 = buildSweepSummary({ mode: "compare", fault: false, seeds: [1, 2], records: lend1Records });
+assert.equal(lend1.capacityPolicy.profile, "adaptive-headroom-28-4-lend1");
+assert.equal(lend1.adaptiveProof.policyMatches, true);
+assert.equal(lend1.headroomPolicy.config.maxDemandingConcurrentLend, 1);
+const lend1WithTwoSlots = structuredClone(lend1Records);
+for (const record of lend1WithTwoSlots) {
+  record.moflux.capacity.capacityGroup.members
+    .find((member) => member.pool === "sim-interactive").headroomLending.maxDemandingConcurrentLend = 2;
+}
+assert.equal(
+  buildSweepSummary({ mode: "compare", fault: false, seeds: [1, 2], records: lend1WithTwoSlots })
+    .adaptiveProof.policyMatches,
+  false,
+);
+
 const mismatchedRecords = structuredClone(records);
 mismatchedRecords[1].moflux.capacity.batchTokenPercent = 30;
 assert.throws(

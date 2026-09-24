@@ -1,6 +1,36 @@
 export const TYR_CHAT_METADATA_TOKENS = 8;
 export const INITIAL_ESTIMATOR_CHARS_PER_TOKEN = 4;
 
+/**
+ * Headroom-aware capacity profiles: the protected adaptive 28/4 policy plus a
+ * sustained, capped interactive-to-batch lend while both classes demand.
+ *
+ * Each name fixes every value, so a profile name in a saved result identifies
+ * exactly one policy. A new policy gets a new name rather than a changed one.
+ */
+export const HEADROOM_PROFILES = Object.freeze({
+  "adaptive-headroom-28-4": Object.freeze({
+    minConcurrentHeadroom: 4,
+    minTokenHeadroom: 4000,
+    demandingSustainMs: 3000,
+    maxDemandingConcurrentLend: 2,
+    maxDemandingTokenLend: 10_000,
+  }),
+  /**
+   * One lent slot instead of two. In the headroom comparison the interactive
+   * pool never queued or ran short of the slots it lent; its p95 cost tracked
+   * the extra batch streams slowing the shared provider, about two with this
+   * cap. One slot bounds that at about one extra stream.
+   */
+  "adaptive-headroom-28-4-lend1": Object.freeze({
+    minConcurrentHeadroom: 4,
+    minTokenHeadroom: 4000,
+    demandingSustainMs: 3000,
+    maxDemandingConcurrentLend: 1,
+    maxDemandingTokenLend: 10_000,
+  }),
+});
+
 export function reservationBounds({
   inputChars,
   maxTokens,

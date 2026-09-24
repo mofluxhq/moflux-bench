@@ -56,7 +56,7 @@ import {
   summarizeTyrAdmissionTiming,
 } from "./admission-timing-lib.mjs";
 import { buildTrace } from "../load/trace-lib.mjs";
-import { reservationBounds, validateCapacityPlan } from "./capacity-lib.mjs";
+import { HEADROOM_PROFILES, reservationBounds, validateCapacityPlan } from "./capacity-lib.mjs";
 import {
   ASYNC_BULKHEAD_LLM_VERSION,
   ASYNC_BULKHEAD_TS_VERSION,
@@ -126,22 +126,25 @@ const str = (name, fallback) => rawArgs.get(name) ?? fallback;
 
 const legacyLendingRequested = str("lending", "false") !== "false";
 const requestedCapacityProfile = str("capacity-profile", "").trim();
+const HEADROOM_PROFILE_NAMES = Object.keys(HEADROOM_PROFILES);
 const CAPACITY_PROFILE_NAMES = new Set([
   "",
   "historical-31-1",
   "adaptive-28-4",
-  "adaptive-headroom-28-4",
+  ...HEADROOM_PROFILE_NAMES,
 ]);
 if (!CAPACITY_PROFILE_NAMES.has(requestedCapacityProfile)) {
   throw new Error(
-    `--capacity-profile must be historical-31-1, adaptive-28-4, or adaptive-headroom-28-4, got "${requestedCapacityProfile}"`,
+    `--capacity-profile must be historical-31-1, adaptive-28-4, or one of ${HEADROOM_PROFILE_NAMES.join(", ")}, ` +
+      `got "${requestedCapacityProfile}"`,
   );
 }
 if (requestedCapacityProfile === "historical-31-1" && legacyLendingRequested) {
   throw new Error("--capacity-profile=historical-31-1 cannot be combined with --lending");
 }
 const baselineAdaptiveProfileRequested = requestedCapacityProfile === "adaptive-28-4";
-const headroomAdaptiveProfileRequested = requestedCapacityProfile === "adaptive-headroom-28-4";
+const headroomProfilePolicy = HEADROOM_PROFILES[requestedCapacityProfile] ?? null;
+const headroomAdaptiveProfileRequested = headroomProfilePolicy !== null;
 const adaptiveProfileRequested = baselineAdaptiveProfileRequested || headroomAdaptiveProfileRequested;
 const lendingRequested = adaptiveProfileRequested || legacyLendingRequested;
 const hasLegacyBatchFloor = rawArgs.has("batch-floor-percent");
@@ -192,20 +195,15 @@ if (adaptiveProfileRequested) {
     conflicts.push("--batch-token-percent (must be 62.5)");
   }
   if (headroomAdaptiveProfileRequested) {
-    if (rawArgs.has("headroom-min-concurrent") && num("headroom-min-concurrent", 4) !== 4) {
-      conflicts.push("--headroom-min-concurrent (must be 4)");
-    }
-    if (rawArgs.has("headroom-min-tokens") && num("headroom-min-tokens", 4000) !== 4000) {
-      conflicts.push("--headroom-min-tokens (must be 4000)");
-    }
-    if (rawArgs.has("headroom-demanding-sustain-ms") && num("headroom-demanding-sustain-ms", 3000) !== 3000) {
-      conflicts.push("--headroom-demanding-sustain-ms (must be 3000)");
-    }
-    if (rawArgs.has("headroom-max-demanding-concurrent-lend") && num("headroom-max-demanding-concurrent-lend", 2) !== 2) {
-      conflicts.push("--headroom-max-demanding-concurrent-lend (must be 2)");
-    }
-    if (rawArgs.has("headroom-max-demanding-token-lend") && num("headroom-max-demanding-token-lend", 10000) !== 10000) {
-      conflicts.push("--headroom-max-demanding-token-lend (must be 10000)");
+    for (const [flag, key] of [
+      ["headroom-min-concurrent", "minConcurrentHeadroom"],
+      ["headroom-min-tokens", "minTokenHeadroom"],
+      ["headroom-demanding-sustain-ms", "demandingSustainMs"],
+      ["headroom-max-demanding-concurrent-lend", "maxDemandingConcurrentLend"],
+      ["headroom-max-demanding-token-lend", "maxDemandingTokenLend"],
+    ]) {
+      const fixed = headroomProfilePolicy[key];
+      if (rawArgs.has(flag) && num(flag, fixed) !== fixed) conflicts.push(`--${flag} (must be ${fixed})`);
     }
   } else if ([
     "headroom-min-concurrent",
@@ -214,7 +212,7 @@ if (adaptiveProfileRequested) {
     "headroom-max-demanding-concurrent-lend",
     "headroom-max-demanding-token-lend",
   ].some((name) => rawArgs.has(name))) {
-    conflicts.push("headroom flags require --capacity-profile=adaptive-headroom-28-4");
+    conflicts.push(`headroom flags require --capacity-profile=${HEADROOM_PROFILE_NAMES.join(" or ")}`);
   }
   if (conflicts.length > 0) {
     throw new Error(
@@ -258,17 +256,17 @@ const OPT = Object.freeze({
    */
   lending: lendingRequested,
   capacityProfile: headroomAdaptiveProfileRequested
-    ? "adaptive-headroom-28-4"
+    ? requestedCapacityProfile
     : baselineAdaptiveProfileRequested
       ? "adaptive-28-4"
       : legacyLendingRequested
         ? "custom-demand-aware"
         : requestedCapacityProfile || "historical-31-1",
-  headroomMinConcurrent: headroomAdaptiveProfileRequested ? 4 : null,
-  headroomMinTokens: headroomAdaptiveProfileRequested ? 4000 : null,
-  headroomDemandingSustainMs: headroomAdaptiveProfileRequested ? 3000 : null,
-  headroomMaxDemandingConcurrentLend: headroomAdaptiveProfileRequested ? 2 : null,
-  headroomMaxDemandingTokenLend: headroomAdaptiveProfileRequested ? 10_000 : null,
+  headroomMinConcurrent: headroomProfilePolicy?.minConcurrentHeadroom ?? null,
+  headroomMinTokens: headroomProfilePolicy?.minTokenHeadroom ?? null,
+  headroomDemandingSustainMs: headroomProfilePolicy?.demandingSustainMs ?? null,
+  headroomMaxDemandingConcurrentLend: headroomProfilePolicy?.maxDemandingConcurrentLend ?? null,
+  headroomMaxDemandingTokenLend: headroomProfilePolicy?.maxDemandingTokenLend ?? null,
   lendingReportStaleAfterMs: num("lending-report-stale-after-ms", 6000),
   lendingIdleAfterMs: num("lending-idle-after-ms", 3000),
   lendingMaxStarvationMs: num("lending-max-starvation-ms", 5000),

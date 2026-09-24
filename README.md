@@ -562,6 +562,7 @@ npm run demo:hetero:blind           # historical 31/1 policy; blind backoff
 npm run demo:hetero:adaptive        # headroom-aware 28/4 current adaptive policy
 npm run demo:hetero:headroom        # headroom-aware 28/4 policy
 npm run demo:headroom:compare       # paired old-vs-headroom policy experiment
+npm run demo:headroom:compare:lend1 # same experiment with a one-slot headroom lend
 npm run demo:hetero:adaptive:blind  # same adaptive traces, blind backoff
 ```
 
@@ -615,6 +616,15 @@ controller event and correlated bounded Tyr transfer. The complete failed run is
 retained under `results/runs/` for inspection.
 
 For both adaptive profiles, the presenter installs a bootstrap-safe capacity group while the Tyr fleet enrolls. Demand-aware lending stays disabled until fresh measured traffic is observed; for the headroom profile, the bootstrap copy also omits member-level `headroomLending` because Latchflo requires headroom lending and an enabled demand policy to be configured together. The full unchanged headroom policy is installed when measured demand arms lending.
+
+`demo:headroom:compare:lend1` runs the same comparison against
+`adaptive-headroom-28-4-lend1`, which is identical except that a demanding-state
+loan releases at most one interactive slot instead of two. On the two-slot profile
+the interactive pool never queued at Tyr or ran short of the slots it lent. Its
+p95 cost tracked the extra batch streams on the shared simulated provider, a
+median of about two with that cap, and a one-slot cap bounds that at about one.
+Each profile name fixes all of its values, so saved results under
+`adaptive-headroom-28-4` keep meaning the two-slot policy.
 
 `demo:headroom:compare` is the direct policy outcome experiment. It runs MoFlux-only
 five-seed sweeps for both profiles, verifies that every same-seed trace hash is
@@ -1109,6 +1119,7 @@ npm run demo:handoff           # five-seed exact handoff proof
 npm run demo:hetero:adaptive   # mixed-size, all-arm headroom-aware adaptive policy
 npm run demo:hetero:headroom   # compatibility alias for the same headroom-aware workload
 npm run demo:headroom:compare  # paired 28/4 policy comparison
+npm run demo:headroom:compare:lend1  # the same comparison with a one-slot lend
 ```
 
 `demo:handoff` is the shortest release-level proof for the current Latchflo 0.19.0 /

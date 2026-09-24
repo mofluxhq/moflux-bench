@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.44.0 - 2026-09-24
+
+### Added
+
+- **One-slot headroom profile, `adaptive-headroom-28-4-lend1`.** It is identical
+  to `adaptive-headroom-28-4` except that `maxDemandingConcurrentLend` is 1
+  instead of 2. Run it against plain `adaptive-28-4` with
+  `npm run demo:headroom:compare:lend1`, or pass
+  `--headroom-profile=adaptive-headroom-28-4-lend1` to `demo/headroom-compare.mjs`.
+  - Every headroom comparison on Latchflo 0.18.0 and 0.19.0 failed the 10%
+    interactive p95 limit, at +13.4% to +15.6%.
+  - Interactive never queued at Tyr, with an average wait of about 0.05 ms,
+    and was rejected locally on only 3 of 10 seed-runs, 1-5 times each.
+  - In the contended window, headroom ran a median of 2.1 more active
+    streams on the shared simulated provider. Its sigma = 0.25 contention
+    model predicts about +13% per-stream slowdown for that. The per-seed
+    prediction correlated 0.86 with the measured contended p95 change.
+  - Capping the loan at one slot should bound the extra load at about one
+    stream, which the model puts at +6-7%.
+- The headroom profiles live in one table, `HEADROOM_PROFILES` in
+  `demo/capacity-lib.mjs`. The presenter, the sweep's adaptive-proof policy
+  check and the headroom comparison read their values from it. Each name fixes
+  every value and rejects overrides. `npm run verify:publication` requires
+  `adaptive-headroom-28-4` to keep its published 4/4000/3000/2/10000 policy.
+  The comparison summary now records whichever headroom profile it ran.
+
 ## 0.43.0 - 2026-09-24
 
 ### Changed

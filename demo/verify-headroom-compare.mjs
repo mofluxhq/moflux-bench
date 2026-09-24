@@ -131,6 +131,20 @@ assert.equal(result.acceptance.passed, true);
 assert.equal(result.acceptance.checks.materiallyMoreBatchCompletions, true);
 assert.equal(result.acceptance.checks.interactiveSuccessPreserved, true);
 assert.equal(result.acceptance.checks.interactiveP95Preserved, true);
+assert.equal(result.headroomProfile, "adaptive-headroom-28-4");
+
+// The one-slot profile compares on the same terms and is reported by name;
+// its cap funds at most one lent slot. A non-headroom profile is refused.
+const lend1Sweep = sweep("adaptive-headroom-28-4-lend1", true);
+lend1Sweep.capacityPolicy.capacityGroup.members[0].headroomLending.maxDemandingConcurrentLend = 1;
+const lend1Result = buildHeadroomPolicyComparison(baseline, lend1Sweep);
+assert.equal(lend1Result.headroomProfile, "adaptive-headroom-28-4-lend1");
+assert.equal(lend1Result.headroomCapacityExpectation.concurrencyFundedDemandingLend, 1);
+assert.equal(lend1Result.headroomCapacityExpectation.effectiveFundedDemandingLend, 1);
+assert.throws(
+  () => buildHeadroomPolicyComparison(baseline, sweep("adaptive-28-4", true)),
+  /headroom sweep must use a headroom capacity profile \(adaptive-headroom-28-4, adaptive-headroom-28-4-lend1\)/,
+);
 
 const weakBatch = structuredClone(result);
 weakBatch.aggregate.exercisedHeadroomBatchSuccess.median = 4;

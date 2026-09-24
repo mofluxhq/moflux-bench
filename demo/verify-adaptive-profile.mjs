@@ -20,7 +20,10 @@ function run(...args) {
 try {
   const unknown = run("--capacity-profile=unknown");
   assert.notEqual(unknown.status, 0);
-  assert.match(unknown.stderr, /--capacity-profile must be historical-31-1, adaptive-28-4, or adaptive-headroom-28-4/);
+  assert.match(
+    unknown.stderr,
+    /--capacity-profile must be historical-31-1, adaptive-28-4, or one of adaptive-headroom-28-4, adaptive-headroom-28-4-lend1/,
+  );
 
   const conflict = run(
     "--capacity-profile=adaptive-28-4",
@@ -44,6 +47,21 @@ try {
   );
   assert.notEqual(demandingCapConflict.status, 0);
   assert.match(demandingCapConflict.stderr, /--headroom-max-demanding-concurrent-lend \(must be 2\)/);
+
+  // The one-slot profile fixes its own cap, so its published name keeps
+  // meaning one policy and the original profile cannot be overridden into it.
+  const lend1CapConflict = run(
+    "--capacity-profile=adaptive-headroom-28-4-lend1",
+    "--headroom-max-demanding-concurrent-lend=2",
+  );
+  assert.notEqual(lend1CapConflict.status, 0);
+  assert.match(lend1CapConflict.stderr, /--headroom-max-demanding-concurrent-lend \(must be 1\)/);
+  const originalToLend1 = run(
+    "--capacity-profile=adaptive-headroom-28-4",
+    "--headroom-max-demanding-concurrent-lend=1",
+  );
+  assert.notEqual(originalToLend1.status, 0);
+  assert.match(originalToLend1.stderr, /--headroom-max-demanding-concurrent-lend \(must be 2\)/);
 
   const headroomFlagWithoutProfile = run(
     "--capacity-profile=adaptive-28-4",
@@ -87,6 +105,15 @@ try {
   assert.notEqual(mofluxHeadroom.status, 0);
   assert.match(mofluxHeadroom.stderr, /--grant-ttl-ms must be at least 60000/);
   assert.doesNotMatch(mofluxHeadroom.stderr, /--lending requires --mode=compare/);
+
+  const mofluxLend1 = run(
+    "--capacity-profile=adaptive-headroom-28-4-lend1",
+    "--mode=moflux",
+    "--grant-ttl-ms=11000",
+  );
+  assert.notEqual(mofluxLend1.status, 0);
+  assert.match(mofluxLend1.stderr, /--grant-ttl-ms must be at least 60000/);
+  assert.doesNotMatch(mofluxLend1.stderr, /--capacity-profile must be/);
 
   console.log("PASS  adaptive and headroom-aware 28/4 profile validation");
 } finally {

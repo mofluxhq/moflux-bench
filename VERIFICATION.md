@@ -1,5 +1,26 @@
 # MoFlux Bench verification
 
+## 0.44.0 one-slot headroom profile
+
+`demo/verify-adaptive-profile.mjs` requires the presenter to accept
+`adaptive-headroom-28-4-lend1` and to list it in the unknown-profile error. It
+must refuse `--headroom-max-demanding-concurrent-lend=2` on that profile, and
+refuse `=1` on `adaptive-headroom-28-4`. `demo/verify-seed-sweep.mjs` requires
+the sweep's adaptive-proof policy check to match the one-slot profile with a cap
+of 1 and to reject the same name carrying a cap of 2.
+`demo/verify-headroom-compare.mjs` requires the comparison to record the one-slot
+profile by name, count one concurrency-funded lend, and refuse a non-headroom
+profile. `npm run verify:publication` requires `adaptive-headroom-28-4` to keep
+its published 4/4000/3000/2/10000 headroom policy.
+
+In `npm run verify`, 49 of 50 modules passed: 34 in the suite run, and the 15
+after `demo/verify-presenter.mjs` run individually once the suite stopped there.
+`demo/verify-presenter.mjs` did not run, because its Latchflo test double needs
+127.0.0.1:18080, which the running Docker demo stack held. Syntax checks passed
+for all 110 JavaScript modules. `npm run verify:publication` reported only local
+files that are never published. No sweep or headroom comparison has been run on
+the one-slot profile; its expected p95 effect is a contention-model prediction.
+
 ## 0.43.0 Latchflo runtime upgrade
 
 Runtime pins target Latchflo 0.19.0. Environment migration from 0.18.0,
