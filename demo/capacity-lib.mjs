@@ -17,10 +17,10 @@ export const HEADROOM_PROFILES = Object.freeze({
     maxDemandingTokenLend: 10_000,
   }),
   /**
-   * One lent slot instead of two. In the headroom comparison the interactive
-   * pool never queued or ran short of the slots it lent; its p95 cost tracked
-   * the extra batch streams slowing the shared provider, about two with this
-   * cap. One slot bounds that at about one extra stream.
+   * One lent slot instead of two, kept as a published negative result. The
+   * lent tokens fund one extra batch reservation under either cap, so this
+   * profile adds about one batch stream, like the two-slot profile, and failed
+   * the same interactive p95 limit. See results/curated/README.md.
    */
   "adaptive-headroom-28-4-lend1": Object.freeze({
     minConcurrentHeadroom: 4,

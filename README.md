@@ -619,12 +619,15 @@ For both adaptive profiles, the presenter installs a bootstrap-safe capacity gro
 
 `demo:headroom:compare:lend1` runs the same comparison against
 `adaptive-headroom-28-4-lend1`, which is identical except that a demanding-state
-loan releases at most one interactive slot instead of two. On the two-slot profile
-the interactive pool never queued at Tyr or ran short of the slots it lent. Its
-p95 cost tracked the extra batch streams on the shared simulated provider, a
-median of about two with that cap, and a one-slot cap bounds that at about one.
-Each profile name fixes all of its values, so saved results under
-`adaptive-headroom-28-4` keep meaning the two-slot policy.
+loan releases at most one interactive slot instead of two. It does not reduce the
+interactive cost. Under either cap the lent tokens fund one extra batch
+reservation (`effectiveFundedDemandingLend: 1`), so both profiles add about one
+batch stream to the shared simulated provider. At this load that one stream costs
+interactive roughly 10-15% p95. The published comparison,
+`results/curated/headroom-policy-comparison-v0.44.0-20260924T225251Z-lend1.json`,
+fails both the p95 limit (+11.5%) and the batch check; `results/curated/README.md`
+explains the result. Each profile name fixes all of its values, so saved results
+under `adaptive-headroom-28-4` keep meaning the two-slot policy.
 
 `demo:headroom:compare` is the direct policy outcome experiment. It runs MoFlux-only
 five-seed sweeps for both profiles, verifies that every same-seed trace hash is

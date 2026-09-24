@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **One-slot headroom comparison published as negative evidence.** Five seeds
+  of `demo:headroom:compare:lend1` on Tyr 0.33.0 and Latchflo 0.19.0 are now in
+  `results/curated/`: the comparison
+  `headroom-policy-comparison-v0.44.0-20260924T225251Z-lend1.json` and its two
+  input sweeps, `moflux-seed-sweep-v0.44.0-20260924T225251Z-adaptive` and
+  `-headroom-lend1`. It fails the 10% interactive p95 limit at +11.5%. It also
+  fails the batch check: median headroom batch completions were 11 against the
+  12 required, and two seeds completed fewer than the plain profile.
+  `results/curated/README.md` describes the result.
+
+### Fixed
+
+- **Corrected the reasoning for `adaptive-headroom-28-4-lend1`.** The fix
+  covers the README, the profile's comment in `demo/capacity-lib.mjs`, and the
+  0.44.0 entry below. That release counted every extra active stream on the
+  simulated provider as batch. A Little's-law estimate puts about half of the
+  +2.1 extra streams on interactive requests, which pile up as they slow down.
+  Both profiles add about one batch stream (median +0.9 with one slot, +0.8
+  with two), as `effectiveFundedDemandingLend: 1` predicts for both.
+
 ## 0.44.0 - 2026-09-24
 
 ### Added
@@ -14,11 +38,14 @@
   - Interactive never queued at Tyr, with an average wait of about 0.05 ms,
     and was rejected locally on only 3 of 10 seed-runs, 1-5 times each.
   - In the contended window, headroom ran a median of 2.1 more active
-    streams on the shared simulated provider. Its sigma = 0.25 contention
-    model predicts about +13% per-stream slowdown for that. The per-seed
-    prediction correlated 0.86 with the measured contended p95 change.
-  - Capping the loan at one slot should bound the extra load at about one
-    stream, which the model puts at +6-7%.
+    streams on the shared simulated provider. The provider's sigma = 0.25
+    contention model tracked the measured contended p95 change, with a
+    per-seed correlation of 0.86.
+  - Corrected after release: this entry took all of those extra streams to be
+    batch and expected a one-slot cap to halve them. About half were
+    interactive requests piling up as they slowed. Both profiles add about one
+    batch stream, and the one-slot profile failed the same limit. See the
+    Unreleased entry above.
 - The headroom profiles live in one table, `HEADROOM_PROFILES` in
   `demo/capacity-lib.mjs`. The presenter, the sweep's adaptive-proof policy
   check and the headroom comparison read their values from it. Each name fixes
