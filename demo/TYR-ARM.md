@@ -9,7 +9,7 @@ independently reproducible.
 
 ## Presenter command
 
-The integrated arm requires the Tyr 0.33.0 image and a licensed Latchflo 0.18.0
+The integrated arm requires the Tyr 0.33.0 image and a licensed Latchflo 0.19.0
 image.
 Tyr contains async-bulkhead-llm 3.17.0 and async-bulkhead-ts 1.0.1. Once the
 images are tagged locally or accessible through the configured registry, run:
@@ -21,11 +21,11 @@ npm run demo
 The command creates the ignored local env file and random credentials on first
 use. The presenter creates or updates `sim-interactive` and `sim-batch` with a
 short
-enrollment lease before Tyr starts. It sends Latchflo 0.18.0's minimum viable
+enrollment lease before Tyr starts. It sends Latchflo 0.19.0's minimum viable
 grant settings for each request class, so an allocator split below one slot or
 below one request's token reservation fails explicitly. Tyr 0.33.0 also polls
 private capacity snapshots from the other three replicas and can forward a
-request once to the peer with the best request-specific headroom. Managed Tyr configs begin with `peers: []`; each replica advertises its endpoint and Latchflo 0.18.0 distributes the versioned active routing topology. The shared
+request once to the peer with the best request-specific headroom. Managed Tyr configs begin with `peers: []`; each replica advertises its endpoint and Latchflo 0.19.0 distributes the versioned active routing topology. The shared
 routing secret is generated in the ignored local `.env`; Latchflo never
 distributes that secret. MoFlux Bench 0.30.0 grants `sim-interactive`
 exactly one local waiter per Tyr replica while keeping `sim-batch` at zero; the
@@ -37,7 +37,7 @@ expiry is an explicit Tyr admission outcome (`504` plus
 `x-admission-reason: timeout`) and the benchmark counts it as a local rejection,
 not as an unattributed server fault. `npm run
 demo:lending` uses those reports to drive a
-Latchflo 0.18.0 demand-aware capacity group with a fully funded 28/4 protected
+Latchflo 0.19.0 demand-aware capacity group with a fully funded 28/4 protected
 split; normal runs retain the static 31/1 policy. All four replicas register for interactive traffic, while replica 4
 also registers for batch. Once all registrations are
 visible, the presenter promotes both pools to the steady-state TTL and waits

@@ -11,7 +11,7 @@ npm ci
 npm run verify:all
 ```
 
-Docker Compose v2 is required only for the public walkthrough and the licensed MoFlux presenter. The licensed stack is pinned to Tyr 0.33.0, Latchflo 0.18.0, async-bulkhead-llm 3.17.0, and async-bulkhead-ts 1.0.1. Tyr is Apache-2.0 and developed in its own repository, [mofluxhq/tyr-admission-controller](https://github.com/mofluxhq/tyr-admission-controller); send Tyr changes there. Latchflo is proprietary. Neither Tyr nor Latchflo images are accepted as repository contributions.
+Docker Compose v2 is required only for the public walkthrough and the licensed MoFlux presenter. The licensed stack is pinned to Tyr 0.33.0, Latchflo 0.19.0, async-bulkhead-llm 3.17.0, and async-bulkhead-ts 1.0.1. Tyr is Apache-2.0 and developed in its own repository, [mofluxhq/tyr-admission-controller](https://github.com/mofluxhq/tyr-admission-controller); send Tyr changes there. Latchflo is proprietary. Neither Tyr nor Latchflo images are accepted as repository contributions.
 
 ## Pull requests
 

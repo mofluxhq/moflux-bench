@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import path from "node:path";
 
 export const TYR_VERSION = "0.33.0";
-export const LATCHFLO_VERSION = "0.18.0";
+export const LATCHFLO_VERSION = "0.19.0";
 export const ASYNC_BULKHEAD_LLM_VERSION = "3.17.0";
 export const ASYNC_BULKHEAD_TS_VERSION = "1.0.1";
 export const OLLAMA_VERSION = "0.12.3";
@@ -17,7 +17,7 @@ export const DEFAULT_LATCHFLO_IMAGE = `latchflo-control-plane:${LATCHFLO_VERSION
  * refused work while holding no live grant. Current experiments share these
  * release pins; saved results retain their original runtime metadata. Explicit vLLM constants keep its contract visible.
  */
-export const VLLM_LATCHFLO_VERSION = "0.18.0";
+export const VLLM_LATCHFLO_VERSION = "0.19.0";
 export const DEFAULT_VLLM_LATCHFLO_IMAGE = `latchflo-control-plane:${VLLM_LATCHFLO_VERSION}`;
 /**
  * Tyr 0.31.0 and later name the transport cause of a `502 upstream_error`,

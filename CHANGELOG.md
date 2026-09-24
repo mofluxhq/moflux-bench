@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.43.0 - 2026-09-24
+
+### Changed
+
+- Pin licensed benchmark runs, including vLLM, to Latchflo 0.19.0 for
+  cancellation of obsolete capacity-group loans and token restoration before
+  concurrency drain completes. Tyr remains 0.33.0; vLLM remains 0.18.0.
+- Environment preparation migrates standard local Latchflo image tags to
+  0.19.0 and preserves custom registry references. Runtime verification and
+  presenter fixtures follow the new pin.
+- Saved evidence retains its original runtime metadata. Compare new 0.19.0
+  results as a separate runtime cohort; existing sweep and ladder checks
+  continue to reject mixed runtime versions.
+
 ## 0.42.0 - 2026-09-24
 
 ### Fixed

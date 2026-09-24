@@ -1,5 +1,13 @@
 # MoFlux Bench verification
 
+## 0.43.0 Latchflo runtime upgrade
+
+Runtime pins target Latchflo 0.19.0. Environment migration from 0.18.0,
+seed-sweep rejection of mixed 0.18.0/0.19.0 runtimes, and syntax checks pass.
+Publication hygiene passes on a clean tracked-file copy. The live repository
+contains local environment and generated run artifacts excluded from that check.
+No benchmark run or container validation of this release has been performed.
+
 ## 0.42.0 whole-run percentiles
 
 `load/verify-summary-percentiles.mjs` replays eight interactive requests. The
@@ -31,23 +39,23 @@ and keep the rolling basis.
 stay out of the scenario and trace. Run against the 0.41.0 `demo/present.mjs`,
 the forwarding and defaults checks fail. Every module in `npm run verify`
 passed. That includes `demo/verify-presenter.mjs`, which 0.41.0 could not run:
-the presenter records the Tyr 0.33.0/Latchflo 0.18.0 runtime and completes its
+the presenter records the Tyr 0.33.0/Latchflo 0.19.0 runtime and completes its
 full comparison with the option forwarded at its default. No run with the option
 enabled has been made; the generator's own emission is the path the local
 contention benchmark already uses.
 
 ## 0.41.0 runtime alignment
 
-`npm run verify:publication` requires the Tyr 0.33.0 and Latchflo 0.18.0 image
+`npm run verify:publication` requires the Tyr 0.33.0 and Latchflo 0.19.0 image
 tags in `demo/moflux/.env.example` and Tyr 0.33.0 metadata in every
 `demo/moflux` and `demo/classes` replica config. It also requires
-`VLLM_TYR_VERSION = "0.33.0"` and `VLLM_LATCHFLO_VERSION = "0.18.0"`.
+`VLLM_TYR_VERSION = "0.33.0"` and `VLLM_LATCHFLO_VERSION = "0.19.0"`.
 `demo/verify-env.mjs` proves that a generated `.env` pinned to Tyr 0.31.0/Latchflo
 0.17.1 migrates its image tags and compatibility line, keeps its tokens and
 routing secret, and is unchanged by a second pass. `demo/verify-topology.mjs`
 and `demo/verify-tenant-fairness.mjs` require the new replica metadata.
 `node demo/vllm-contention.mjs --backend=metal --dry-run` plans
-`tyr-admission-controller:0.33.0` and `latchflo-control-plane:0.18.0`.
+`tyr-admission-controller:0.33.0` and `latchflo-control-plane:0.19.0`.
 
 Every other module in `npm run verify` passed, along with syntax checks for all
 109 JavaScript modules. `demo/verify-presenter.mjs` was updated to require the

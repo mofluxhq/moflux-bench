@@ -58,12 +58,12 @@ cannot release the protected floor. Once the measured load generator is running,
 the presenter waits for a fresh interactive demand report and then arms the
 configured demand policy. Each accepted grant must also have enough remaining
 lifetime for a stable benchmark start. Startup fails if any live local grant is
-too small or too close to expiration. Pool creation also sends Latchflo 0.18.0's durable
+too small or too close to expiration. Pool creation also sends Latchflo 0.19.0's durable
 minimum-grant invariants: one concurrency slot, 755 tokens for interactive, and
 9,942 tokens for batch. Latchflo therefore rejects an unusable split before it
 can issue a zero-capacity or sub-request grant.
 
-The licensed path is pinned to **Tyr 0.33.0**, **Latchflo 0.18.0**,
+The licensed path is pinned to **Tyr 0.33.0**, **Latchflo 0.19.0**,
 **async-bulkhead-llm 3.17.0**, and **async-bulkhead-ts 1.0.1**. The canonical
 comparison uses Anthropic-shaped streaming because that protocol exposes input
 usage at `message_start` and cumulative output usage while the response is still
@@ -82,7 +82,7 @@ environment file.
 
 Tyr 0.33.0 capacity-aware routing is enabled for the licensed four-replica
 MoFlux arm. Managed Tyr configs start with `peers: []`: each replica advertises
-its routable endpoint when it registers, Latchflo 0.18.0 publishes a durable,
+its routable endpoint when it registers, Latchflo 0.19.0 publishes a durable,
 versioned `routingTopology`, and Tyr applies only newer topology revisions. Tyr
 then polls private capacity snapshots for the currently active peers and may
 forward a request once to the peer with better request-specific headroom. Tyr
@@ -93,13 +93,13 @@ Latchflo remains off the synchronous request path.
 
 The committed `results/` corpus is deliberately unchanged. Those files are
 historical evidence and retain their recorded Tyr 0.17.0/Latchflo 0.5.1 runtime
-metadata. New licensed runs use Tyr 0.33.0/Latchflo 0.18.0 and should be compared
+metadata. New licensed runs use Tyr 0.33.0/Latchflo 0.19.0 and should be compared
 as a new evidence set rather than silently relabeling the old one.
 
 ### Current runtime pins and comparison limits
 
 All current licensed benchmark commands now default to Tyr 0.33.0 and Latchflo
-0.18.0, including adaptive/headroom/coordinator sweeps, class/restoration,
+0.19.0, including adaptive/headroom/coordinator sweeps, class/restoration,
 membership, live OpenAI, Ollama, and vLLM. `demo:prepare` migrates standard local
 image tags in the generated environment; custom registry references are preserved.
 The benchmarked dependency versions remain async-bulkhead-llm 3.17.0 and
@@ -120,6 +120,13 @@ its TTL. Renewal is skipped while a capacity or class handoff is prepared, so
 lending and restoration still use the existing handoff/expiry paths. Immediate
 class relaxation remains limited to independent pools. All three changes reduce
 avoidable fail-closed gaps.
+
+Latchflo 0.19.0 adds cancellation of obsolete prepared capacity-group loans and
+restores safely available tokens before the concurrency drain finishes. These
+changes make new runs a separate runtime cohort from 0.18.0. Replacement events
+(`capacity_group.handoff_replaced`) are not ordinary committed handoffs; existing
+proofs must not treat replacement publication alone as agent application or
+backend resource reclamation.
 
 A renewed lease carries a new grant ID, recorded as a `grant.renewed` controller
 event. The restoration and headroom proofs follow grant IDs only through handoff
@@ -159,7 +166,7 @@ npm run demo:membership
 
 It repeatedly proves four-member convergence, heartbeat revision stability,
 timeout removal, replacement under a new identity/endpoint, topology agreement,
-and monotonic revisioning against Latchflo 0.18.0.
+and monotonic revisioning against Latchflo 0.19.0.
 
 The local inference benchmark is entirely self-hosted, unmetered, and needs no
 API key:
@@ -563,11 +570,11 @@ reconciliation with a fixed 32-slot / 64,000-token envelope. `adaptive-28-4` is
 the control policy: interactive and batch keep 28/4 concurrency entitlements and
 24,000/40,000-token entitlements, and a demanding member retains its full
 entitlement. `adaptive-headroom-28-4` keeps those same nominal entitlements but
-uses Latchflo 0.18.0's demand-safe, non-stranding sustained headroom lending (introduced in 0.12.4) on
+uses Latchflo 0.19.0's demand-safe, non-stranding sustained headroom lending (introduced in 0.12.4) on
 `sim-interactive`. Protected/no-current-demand telemetry may expose headroom as
 before. A demanding interactive member may additionally lend only after safe
 slack persists for 3,000 ms, and that active-demand release is hard-capped at
-2 concurrency slots and 10,000 tokens. Under the current Latchflo 0.18.0 runtime, long-lived
+2 concurrency slots and 10,000 tokens. Under the current Latchflo 0.19.0 runtime, long-lived
 pressure-free demand remains `demanding`; `starved` requires aged demand plus
 pending or recent rejection pressure. Rejection pressure, starvation, stale or
 incomplete telemetry, pending work, or loss of the sustained-safety condition
@@ -583,7 +590,7 @@ The bounded local waiter behavior introduced in MoFlux Bench 0.27.0 remains enab
 replica pins `queueTimeoutMs: 750`, so the queue converts only short concurrency
 transients into waiting rather than becoming a second backlog. Tyr continues to
 report live `pending` demand on its authenticated Latchflo heartbeat. Sustained
-pressure therefore makes interactive headroom ineligible under Latchflo 0.18.0,
+pressure therefore makes interactive headroom ineligible under Latchflo 0.19.0,
 while a single short wait can complete locally without taking capacity away from
 the four-slot batch floor. If that bounded wait expires, Tyr returns an
 attributable admission rejection as HTTP 504 with `x-admission-reason: timeout`;
@@ -745,10 +752,10 @@ A refusal made with a zero capacity envelope is not token pressure, even when
 Tyr reports `budget_limit`. It is Tyr's fail-closed state between Latchflo
 grants. The load generator and summaries report it as `grantUnavailable`,
 outside the token and concurrency counts, and the `managedGrantContinuity` gate
-makes it invalidate the seed. This experiment pins Latchflo 0.18.0, which
+makes it invalidate the seed. This experiment pins Latchflo 0.19.0, which
 renews live leases before they expire and commits idle-floor lending without
 waiting for expiry. It also pins Tyr 0.33.0, whose 502 responses name the
-transport cause. All current benchmark commands now share Latchflo 0.18.0 and
+transport cause. All current benchmark commands now share Latchflo 0.19.0 and
 Tyr 0.33.0 defaults. Saved results retain their originally recorded runtimes. Metal arms also report host memory pressure, swap and
 thermal state as `hostPressure`. The `hostMemoryHeadroom` gate makes a seed
 inconclusive if any arm hit critical pressure, swapped out more than 256 MiB,
@@ -777,7 +784,7 @@ matrix, workload, telemetry contract, acceptance gates, and publication path.
 ### Authenticated admission-class benchmark
 
 The four-arm admission-class benchmark introduced in MoFlux Bench 0.16.0 and
-upgraded in 0.18.0 now runs against **Tyr 0.33.0** and **Latchflo 0.18.0**. Every seed replays the same immutable
+upgraded in 0.18.0 now runs against **Tyr 0.33.0** and **Latchflo 0.19.0**. Every seed replays the same immutable
 trace through equal 32-request / 64,000-token physical pools:
 
 - `sim-shared` applies only the fleet-wide pool envelope.
@@ -794,7 +801,7 @@ control-plane state so a restored 240-second grant from an earlier seed cannot
 prevent the next seed from exercising idle-floor lending. Before the adaptive
 trace begins, the runner explicitly waits until the quiet noisy floor is proven
 lent. The adaptive arm keeps a 1-second idle threshold and relies on Tyr 0.33.0
-plus Latchflo 0.18.0's acknowledged class handoff to restore that floor before
+plus Latchflo 0.19.0's acknowledged class handoff to restore that floor before
 the lent lease expires. (The 0.12.0 successor-authority change applies to physical
 capacity-group handoffs; class-only handoffs retain their predecessor-lease proof.) After workload sampling ends, the runner keeps a bounded
 15-second synchronization window and actively reconciles until Tyr has actually
@@ -834,7 +841,7 @@ Every capacity control plane in this space says "protected floor". The question
 that decides whether one is worth deploying is what happens at the moment the
 floor is demanded back while a borrower is still holding it. MoFlux Bench 0.31.0
 adds two arms that make the three possible answers distinguishable, using
-Latchflo 0.18.0's per-resource restoration contracts and Tyr 0.33.0's bounded
+Latchflo 0.19.0's per-resource restoration contracts and Tyr 0.33.0's bounded
 borrowed-slot deadline:
 
 ```bash
@@ -1104,14 +1111,14 @@ npm run demo:hetero:headroom   # compatibility alias for the same headroom-aware
 npm run demo:headroom:compare  # paired 28/4 policy comparison
 ```
 
-`demo:handoff` is the shortest release-level proof for the current Latchflo 0.18.0 /
+`demo:handoff` is the shortest release-level proof for the current Latchflo 0.19.0 /
 Tyr 0.33.0 physical-capacity handoff: five lognormal seeds, the exact classic `adaptive-28-4` profile,
 and the full adaptive safety gate without spending time on the extra control
 arms. Demand-aware runs use a 120-second steady-state grant TTL and do not start
 load until the fleet has at least 55 seconds of grant runway remaining for the
 default 45-second phase. The acknowledged drain + fresh occupancy + commit path therefore has ample
 time to complete by attrition. Before every restrictive drain is ACKed, the
-predecessor lease remains authoritative; after that ACK barrier, Latchflo 0.18.0
+predecessor lease remains authoritative; after that ACK barrier, Latchflo 0.19.0
 uses the prepared successor-grant expiry as the safety deadline. Natural source
 lease expiry after the ACK barrier no longer invalidates restoration. This
 removes the old 11-second lease-cycle timing dependency without weakening the
@@ -1123,7 +1130,7 @@ thresholds/caps and exercised-seed evidence. Conflicting envelope, concurrency, 
 token settings are rejected. `demo:lending` remains the focused static-partition scene.
 
 `--lending` widens the idle window from 35% to 60% of the phase so Tyr 0.33.0
-can report an idle batch pool and Latchflo 0.18.0 can safely lend its protected
+can report an idle batch pool and Latchflo 0.19.0 can safely lend its protected
 floor. The presenter creates a demand-aware capacity group with 28/4 protected
 concurrency and 24,000/40,000-token guarantees, while both pools may borrow up
 to the shared 32-slot/64,000-token envelope. The larger token envelope is
@@ -1141,7 +1148,7 @@ response timing:
 | Question | Required evidence |
 |---|---|
 | Did interactive borrow? | Idle-window occupancy above 28 **and** a Latchflo `capacity_group.lending_observed` event |
-| Did the floor come back? | A Latchflo 0.18.0 restoration handoff commits **and** a post-lending Tyr `/stats` sample shows the full 4-slot / 40,000-token batch floor applied |
+| Did the floor come back? | A Latchflo 0.19.0 restoration handoff commits **and** a post-lending Tyr `/stats` sample shows the full 4-slot / 40,000-token batch floor applied |
 | Was transfer ordered safely? | `handoff_prepared` → the **first** `applied` ACK for every unique drain grant → `handoff_committed`; later duplicate ACKs are diagnostic only |
 | Did the commit actually precede batch admission? | Tyr 0.33.0 exact admission provenance is scoped to the causal restoration handoff: only admissions at or after that handoff's `handoff_prepared` event and belonging to its predecessor/successor grant lineage are considered. The first relevant batch admission must use a staged successor grant ID. A lineage-matched predecessor admission is a proved violation; unrelated or pre-handoff admissions are ignored; dropped/capture-failed provenance is inconclusive. |
 | Did handoff stay within its safety authority? | Before drain ACKs, the predecessor lease is authoritative; after every restrictive drain is ACKed, commit must occur before the prepared successor-grant deadline |
@@ -1679,7 +1686,7 @@ Three things worth reading carefully, including the ones that are inconvenient:
   and that success rates are neither 0% nor 100% before trusting a comparison.
 - **Adaptive capacity-floor restoration is acknowledged and non-preemptive.**
   Tyr 0.33.0 reports bounded per-class demand plus ordered class occupancy
-  evidence. Latchflo 0.18.0 transfers physical handoff safety authority to the
+  evidence. Latchflo 0.19.0 transfers physical handoff safety authority to the
   restrictive successor grants after every drain ACK, so natural expiry of the
   predecessor lease no longer aborts an otherwise safe restoration. Running
   borrowers are never revoked; the lower shared authority drains by attrition,
@@ -1719,7 +1726,7 @@ demo/vllm/            vLLM CUDA and Metal stacks with Latchflo and two Tyr arms
 demo/diagnostics-lib.mjs saves logs, grants, events and Tyr stats before cleanup
 demo/ollama/          local inference stacks: compatibility, and contention with Latchflo
 demo/openai/          live OpenAI stacks for the compatibility and overload paths
-demo/restoration-contract-lib.mjs Latchflo 0.18.0 per-resource restoration contracts
+demo/restoration-contract-lib.mjs Latchflo 0.19.0 per-resource restoration contracts
 demo/restoration-enforceability-lib.mjs what a restoration mechanism guarantees, and its bill
 demo/version-lib.mjs   shared runtime capability gating
 demo/compose.yaml      telemetry relay + Prometheus + Grafana + Redis

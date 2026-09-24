@@ -85,7 +85,7 @@ turn a non-contention run into evidence about contention.
 
 Prerequisites are Docker Compose, an NVIDIA GPU visible to `nvidia-smi`, the
 NVIDIA container runtime, OpenSSL, Node.js 22+, the Tyr 0.33.0 image and the
-licensed Latchflo 0.18.0 image, and network access for the first model download. vLLM's
+licensed Latchflo 0.19.0 image, and network access for the first model download. vLLM's
 official container image is `vllm/vllm-openai`; this release pins `v0.18.0`.
 See the [official vLLM Docker guide](https://docs.vllm.ai/en/v0.18.0/deployment/docker/).
 
@@ -224,9 +224,9 @@ floor still waited for the old lease to expire; Latchflo 0.17.1 commits it
 immediately. Such a window can be shorter than the one-second managed sampler
 interval, so the refusal record and the retained Latchflo events are the
 authoritative evidence. This experiment therefore requires Latchflo 0.17.1 or
-later and pins `latchflo-control-plane:0.18.0`, the same release as the other
+later and pins `latchflo-control-plane:0.19.0`, the same release as the other
 experiments. If the image is missing, the runner builds it from a
-`latchflo-control-plane` 0.18.0 checkout beside `moflux-bench` or from `MOFLUX_LATCHFLO_SOURCE_DIR`. To use a
+`latchflo-control-plane` 0.19.0 checkout beside `moflux-bench` or from `MOFLUX_LATCHFLO_SOURCE_DIR`. To use a
 differently tagged build of the same release, set
 `MOFLUX_VLLM_LATCHFLO_IMAGE`.
 
