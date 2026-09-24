@@ -13,11 +13,12 @@ profile by name, count one concurrency-funded lend, and refuse a non-headroom
 profile. `npm run verify:publication` requires `adaptive-headroom-28-4` to keep
 its published 4/4000/3000/2/10000 headroom policy.
 
-In `npm run verify`, 49 of 50 modules passed: 34 in the suite run, and the 15
-after `demo/verify-presenter.mjs` run individually once the suite stopped there.
-`demo/verify-presenter.mjs` did not run, because its Latchflo test double needs
-127.0.0.1:18080, which the running Docker demo stack held. Syntax checks passed
-for all 110 JavaScript modules. `npm run verify:publication` reported only local
+All 50 modules in `npm run verify` passed. The suite run stopped at
+`demo/verify-presenter.mjs`, whose Latchflo test double needs 127.0.0.1:18080,
+while the Docker demo stack held that port. The 34 modules before it passed in
+that run, and the 15 after it passed individually. `demo/verify-presenter.mjs`
+passed in its own run once the port was free. Syntax checks passed for all 110
+JavaScript modules. `npm run verify:publication` reported only local
 files that are never published. No sweep or headroom comparison has been run on
 the one-slot profile; its expected p95 effect is a contention-model prediction.
 
