@@ -5,10 +5,12 @@
 `demo/verify-loadgen-args.mjs` requires `loadgenArgs` to forward
 `--emit-phase-samples=`, both sides to default it to false, and the option to
 stay out of the scenario and trace. Run against the 0.41.0 `demo/present.mjs`,
-the forwarding and defaults checks fail. Every other module in `npm run verify`
-passed except `demo/verify-presenter.mjs`, which again could not bind
-127.0.0.1:8200. No run with the option enabled has been made; the generator's
-own emission is the path the local contention benchmark already uses.
+the forwarding and defaults checks fail. Every module in `npm run verify`
+passed. That includes `demo/verify-presenter.mjs`, which 0.41.0 could not run:
+the presenter records the Tyr 0.33.0/Latchflo 0.18.0 runtime and completes its
+full comparison with the option forwarded at its default. No run with the option
+enabled has been made; the generator's own emission is the path the local
+contention benchmark already uses.
 
 ## 0.41.0 runtime alignment
 
