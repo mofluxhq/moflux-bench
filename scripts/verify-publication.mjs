@@ -500,8 +500,8 @@ if (
     "package.json: the unlent-concurrency contention dry-run, single-seed and verify commands are required",
   );
 }
-if (pkg.version !== "0.41.1") {
-  findings.push("package.json: the current benchmark release must be version 0.41.1");
+if (pkg.version !== "0.42.0") {
+  findings.push("package.json: the current benchmark release must be version 0.42.0");
 }
 // Latchflo 0.17.0 still failed closed at lending transitions; the vLLM
 // experiment's grant-continuity gate needs 0.17.1.
@@ -802,8 +802,22 @@ for (const required of [
   }
 }
 const seedSweepLib025 = readFileSync(path.join(ROOT, "demo/seed-sweep-lib.mjs"), "utf8");
-if (!seedSweepLib025.includes("schemaVersion: 9")) {
-  findings.push("demo/seed-sweep-lib.mjs: 0.26.0 evidence requires schemaVersion 9");
+if (!seedSweepLib025.includes("schemaVersion: 10")) {
+  findings.push("demo/seed-sweep-lib.mjs: whole-run percentile evidence requires schemaVersion 10");
+}
+for (const required of ["sweepPercentileScope", "percentileScope: latencyPercentileScope"]) {
+  if (!seedSweepLib025.includes(required)) {
+    findings.push(`demo/seed-sweep-lib.mjs: missing percentile-scope evidence ${required}`);
+  }
+}
+for (const required of [
+  'percentileScope: "run"',
+  "const latencies = s.phaseSamples.map((x) => x.latencyMs);",
+  "const ttfts = s.phaseSamples.map((x) => x.ttftMs);",
+]) {
+  if (!loadgenSource.includes(required)) {
+    findings.push(`load/loadgen.mjs: class percentiles must cover the whole run (${required})`);
+  }
 }
 for (const required of [
   "headroomPolicyEvidence",

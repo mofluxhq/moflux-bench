@@ -456,7 +456,7 @@ const headroom = buildSweepSummary({
   records: headroomRecords,
 });
 assert.equal(headroom.capacityPolicy.profile, "adaptive-headroom-28-4");
-assert.equal(headroom.schemaVersion, 9);
+assert.equal(headroom.schemaVersion, 10);
 assert.deepEqual(headroom.headroomPolicy, {
   enabled: true,
   lenderPool: "sim-interactive",
@@ -546,6 +546,25 @@ runtimeRecords[1].moflux.runtime.latchflo = { version: "0.16.0", image: "latchfl
 assert.throws(
   () => buildSweepSummary({ mode: "compare", fault: false, seeds: [1, 2], records: runtimeRecords }),
   /seed 2 ran MoFlux on Tyr 0\.31\.0 \/ Latchflo 0\.16\.0, not Tyr 0\.31\.0 \/ Latchflo 0\.17\.1/,
+);
+
+// Fixtures predating the field read as the rolling window; a sweep reports the
+// one scope all of its arms share and refuses to pool two.
+assert.equal(aggregate.percentileScope, "rolling-window");
+const scopeRecords = structuredClone(records);
+for (const record of scopeRecords) {
+  for (const arm of [record.baseline, record.moflux, ...Object.values(record.controlArms ?? {})]) {
+    if (arm) arm.percentileScope = "run";
+  }
+}
+assert.equal(
+  buildSweepSummary({ mode: "compare", fault: false, seeds: [1, 2], records: scopeRecords }).percentileScope,
+  "run",
+);
+delete scopeRecords[1].moflux.percentileScope;
+assert.throws(
+  () => buildSweepSummary({ mode: "compare", fault: false, seeds: [1, 2], records: scopeRecords }),
+  /seed 2 arm .* reported rolling-window percentiles, not run/,
 );
 
 console.log("PASS  seed sweep parsing and aggregation");

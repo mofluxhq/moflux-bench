@@ -41,7 +41,13 @@ import {
 } from "./coordination-lib.mjs";
 import { LATCHFLO_VERSION, TYR_VERSION } from "./env-lib.mjs";
 import { runDir as runDirFor, runId as newRunId } from "./evidence-paths-lib.mjs";
-import { parseSeedSpec, runtimeLabel, sweepRuntime } from "./seed-sweep-lib.mjs";
+import {
+  LOADGEN_PERCENTILE_SCOPE,
+  parseSeedSpec,
+  runtimeLabel,
+  sweepPercentileScope,
+  sweepRuntime,
+} from "./seed-sweep-lib.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const RESULTS = path.join(ROOT, "results");
@@ -271,6 +277,7 @@ function readRung(latencyMs) {
   // rather than reconstructing filenames that only happen to match today.
   const perSeed = {};
   const mofluxRecords = [];
+  const armRecords = [];
   for (const run of summary.runs ?? []) {
     for (const [name, relative] of Object.entries(run.arms ?? {})) {
       const armPath = path.join(ROOT, relative);
@@ -289,6 +296,7 @@ function readRung(latencyMs) {
         );
       }
       if (name === "moflux") mofluxRecords.push({ seed: run.seed, moflux: arm });
+      armRecords.push({ seed: run.seed, controlArms: { [name]: arm } });
       const interactive = arm.classes?.interactive ?? {};
       (perSeed[name] ??= []).push({
         seed: run.seed,
@@ -319,6 +327,19 @@ function readRung(latencyMs) {
       throw new Error(
         `sweep at ${latencyMs}ms ran MoFlux on ${runtimeLabel(rungRuntime)}, but earlier rungs of ` +
           `ladder ${LADDER_ID} ran on ${runtimeLabel(ladderRuntime)}; start a new ladder instead`,
+      );
+    }
+  }
+  // The same for the load generator's percentile scope: a rung whose TTFT
+  // percentiles covered only the last metrics window cannot share a slope with
+  // one whose percentiles covered the whole run.
+  const rungScope = sweepPercentileScope(armRecords);
+  if (rungScope) {
+    ladderPercentileScope ??= rungScope;
+    if (rungScope !== ladderPercentileScope) {
+      throw new Error(
+        `sweep at ${latencyMs}ms reported ${rungScope} percentiles, but earlier rungs of ` +
+          `ladder ${LADDER_ID} reported ${ladderPercentileScope}; start a new ladder instead`,
       );
     }
   }
@@ -360,6 +381,8 @@ const ladder = new Map();
 const rungDiagnostics = new Map();
 /** The runtime every rung's MoFlux arm ran on, set by the first rung read. */
 let ladderRuntime = null;
+/** What every rung's latency percentiles cover, set by the first rung read. */
+let ladderPercentileScope = null;
 const EXECUTION_ORDER = executionOrder(RUNGS);
 const rungsExecuted = [];
 if (RUNG_ORDER !== "ascending" && !REANALYZE) {
@@ -383,6 +406,12 @@ for (const latencyMs of EXECUTION_ORDER) {
       throw new Error(
         `ladder ${LADDER_ID} was measured on ${runtimeLabel(ladderRuntime)}, but this checkout pins ` +
           `Tyr ${TYR_VERSION} / Latchflo ${LATCHFLO_VERSION}; start a new ladder instead of resuming it`,
+      );
+    }
+    if (ladderPercentileScope && ladderPercentileScope !== LOADGEN_PERCENTILE_SCOPE) {
+      throw new Error(
+        `ladder ${LADDER_ID} reported ${ladderPercentileScope} percentiles, but this checkout's load ` +
+          `generator reports ${LOADGEN_PERCENTILE_SCOPE}; start a new ladder instead of resuming it`,
       );
     }
     console.log(`\n${BOLD}=== coordinator latency ${latencyMs}ms ===${OFF}`);
@@ -478,13 +507,15 @@ function buildReport() {
   const redis = ladder.get("redis");
   const moflux = ladder.get("moflux");
   return {
-    schemaVersion: 7,
+    schemaVersion: 8,
     generatedAt: new Date().toISOString(),
     ladderId: LADDER_ID,
     reanalyzed: REANALYZE ? true : undefined,
     resumed: RESUME ? true : undefined,
     capacityProfile: CAPACITY_PROFILE || "historical-31-1",
     runtime: ladderRuntime,
+    /** What every rung's TTFT percentiles were taken over. */
+    percentileScope: ladderPercentileScope,
     adaptiveProof:
       CAPACITY_PROFILE === "adaptive-28-4"
         ? {

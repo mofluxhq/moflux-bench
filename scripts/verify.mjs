@@ -19,6 +19,7 @@ const tests = [
   ["load/verify-admission-timeout.mjs", 30_000],
   ["load/verify-trace-sizes.mjs", 30_000],
   ["load/verify-trace.mjs", 30_000],
+  ["load/verify-summary-percentiles.mjs", 30_000],
   ["demo/verify-env.mjs", 30_000],
   ["demo/verify-evidence-paths.mjs", 30_000],
   ["demo/verify-local-image-build.mjs", 30_000],

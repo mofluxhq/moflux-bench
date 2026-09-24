@@ -1,5 +1,50 @@
 # Changelog
 
+## 0.42.0 - 2026-09-24
+
+### Fixed
+
+- **Class latency and TTFT percentiles cover the whole run.** The load
+  generator took each class's `latencyMs` and `ttftMs` p50/p95/p99 from its
+  rolling metrics array, which every Prometheus scrape trims to `windowMs`
+  (30 s). A 45 s sweep therefore reported the percentiles of only the last
+  30 s before the final scrape. That excluded the idle phase and varied with
+  scrape timing. They now come from the never-pruned per-request record that
+  already backs the phase windows and `phaseSamples`, whether or not
+  `--emit-phase-samples` is set. The first blind adaptive sweep run with
+  samples showed the gap:
+  - The reported interactive p95 was 3-35% above the whole-run value on every
+    arm and seed.
+  - The median paired MoFlux-versus-baseline p95 change was -17.9% reported,
+    but -5.1% over the whole run.
+  - Batch percentiles were unaffected, because every batch completion falls
+    inside the last 30 s.
+- Every sweep headline that reads these percentiles changes basis. That covers
+  `interactiveP95Ms`, the paired p95 and tail-ratio deltas, the headroom
+  comparison's p95 regression gate, and the coordinator ladder's TTFT slope.
+  The local and vLLM contention and tenant-fairness harnesses already set
+  `windowMs` to the run duration, so their percentiles barely move. The
+  Prometheus gauges remain rolling.
+
+### Changed
+
+- **Mark and refuse to mix percentile bases.**
+  - Load-generator summaries declare `percentileScope: "run"`. A summary
+    without the field used the rolling window.
+  - Seed-sweep output moves to `schemaVersion` 10 and records the
+    `percentileScope` every arm shares. A sweep refuses to pool arms that
+    disagree.
+  - The coordinator ladder report moves to `schemaVersion` 8 and records the
+    scope. The ladder refuses to fit, or to resume, a ladder whose rungs used
+    another scope.
+  - Saved results keep the basis they recorded and are not comparable with
+    new runs.
+- `load/verify-summary-percentiles.mjs` scrapes `/metrics` after four slow
+  requests have left a 200 ms window. It then requires the summary p95 to
+  include them and to equal the nearest-rank p95 of `phaseSamples`. Against
+  the previous generator, the whole-run p95 of about 425 ms was reported as
+  4-11 ms.
+
 ## 0.41.1 - 2026-09-23
 
 ### Fixed
@@ -10,8 +55,8 @@
   presenter or sweep run could produce per-request latency. Default off; the
   option is output only and stays out of the scenario and trace, so seed-sweep
   `schemaVersion` stays 9. `demo/verify-loadgen-args.mjs` requires the
-  forwarding and matching defaults.
-
+  forwarding and matching defaults
+  
 ## 0.41.0 - 2026-09-23
 
 Every licensed benchmark moves to the latest Tyr and Latchflo releases. Saved

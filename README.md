@@ -1035,7 +1035,8 @@ measured from the request's first attempt, so they include every rejection and
 retry wait. A sample's `arrivalMs` identifies its trace entry, and that entry's
 `id` matches the `requestId` on the request's rejection snapshots. The option is
 off by default because it enlarges every summary. It is not part of the scenario
-or the trace, so it cannot split a sweep.
+or the trace, so it cannot split a sweep. The class `latencyMs` and `ttftMs`
+percentiles are computed from the same records whether or not the option is set.
 
 ## Comparing against the alternatives, not against nothing
 
@@ -1196,11 +1197,20 @@ evidence is not overwritten. A failed `--require-adaptive-proof` run keeps its
 summary and per-seed files but does not update the latest successful pointer.
 Two implementation notes are load-bearing:
 
-- Phase windows are computed by the load generator from a record that is never
-  pruned. The rolling `samples` array exists for the Prometheus percentiles and
-  is trimmed to `windowMs` on every scrape — deriving windows from it would
-  lose the entire idle window on any run longer than 30 seconds and report zero
-  idle goodput instead of failing.
+- Phase windows and each class's `latencyMs` and `ttftMs` percentiles are
+  computed by the load generator from a record that is never pruned. The
+  rolling `samples` array exists only for the Prometheus gauges and is trimmed
+  to `windowMs` on every scrape. Deriving windows from it would lose the entire
+  idle window on any run longer than 30 seconds and report zero idle goodput
+  instead of failing. Until the summary declared `percentileScope: "run"`, the
+  class percentiles did come from it: a 45-second sweep reported the p95 of
+  its last 30 seconds before the final scrape, which excluded the idle phase
+  and varied with scrape timing. On the blind adaptive sweep that exposed it,
+  the reported interactive p95 was 3-35% above the whole-run value, and the
+  median paired MoFlux-versus-baseline p95 change was -17.9% where the whole
+  run gives -5.1%. Results without the field keep that basis. A sweep reports
+  the scope it pooled, and a sweep or coordinator ladder refuses to mix the
+  two.
 - `idle + contended + drainCompleted` equals the class's total successes.
   Requests admitted before the offered-load window closes can complete after
   it; counting those in the contended window would inflate its goodput with

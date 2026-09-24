@@ -657,6 +657,43 @@ export function sweepRuntime(records) {
   return expected;
 }
 
+/** The percentile scope this checkout's load generator writes. */
+export const LOADGEN_PERCENTILE_SCOPE = "run";
+
+/**
+ * What a load-generator summary's class `latencyMs` and `ttftMs` percentiles
+ * cover. A summary that does not say predates the field and took them from the
+ * rolling metrics window; see `percentileScope` in load/loadgen.mjs.
+ */
+export function percentileScope(summary) {
+  return summary?.percentileScope ?? "rolling-window";
+}
+
+/**
+ * The percentile scope every arm of every seed reported, or null when no arm
+ * ran.
+ *
+ * A median across seeds, or a paired delta between arms, is meaningless when
+ * one side covers the whole run and the other only its last `windowMs`.
+ */
+export function sweepPercentileScope(records) {
+  let expected = null;
+  for (const record of records) {
+    const arms = [record?.baseline, record?.moflux, ...Object.values(record?.controlArms ?? {})];
+    for (const arm of arms.filter(Boolean)) {
+      const scope = percentileScope(arm);
+      expected ??= scope;
+      if (scope !== expected) {
+        throw new Error(
+          `seed ${record.seed} arm ${arm.arm ?? "unknown"} reported ${scope} percentiles, not ${expected} ` +
+            "like the arms before it",
+        );
+      }
+    }
+  }
+  return expected;
+}
+
 export function buildSweepSummary({ mode, fault, seeds, records, adaptiveProofContext = "default" }) {
   if (!new Set(["default", "headroom-compare"]).has(adaptiveProofContext)) {
     throw new Error(`unsupported adaptive proof context ${adaptiveProofContext}`);
@@ -704,6 +741,7 @@ export function buildSweepSummary({ mode, fault, seeds, records, adaptiveProofCo
     }
   }
   const runtime = sweepRuntime(records);
+  const latencyPercentileScope = sweepPercentileScope(records);
 
   // Every control arm present on every seed. An arm that appears on only some
   // seeds is dropped rather than aggregated across an inconsistent set, which
@@ -773,7 +811,7 @@ export function buildSweepSummary({ mode, fault, seeds, records, adaptiveProofCo
   const numericTokenMetrics = tokenMetrics.map(({ progressiveConfiguration: _configuration, ...metrics }) => metrics);
 
   return {
-    schemaVersion: 9,
+    schemaVersion: 10,
     generatedAt: new Date().toISOString(),
     kind: mode === "compare" ? "paired-seed-sweep" : "seed-sweep",
     mode,
@@ -788,6 +826,8 @@ export function buildSweepSummary({ mode, fault, seeds, records, adaptiveProofCo
       : null,
     capacityPolicy: firstCapacityPolicy,
     runtime,
+    /** What every latency and TTFT percentile below was taken over. */
+    percentileScope: latencyPercentileScope,
 headroomPolicy: headroomPolicyEvidence(firstCapacityPolicy, records),
     adaptiveProof: adaptiveProof(records, firstCapacityPolicy, { context: adaptiveProofContext }),
     runs: records.map((record) => ({

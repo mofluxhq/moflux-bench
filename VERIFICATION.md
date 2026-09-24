@@ -1,5 +1,29 @@
 # MoFlux Bench verification
 
+## 0.42.0 whole-run percentiles
+
+`load/verify-summary-percentiles.mjs` replays eight interactive requests. The
+first four are held for 400 ms and the last four answer immediately. It scrapes
+`/metrics` after the slow ones have left a 200 ms window, both with and without
+`--emit-phase-samples`. The summary must declare `percentileScope: "run"`, keep
+p95 latency and TTFT at or above 400 ms, and match the nearest-rank percentiles
+of `phaseSamples` exactly. Against the 0.41.1 `load/loadgen.mjs`, 8 of 14 checks
+fail. The summary had no scope and reported p95 latency of 10.9 ms and 4.1 ms,
+where the samples give 424.6 ms. `demo/verify-seed-sweep.mjs` requires sweep
+`schemaVersion` 10 and a recorded scope, and rejects arms that mix scopes.
+`demo/verify-arm-health.mjs` requires the coordinator ladder's rung and resume
+guards.
+
+Every module in `npm run verify` passed (50 checks), including
+`demo/verify-presenter.mjs`, along with syntax checks for all 110 JavaScript
+modules. `npm run verify:publication` reported only local files that are never
+published: unpublished run output under `results/runs/`, `.DS_Store` files and
+`demo/moflux/.env`. No sweep has been run on 0.42.0. The motivating 0.41.1
+blind adaptive sweep, `20260924T172752Z`, recomputed from its `phaseSamples`,
+gives a median interactive p95 of 10.9 s for baseline and 10.7 s for MoFlux, a
+-5.1% paired change. Its summary reports -17.9%. Saved results are unchanged
+and keep the rolling basis.
+
 ## 0.41.1 per-request samples
 
 `demo/verify-loadgen-args.mjs` requires `loadgenArgs` to forward

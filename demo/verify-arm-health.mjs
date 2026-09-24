@@ -179,6 +179,11 @@ check("each rung writes a named run directory", /--run-id=\$\{rungRunId\(latency
 check("and the rung is read back from that directory", /runDirFor\(RESULTS, SWEEP_NAME, rungRunId\(latencyMs\)\)/.test(ladder));
 check("a rung that disagrees with its own evidence fails", /records rung \$\{recorded\}ms/.test(ladder));
 check("the ladder no longer passes a flag nothing reads", !/--keep-stack/.test(ladder));
+check("a rung with another percentile scope fails", /reported \$\{rungScope\} percentiles, but earlier rungs/.test(ladder));
+check(
+  "a resumed ladder refuses this checkout's percentile scope when it differs",
+  /ladderPercentileScope !== LOADGEN_PERCENTILE_SCOPE/.test(ladder),
+);
 
 assert.equal(typeof armHealth(summary(cls())).unattributedRate, "number");
 

@@ -170,8 +170,9 @@ const CONFIG = Object.freeze({
    * Off by default. `phaseSamples` is one record per completed request and the
    * simulator sweeps complete thousands per class per arm, so emitting it
    * unconditionally would inflate every existing summary — including reviewed
-   * ones — for the benefit of runs that do not read it. A run that needs
-   * whole-run distributions rather than the pre-cut phase windows asks for it.
+   * ones — for the benefit of runs that do not read it. The class percentiles
+   * cover the whole run either way; a run that needs a distribution the
+   * summary does not already carry asks for the samples.
    */
   emitPhaseSamples: bool("emit-phase-samples", false),
   traceFile: str("trace-file", ""),
@@ -326,9 +327,11 @@ for (const cls of classes) {
      * Every completion, kept for the whole run.
      *
      * Distinct from `samples`, which pruneWindows() trims to the rolling
-     * metrics window on each scrape. Phase analysis needs the start of the run
-     * to still be present when the summary is written, which for any run
-     * longer than windowMs the rolling array cannot guarantee.
+     * metrics window on each scrape. Phase analysis and the summary's class
+     * percentiles need the start of the run to still be present when the
+     * summary is written, which for any run longer than windowMs the rolling
+     * array cannot guarantee. Kept whether or not `--emit-phase-samples` is
+     * set; that flag only controls whether it is written out.
      */
     phaseSamples: [],
     retryHints: {
@@ -1497,6 +1500,18 @@ const summary = {
   arm: CONFIG.armLabel,
   seed: CONFIG.seed,
   /**
+   * What each class's `latencyMs` and `ttftMs` percentiles cover: `run` is
+   * every successful request.
+   *
+   * A summary without this field took them from the rolling `samples`, which
+   * every metrics scrape trims to the last `windowMs`. On a 45 s sweep that
+   * kept only the last 66-180 of 195-270 interactive completions, dropping the
+   * idle phase, and how many survived depended on when Prometheus last
+   * scraped. Those percentiles are not comparable with these, and a consumer
+   * that pools results must not mix the two.
+   */
+  percentileScope: "run",
+  /**
    * How long the run took to quiesce after the last arrival, against the bounds
    * that were in force. Published so the margin is visible in the result rather
    * than only in a crash: a drain creeping toward its idle window is the arm
@@ -1539,8 +1554,9 @@ const summary = {
 };
 for (const cls of classes) {
   const s = stats[cls];
-  const latencies = s.samples.map((x) => x.latencyMs);
-  const ttfts = s.samples.map((x) => x.ttftMs);
+  // Every completion, not the rolling `samples`: see `percentileScope`.
+  const latencies = s.phaseSamples.map((x) => x.latencyMs);
+  const ttfts = s.phaseSamples.map((x) => x.ttftMs);
   summary.classes[cls] = {
     logical: s.logical,
     attempts: s.attempts,
