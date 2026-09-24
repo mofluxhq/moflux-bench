@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.41.0 - 2026-09-23
+
+Every licensed benchmark moves to the latest Tyr and Latchflo releases. Saved
+results keep the runtime they recorded; new runs are a new runtime cohort.
+
+### Changed
+
+- **Pin licensed runs to Tyr 0.33.0 and Latchflo 0.18.0.** This covers the
+  adaptive, headroom and coordinator sweeps, class/restoration, membership,
+  live OpenAI, Ollama and vLLM. async-bulkhead-llm remains 3.17.0 and
+  async-bulkhead-ts remains 1.0.1. `demo:prepare` migrates the standard local
+  image tags in a generated `.env`; custom registry references remain
+  untouched. Replica metadata, the vLLM pins and runtime verification follow.
+  - Tyr 0.32.0 is licensed under Apache-2.0 and removes the deprecated
+    `x-korrx-*` headers and `source: "korrx"` provenance, which the benchmark
+    never read. Tyr 0.33.0 adds a self-serve evaluation. Neither changes
+    admission or configuration.
+  - Latchflo 0.18.0 renews unchanged capacity-group grants before they expire,
+    including the demand-aware adaptive 28/4 group. The 0.40.0 note that
+    capacity groups are skipped no longer applies. Changed plans, and therefore
+    lending and restoration, keep the existing handoff and expiry paths.
+- A renewed grant has a new ID, and restoration and headroom proofs follow grant
+  IDs only through handoff lineage. A proof observed only under a renewed grant
+  is reported as unproven, never credited. The README documents this limit.
+- Seed sweeps and the coordinator ladder refuse to pool Tyr 0.31.0/Latchflo
+  0.17.1 seeds or rungs with new ones. A ladder started on the old pins must be
+  restarted.
+- **Tyr is documented as Apache-2.0.** The README, CONTRIBUTING, SECURITY and
+  demo docs, and the walkthrough's arm 5/6 notice, link Tyr's public repository
+  instead of calling it proprietary. Latchflo remains proprietary, and arms 5
+  and 6 still need a licensed Latchflo image because this harness runs both
+  through the Latchflo-managed presenter. CONTRIBUTING's stale Tyr
+  0.30.0/Latchflo 0.16.0 pins now read 0.33.0/0.18.0.
+
 ## 0.40.1 - 2026-09-23
 
 ### Fixed

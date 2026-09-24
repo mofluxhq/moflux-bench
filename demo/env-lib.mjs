@@ -2,8 +2,8 @@ import { randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
-export const TYR_VERSION = "0.31.0";
-export const LATCHFLO_VERSION = "0.17.1";
+export const TYR_VERSION = "0.33.0";
+export const LATCHFLO_VERSION = "0.18.0";
 export const ASYNC_BULKHEAD_LLM_VERSION = "3.17.0";
 export const ASYNC_BULKHEAD_TS_VERSION = "1.0.1";
 export const OLLAMA_VERSION = "0.12.3";
@@ -11,19 +11,19 @@ export const VLLM_VERSION = "0.18.0";
 export const DEFAULT_TYR_IMAGE = `tyr-admission-controller:${TYR_VERSION}`;
 export const DEFAULT_LATCHFLO_IMAGE = `latchflo-control-plane:${LATCHFLO_VERSION}`;
 /**
- * The vLLM contention experiment needs Latchflo 0.17.1: pre-expiry lease
- * renewal (0.17.0) and immediate idle-floor lending (0.17.1). Its
+ * The vLLM contention experiment needs Latchflo 0.17.1 or later: pre-expiry
+ * lease renewal (0.17.0) and immediate idle-floor lending (0.17.1). Its
  * `managedGrantContinuity` gate invalidates any seed in which a managed arm
  * refused work while holding no live grant. Current experiments share these
  * release pins; saved results retain their original runtime metadata. Explicit vLLM constants keep its contract visible.
  */
-export const VLLM_LATCHFLO_VERSION = "0.17.1";
+export const VLLM_LATCHFLO_VERSION = "0.18.0";
 export const DEFAULT_VLLM_LATCHFLO_IMAGE = `latchflo-control-plane:${VLLM_LATCHFLO_VERSION}`;
 /**
- * Tyr 0.31.0 names the transport cause of a `502 upstream_error`, which the
- * vLLM experiment needs to attribute Docker-to-host upstream failures.
+ * Tyr 0.31.0 and later name the transport cause of a `502 upstream_error`,
+ * which the vLLM experiment needs to attribute Docker-to-host upstream failures.
  */
-export const VLLM_TYR_VERSION = "0.31.0";
+export const VLLM_TYR_VERSION = "0.33.0";
 export const DEFAULT_VLLM_TYR_IMAGE = `tyr-admission-controller:${VLLM_TYR_VERSION}`;
 export const DEFAULT_OLLAMA_IMAGE = `ollama/ollama:${OLLAMA_VERSION}`;
 export const DEFAULT_VLLM_IMAGE = `vllm/vllm-openai:v${VLLM_VERSION}`;

@@ -1,5 +1,24 @@
 # MoFlux Bench verification
 
+## 0.41.0 runtime alignment
+
+`npm run verify:publication` requires the Tyr 0.33.0 and Latchflo 0.18.0 image
+tags in `demo/moflux/.env.example` and Tyr 0.33.0 metadata in every
+`demo/moflux` and `demo/classes` replica config. It also requires
+`VLLM_TYR_VERSION = "0.33.0"` and `VLLM_LATCHFLO_VERSION = "0.18.0"`.
+`demo/verify-env.mjs` proves that a generated `.env` pinned to Tyr 0.31.0/Latchflo
+0.17.1 migrates its image tags and compatibility line, keeps its tokens and
+routing secret, and is unchanged by a second pass. `demo/verify-topology.mjs`
+and `demo/verify-tenant-fairness.mjs` require the new replica metadata.
+`node demo/vllm-contention.mjs --backend=metal --dry-run` plans
+`tyr-admission-controller:0.33.0` and `latchflo-control-plane:0.18.0`.
+
+Every other module in `npm run verify` passed, along with syntax checks for all
+109 JavaScript modules. `demo/verify-presenter.mjs` was updated to require the
+new runtime but was not run for this release: its telemetry-relay test double
+needs 127.0.0.1:8200, which a running local demo stack held. No image was built
+and no live sweep was run. Saved results remain unchanged.
+
 ## 0.40.1 handoff and headroom evidence
 
 The retained seed 2 fixture from sweep `20260923T184716Z` also covers a batch

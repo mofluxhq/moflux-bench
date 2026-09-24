@@ -714,8 +714,10 @@ if (want("redis-fault")) {
 if (want("moflux")) {
   banner(8, "Arms 5 and 6 — Tyr observe and enforce");
   note(
-    "Not runnable from this repository. Tyr and Latchflo are proprietary and are",
-    "not redistributed here, so these two arms require a licensed image.",
+    "Not runnable from this repository alone. Tyr is open source (Apache-2.0),",
+    "but Latchflo is proprietary and is not redistributed here, and this harness",
+    "runs both arms through the Latchflo-managed presenter. They require a",
+    "licensed Latchflo image.",
     "",
     "This is stated plainly rather than hidden: arms 1-4 above are fully",
     "reproducible by anyone who clones this repo, and the MoFlux numbers",

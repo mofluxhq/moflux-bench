@@ -2,7 +2,7 @@
 
 MoFlux Bench 0.31.0 retains the four-arm authenticated noisy-neighbor scenario
 introduced in 0.16.0, including demand-aware protected-floor lending with the current Tyr
-0.31.0 and Latchflo 0.17.1 runtime.
+0.33.0 and Latchflo 0.18.0 runtime.
 
 ## The restoration-enforceability ladder (0.31.0)
 
@@ -94,7 +94,7 @@ first in that same fresh seed.
 Latchflo may release the active protected floor only after every active Tyr
 replica reports the class idle. The hard class ceilings remain unchanged. When
 noisy demand returns, Latchflo stops new borrowing, stages the restored floor,
-and uses Tyr 0.31.0's ordered class acknowledgement plus fresh occupancy
+and uses Tyr 0.33.0's ordered class acknowledgement plus fresh occupancy
 evidence to prove the shared authority has drained by attrition. Running
 requests are never revoked; lease expiry remains the fallback if proof fails.
 
@@ -117,7 +117,8 @@ Preflight only:
 npm run demo:classes:doctor
 ```
 
-The licensed Tyr and Latchflo images are not redistributed here. The command can
+Neither the Apache-2.0 Tyr image nor the licensed Latchflo image is
+redistributed here. The command can
 use existing exact-version images, build matching sibling source repositories,
 or pull configured registry images.
 
@@ -173,8 +174,8 @@ performance metric improves.
 
 ## Floor semantics
 
-Tyr 0.31.0 reports bounded per-class demand and ordered class occupancy evidence while enforcing the class limits in its
-currently applied Latchflo grant. Latchflo 0.17.1 owns the lending and handoff decisions; these handoff semantics were introduced in earlier 0.12.x releases and are preserved here.
+Tyr 0.33.0 reports bounded per-class demand and ordered class occupancy evidence while enforcing the class limits in its
+currently applied Latchflo grant. Latchflo 0.18.0 owns the lending and handoff decisions; these handoff semantics were introduced in earlier 0.12.x releases and are preserved here.
 
 A configured protected floor is therefore the **nominal floor**. In the
 adaptive arm the **active floor** may temporarily be lower while the class is

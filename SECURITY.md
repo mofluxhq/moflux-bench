@@ -6,7 +6,7 @@ Please use the repository's private GitHub security-advisory workflow instead of
 
 ## Scope
 
-This repository contains a local synthetic benchmark harness. Tyr and Latchflo are proprietary components referenced only through user-supplied image names and local tokens. The example Docker configuration binds control-plane and Tyr ports to loopback, but it is not production hardening guidance.
+This repository contains a local synthetic benchmark harness. Tyr (Apache-2.0, maintained in [mofluxhq/tyr-admission-controller](https://github.com/mofluxhq/tyr-admission-controller)) and Latchflo (proprietary) are referenced only through user-supplied image names and local tokens. Report a vulnerability in Tyr itself through the Tyr repository's security policy. The example Docker configuration binds control-plane and Tyr ports to loopback, but it is not production hardening guidance.
 
 The benchmark intentionally trusts `x-priority` in its controlled local Tyr configuration. Do not copy that setting into an untrusted deployment without authenticating and authorizing the caller.
 
