@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.41.1 - 2026-09-23
+
+### Fixed
+
+- **Forward `--emit-phase-samples` from the presenter to the load generator.**
+  The generator could already record every completed request's arrival,
+  completion, latency and TTFT, but the presenter ignored the option, so no
+  presenter or sweep run could produce per-request latency. Default off; the
+  option is output only and stays out of the scenario and trace, so seed-sweep
+  `schemaVersion` stays 9. `demo/verify-loadgen-args.mjs` requires the
+  forwarding and matching defaults.
+
 ## 0.41.0 - 2026-09-23
 
 Every licensed benchmark moves to the latest Tyr and Latchflo releases. Saved

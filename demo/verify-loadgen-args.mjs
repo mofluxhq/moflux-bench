@@ -139,6 +139,27 @@ check(
   "including it would change every recorded trace hash and break the A/B pairing",
 );
 
+// Per-request samples are the only way to split a latency percentile by retry
+// history. The generator could emit them, but the presenter silently dropped
+// `--emit-phase-samples`, so no sweep could produce them.
+check(
+  "loadgenArgs forwards --emit-phase-samples=",
+  args.includes("--emit-phase-samples="),
+  "sweep and presenter runs could not record per-request latency",
+);
+const presentSamples = /emitPhaseSamples: bool\("emit-phase-samples", (true|false)\)/.exec(present);
+const loadgenSamples = /emitPhaseSamples: bool\("emit-phase-samples", (true|false)\)/.exec(loadgen);
+check(
+  "the emit-phase-samples defaults agree and stay off",
+  presentSamples?.[1] === "false" && loadgenSamples?.[1] === "false",
+  "samples enlarge every summary, including reviewed ones",
+);
+check(
+  "per-request samples stay out of the scenario and trace",
+  !/emitPhaseSamples: OPT\.emitPhaseSamples/.test(present) && !traceKeys.includes("emitPhaseSamples"),
+  "an output-only option must not change a scenario or trace fingerprint",
+);
+
 
 // Progressive reconciliation requires a protocol that exposes usage before
 // completion. The presenter defaults to Anthropic and must pass that choice to

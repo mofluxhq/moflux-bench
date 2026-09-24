@@ -329,6 +329,13 @@ const OPT = Object.freeze({
    *   npm run demo:hetero:blind
    */
   honorRetryHints: bool("honor-retry-hints", true),
+  /**
+   * Add `phaseSamples` (arrival, completion, latency and TTFT for every
+   * completed request) to each arm's class summary. Default false, matching the
+   * load generator. Output only: it changes neither the trace nor any admission
+   * decision, so it is not recorded in the scenario and cannot split a sweep.
+   */
+  emitPhaseSamples: bool("emit-phase-samples", false),
   sizeDistribution: str("size-distribution", "uniform"),
   interactiveSizeSigma: num("interactive-size-sigma", 0.75),
   batchSizeSigma: num("batch-size-sigma", 0),
@@ -1405,6 +1412,9 @@ function loadgenArgs({ interactiveTargets, batchTargets, armLabel, outFile }) {
     // it has to reach the generator explicitly rather than relying on the two
     // defaults happening to agree.
     `--honor-retry-hints=${WORKLOAD.honorRetryHints}`,
+    // Output only, but forwarded explicitly for the same reason: a presenter
+    // option the generator never receives silently produces no samples.
+    `--emit-phase-samples=${OPT.emitPhaseSamples}`,
     // Trace-shaping options must reach the generator or it will build its
     // config from different values than the trace it is handed, and reject a
     // trace this presenter just wrote. Anything included in traceWorkload()

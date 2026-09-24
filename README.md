@@ -1026,6 +1026,17 @@ worse. Requests that previously exhausted their attempt budget contributed no
 latency sample at all; when they start succeeding they contribute slow ones. A
 p95 increase alongside a completion increase is the fix working.
 
+To check that per request, add `--emit-phase-samples=true` to a presenter or
+sweep command, for example
+`npm run demo:hetero:adaptive:blind -- --emit-phase-samples=true`. Each arm's
+class summary then carries `phaseSamples`, one record per completed request with
+`arrivalMs`, `completedAtMs`, `latencyMs` and `ttftMs`. Latency and TTFT are
+measured from the request's first attempt, so they include every rejection and
+retry wait. A sample's `arrivalMs` identifies its trace entry, and that entry's
+`id` matches the `requestId` on the request's rejection snapshots. The option is
+off by default because it enlarges every summary. It is not part of the scenario
+or the trace, so it cannot split a sweep.
+
 ## Comparing against the alternatives, not against nothing
 
 A sweep that only runs MoFlux against no admission control answers a question
