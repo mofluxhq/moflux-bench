@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.46.0 - 2026-09-25
+
+### Added
+
+- **Two-slot reserve profile for vLLM Metal long-context, `unlent-concurrency-2`.**
+  The MoFlux arm lends only one of its three protected interactive slots and
+  keeps two unborrowable. The published policy, now named
+  `unlent-concurrency-1`, keeps one and lends two. Run it with
+  `npm run demo:vllm:metal:long-context:unlent2`, `:single` (seed 3) or
+  `:dry-run`, or pass `--policy-profile=unlent-concurrency-2` with
+  `--workload=metal-long-context-v1`.
+  - It tests whether the one-slot reserve is too small. The long-context repeat
+    failed H2 at -0.20 req/s against native priority, and its MoFlux arm
+    completed 15 fewer interactive requests than static while gaining seven
+    batch completions.
+  - Only the lending pool's `globalUnlentProtectedConcurrent` changes, from 1
+    to 2. Batch can then hold at most two slots while interactive is idle: its
+    own floor plus the one lent slot. Two long batch requests take 210 of the
+    320 pinned KV blocks, where three took 315.
+  - The workload, traces, arm order, static arm, token floors, unlent token
+    slices, lease timing and all five hypothesis thresholds are unchanged.
+  - The profile is registered for `metal-long-context-v1` only and is refused
+    with any other workload.
+  - Results go to `results/runs/vllm-metal-long-context-unlent-concurrency-2/`,
+    and `results/vllm-metal-long-context-unlent-concurrency-2` is protected as
+    reviewed evidence in advance.
+  - At release, no sweep had been run with this profile, and no Latchflo
+    instance had yet accepted the two-slot reserve.
+
+### Changed
+
+- The `nativeUnlentFloor` and `allocatorUnlentReserve` seed gates take the
+  reserve size from the run's policy instead of assuming one slot. Under the
+  two-slot profile, a usable grant below two protected interactive slots is a
+  breach, and Latchflo's gauges must report at least two withheld slots. For
+  the published profile the gates, thresholds and wording are unchanged.
+  Reanalysis reads the reserve from the saved summary's policy.
+- Summaries record the profile as `experiment.policy.profile`, and the MoFlux
+  arm description states how many slots the profile lends. The run plan shows
+  the profile and its reserve.
+- `npm run verify:publication` requires both default vLLM policies to keep the
+  one-slot reserve, and `unlent-concurrency-2` to keep its reserve, workload and
+  corpus.
+
 ## 0.45.1 - 2026-09-25
 
 ### Fixed

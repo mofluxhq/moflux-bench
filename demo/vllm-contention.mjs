@@ -80,6 +80,7 @@ import {
 import {
   VLLM_ARM_IDS,
   VLLM_ARMS,
+  VLLM_DEFAULT_POLICY_PROFILE,
   VLLM_ENDPOINT,
   VLLM_EVIDENCE_LIMITS,
   VLLM_METAL_EVIDENCE_LIMITS,
@@ -109,9 +110,11 @@ import {
   summarizeVllmTelemetry,
   vllmApiKeyArgument,
   vllmArm,
+  vllmArmDescription,
   vllmFixedOutputFields,
   vllmNominalClassGrant,
   vllmPolicyForBackend,
+  vllmPolicyProfileByName,
   vllmPoolDefinition,
   vllmGpuMemoryUtilizationForBackend,
   vllmSamplingForBackend,
@@ -188,10 +191,13 @@ try {
     ? vllmWorkloadByProfile(str("workload", ""), backend)
     : vllmWorkloadForBackend(backend);
   DEFAULT_SAMPLING = vllmSamplingForBackend(backend);
+  const policyProfile = str("policy-profile", VLLM_DEFAULT_POLICY_PROFILE);
+  vllmPolicyProfileByName(policyProfile, DEFAULT_WORKLOAD);
   OPT = Object.freeze({
     seeds: parseSeeds(str("seeds", `1-${VLLM_PUBLICATION_SEED_COUNT}`)),
     arms: parseArms(str("arms", VLLM_ARM_IDS.join(","))),
     backend,
+    policyProfile,
     image: str("image", process.env.MOFLUX_VLLM_IMAGE ?? DEFAULT_VLLM_IMAGE),
     model: str("model", process.env.MOFLUX_VLLM_MODEL ?? DEFAULT_VLLM_MODEL),
     modelRevision: str(
@@ -286,7 +292,7 @@ const WORKLOAD = Object.freeze({
   durationMs: OPT.durationMs,
   windowMs: OPT.durationMs,
 });
-const POLICY = vllmPolicyForBackend(OPT.backend);
+const POLICY = vllmPolicyForBackend(OPT.backend, OPT.policyProfile);
 const NOMINAL_CLASS_GRANT = vllmNominalClassGrant(POLICY);
 const SAMPLING = Object.freeze({
   ...DEFAULT_SAMPLING,
@@ -295,7 +301,7 @@ const SAMPLING = Object.freeze({
   platformIntervalMs: OPT.platformTelemetryIntervalMs,
 });
 const IS_METAL = OPT.backend === "metal";
-const SWEEP_NAME = vllmSweepNameFor(OPT.backend, WORKLOAD);
+const SWEEP_NAME = vllmSweepNameFor(OPT.backend, WORKLOAD, OPT.policyProfile);
 /** Engine flags that pin the scheduler's KV pool, when the workload declares one. */
 const KV_POOL_ARGS = WORKLOAD.engine
   ? ["--block-size", String(WORKLOAD.engine.blockSize), "--num-gpu-blocks-override", String(WORKLOAD.engine.kvCacheBlocks)]
@@ -364,6 +370,8 @@ const plan = {
   arms: OPT.arms.join(","),
   seeds: OPT.seeds.join(","),
   workloadProfile: WORKLOAD.profile,
+  policyProfile: POLICY.profile,
+  interactiveUnlentConcurrent: POLICY.unlentProtectedConcurrent.interactive,
   durationMs: WORKLOAD.durationMs,
   fixedOutputLength: true,
   minTokensSent: !IS_METAL,
@@ -1618,7 +1626,7 @@ if (OPT.doctor) {
     },
     experiment: {
       arms: OPT.arms,
-      armDescriptions: Object.fromEntries(OPT.arms.map((id) => [id, vllmArm(id).summary])),
+      armDescriptions: Object.fromEntries(OPT.arms.map((id) => [id, vllmArmDescription(id, POLICY)])),
       seeds: OPT.seeds,
       armOrder: ORDER_PLAN,
       counterbalanced: armOrderIsCounterbalanced(ORDER_PLAN, OPT.arms),

@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { REVIEWED_EVIDENCE, RUNS_DIRNAME, isReviewedEvidence } from "../demo/evidence-paths-lib.mjs";
 import { HEADROOM_PROFILES } from "../demo/capacity-lib.mjs";
+import { VLLM_METAL_POLICY, VLLM_NVIDIA_POLICY, VLLM_POLICY_PROFILES } from "../demo/vllm-contention-lib.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const required = [
@@ -192,7 +193,7 @@ for (const expected of [
   "await readMetalProcessTree()",
   "workload: WORKLOAD",
   "policy: POLICY",
-  "vllmPolicyForBackend(OPT.backend)",
+  "vllmPolicyForBackend(OPT.backend, OPT.policyProfile)",
   "env.HF_TOKEN || env.HUGGING_FACE_HUB_TOKEN",
 ]) {
   if (!vllmRunner.includes(expected)) findings.push(`demo/vllm-contention.mjs: missing ${expected}`);
@@ -448,6 +449,24 @@ if (JSON.stringify(HEADROOM_PROFILES["adaptive-headroom-28-4"]) !== JSON.stringi
 })) {
   findings.push("demo/capacity-lib.mjs: adaptive-headroom-28-4 must keep its published 4/4000/3000/2/10000 headroom policy");
 }
+// Published vLLM evidence ran with a one-slot reserve; a reserve change needs a new profile name.
+if (
+  JSON.stringify(VLLM_POLICY_PROFILES["unlent-concurrency-1"]) !==
+    JSON.stringify({ interactiveUnlentConcurrent: 1, workloads: null, sweepSuffix: "" }) ||
+  [VLLM_NVIDIA_POLICY, VLLM_METAL_POLICY].some((policy) =>
+    policy.profile !== "unlent-concurrency-1" || policy.unlentProtectedConcurrent.interactive !== 1)
+) {
+  findings.push("demo/vllm-contention-lib.mjs: the default vLLM policies must keep the published one-slot unlent reserve");
+}
+if (
+  JSON.stringify(VLLM_POLICY_PROFILES["unlent-concurrency-2"]) !== JSON.stringify({
+    interactiveUnlentConcurrent: 2,
+    workloads: ["metal-long-context-v1"],
+    sweepSuffix: "-unlent-concurrency-2",
+  })
+) {
+  findings.push("demo/vllm-contention-lib.mjs: unlent-concurrency-2 must keep its two-slot reserve, workload and corpus");
+}
 
 if (pkg.scripts?.demo !== "node demo/seed-sweep.mjs --seeds=1-5 --pause-ms=0 --provider-api=anthropic" ||
     pkg.scripts?.predemo !== "npm run demo:prepare" ||
@@ -511,8 +530,8 @@ if (
     "package.json: the unlent-concurrency contention dry-run, single-seed and verify commands are required",
   );
 }
-if (pkg.version !== "0.45.1") {
-  findings.push("package.json: the current benchmark release must be version 0.45.1");
+if (pkg.version !== "0.46.0") {
+  findings.push("package.json: the current benchmark release must be version 0.46.0");
 }
 // Latchflo 0.17.0 still failed closed at lending transitions; the vLLM
 // experiment's grant-continuity gate needs 0.17.1.

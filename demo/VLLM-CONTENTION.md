@@ -21,6 +21,10 @@ trace hash, arm order, and telemetry completeness.
 | `static` | client → Tyr → vLLM | same priority policy | fixed interactive/batch floors of 3/1 |
 | `moflux` | client → Tyr → vLLM | same priority policy | same 3/1 floors; two interactive slots lendable, one natively unlent |
 
+The `moflux` row describes the default `unlent-concurrency-1` profile. The
+long-context `unlent-concurrency-2` profile lends one slot and keeps two
+unlent; see [Two-slot interactive reserve](#two-slot-interactive-reserve-on-the-long-context-workload).
+
 vLLM documents FCFS as the default and its priority scheduler as lower numeric
 values first, with arrival time breaking ties. It also documents the top-level
 OpenAI `priority` field and the `ignore_eos`/`min_tokens` extensions used by the
@@ -249,6 +253,43 @@ node demo/reanalyze-vllm-reporting.mjs /absolute/path/to/run/summary.json /absol
 The output must be a new file outside reviewed evidence paths. Original runtime
 and generation timestamps are retained; reanalysis adds its own timestamp and
 source SHA-256 hashes. No inference runs and no hypothesis thresholds change.
+
+### Two-slot interactive reserve on the long-context workload
+
+The published MoFlux arm keeps one of its three protected interactive slots
+natively unlent and lends the other two. That policy is named
+`unlent-concurrency-1`. Its long-context repeat failed H2: median interactive
+SLO goodput was 0.20 req/s below native priority, and MoFlux completed 15 fewer
+interactive requests than static for seven more batch completions.
+`unlent-concurrency-2` tests whether that reserve is too small. It lends one
+slot and keeps two unborrowable.
+
+```bash
+npm run demo:vllm:metal:long-context:unlent2:dry-run
+npm run demo:vllm:metal:long-context:unlent2:single  # seed 3
+npm run demo:vllm:metal:long-context:unlent2
+```
+
+Only the lending pool's `globalUnlentProtectedConcurrent` changes, from 1 to 2.
+While interactive is idle, batch can hold at most its own floor plus the one
+lent slot. Two batch requests take 210 of the 320 pinned KV blocks, where three
+took 315. Everything else is held fixed: the `metal-long-context-v1` workload
+and per-seed traces, arm order, the static arm, token floors and unlent token
+slices, lease timing, and the five hypothesis thresholds. The profile is
+refused with any other workload.
+
+Two seed gates follow the reserve. `nativeUnlentFloor` counts a usable grant
+with fewer than two protected interactive slots as a breach.
+`allocatorUnlentReserve` requires Latchflo's gauges to report at least two
+withheld concurrent slots. Results go to
+`results/runs/vllm-metal-long-context-unlent-concurrency-2/` and are never
+pooled with the one-slot corpus. The profile is recorded in
+`experiment.policy.profile`.
+
+The paired question is whether H2 recovers against native priority while H3
+still clears 0.02 req/s over static with one lendable slot instead of two. A
+pass would be one five-seed run on one host. The one-slot corpus shows that a
+single pass may not reproduce, so a repeat is needed before drawing a conclusion.
 
 ## Measurements and proof
 

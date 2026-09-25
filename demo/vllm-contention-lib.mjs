@@ -69,6 +69,23 @@ export function vllmArm(id) {
   return arm;
 }
 
+const COUNT_WORDS = Object.freeze(["no", "one", "two", "three", "four"]);
+
+/** Size of the natively unlent interactive reserve, in words ("one-slot"). */
+function unlentReserveLabel(policy) {
+  return `${COUNT_WORDS[policy.unlentProtectedConcurrent.interactive]}-slot`;
+}
+
+/** An arm's description under a policy; the lending arm states how many slots it may lend. */
+export function vllmArmDescription(id, policy = VLLM_POLICY) {
+  const arm = vllmArm(id);
+  if (!arm.lending) return arm.summary;
+  const lendable = policy.classes.interactive.globalProtectedConcurrent -
+    policy.unlentProtectedConcurrent.interactive;
+  return `the same 3/1 partition, with ${COUNT_WORDS[lendable]} idle interactive ` +
+    `slot${lendable === 1 ? "" : "s"} lendable and restored`;
+}
+
 /**
  * Backend-specific fields for a fixed-output OpenAI request.
  *
@@ -279,10 +296,53 @@ export function vllmWorkloadByProfile(profile, backend) {
   return entry.workload;
 }
 
-/** Where a run's results go. A pinned KV pool is its own corpus. */
-export function vllmSweepNameFor(backend, workload) {
-  if (backend === "nvidia") return VLLM_SWEEP_NAME;
-  return workload?.engine?.kvCacheBlocks ? VLLM_METAL_LONG_CONTEXT_SWEEP_NAME : VLLM_METAL_SWEEP_NAME;
+/**
+ * Named reserves for the MoFlux arm's interactive floor. Each name fixes the
+ * reserve, so a profile name in a saved result identifies exactly one policy.
+ * A new reserve gets a new name rather than a changed one.
+ *
+ * `unlent-concurrency-1` is the published policy: one of the three protected
+ * interactive slots is never lent, so two are lendable. `unlent-concurrency-2`
+ * lends only one and keeps two unborrowable. It asks whether the one-slot
+ * reserve is too small for the long-context repeat, which failed H2, so it is
+ * registered for that workload only and writes its own corpus.
+ */
+export const VLLM_POLICY_PROFILES = Object.freeze({
+  "unlent-concurrency-1": Object.freeze({
+    interactiveUnlentConcurrent: 1,
+    workloads: null,
+    sweepSuffix: "",
+  }),
+  "unlent-concurrency-2": Object.freeze({
+    interactiveUnlentConcurrent: 2,
+    workloads: Object.freeze(["metal-long-context-v1"]),
+    sweepSuffix: "-unlent-concurrency-2",
+  }),
+});
+export const VLLM_DEFAULT_POLICY_PROFILE = "unlent-concurrency-1";
+
+/** A named policy profile, which must be registered for the selected workload. */
+export function vllmPolicyProfileByName(name, workload) {
+  if (!Object.hasOwn(VLLM_POLICY_PROFILES, name)) {
+    throw new Error(
+      `--policy-profile must be one of ${Object.keys(VLLM_POLICY_PROFILES).join(", ")}, got ${JSON.stringify(name)}`,
+    );
+  }
+  const profile = VLLM_POLICY_PROFILES[name];
+  if (profile.workloads !== null && !profile.workloads.includes(workload?.profile)) {
+    throw new Error(
+      `policy profile ${name} runs only with --workload=${profile.workloads.join(",")}, ` +
+        `not ${workload?.profile ?? "the default"}`,
+    );
+  }
+  return profile;
+}
+
+/** Where a run's results go. A pinned KV pool, or a different reserve, is its own corpus. */
+export function vllmSweepNameFor(backend, workload, policyProfile = VLLM_DEFAULT_POLICY_PROFILE) {
+  const suffix = vllmPolicyProfileByName(policyProfile, workload).sweepSuffix;
+  if (backend === "nvidia") return `${VLLM_SWEEP_NAME}${suffix}`;
+  return `${workload?.engine?.kvCacheBlocks ? VLLM_METAL_LONG_CONTEXT_SWEEP_NAME : VLLM_METAL_SWEEP_NAME}${suffix}`;
 }
 
 /** Validity threshold for a workload that exists to pressure the KV cache. */
@@ -319,11 +379,16 @@ const VLLM_PROTECTED_TOKEN_FLOORS = Object.freeze({
   batch: 16_384,
 });
 
-function makeVllmPolicy(tokenBudget) {
+function makeVllmPolicy(tokenBudget, profile = VLLM_DEFAULT_POLICY_PROFILE) {
   if (!Number.isSafeInteger(tokenBudget) || tokenBudget < 65_536) {
     throw new Error("vLLM token budget must preserve the registered 65,536-token floors");
   }
+  if (!Object.hasOwn(VLLM_POLICY_PROFILES, profile)) {
+    throw new Error(`unknown vLLM policy profile ${JSON.stringify(profile)}`);
+  }
+  const { interactiveUnlentConcurrent } = VLLM_POLICY_PROFILES[profile];
   return Object.freeze({
+    profile,
     physical: Object.freeze({
       maxConcurrent: VLLM_MAX_NUM_SEQS,
       tokenBudget,
@@ -344,7 +409,7 @@ function makeVllmPolicy(tokenBudget) {
         globalMaxInFlightTokens: tokenBudget,
       }),
     }),
-    unlentProtectedConcurrent: Object.freeze({ interactive: 1, batch: 0 }),
+    unlentProtectedConcurrent: Object.freeze({ interactive: interactiveUnlentConcurrent, batch: 0 }),
     unlentProtectedTokens: Object.freeze({ interactive: 8_192, batch: 4_096 }),
     lending: Object.freeze({
       grantTtlMs: 15_000,
@@ -405,10 +470,10 @@ export const VLLM_METAL_HOST_PRESSURE_LIMITS = Object.freeze({
 /** Backward-compatible policy name for the canonical NVIDIA experiment. */
 export const VLLM_POLICY = VLLM_NVIDIA_POLICY;
 
-export function vllmPolicyForBackend(backend) {
-  if (backend === "nvidia") return VLLM_NVIDIA_POLICY;
-  if (backend === "metal") return VLLM_METAL_POLICY;
-  throw new Error(`unknown vLLM policy backend ${JSON.stringify(backend)}`);
+export function vllmPolicyForBackend(backend, profile = VLLM_DEFAULT_POLICY_PROFILE) {
+  const base = backend === "nvidia" ? VLLM_NVIDIA_POLICY : backend === "metal" ? VLLM_METAL_POLICY : null;
+  if (base === null) throw new Error(`unknown vLLM policy backend ${JSON.stringify(backend)}`);
+  return profile === base.profile ? base : makeVllmPolicy(base.physical.tokenBudget, profile);
 }
 
 /** Nominal managed-arm grant in the shape shared analysis helpers consume. */
@@ -1543,7 +1608,7 @@ export function vllmSeedProof({
       evidence.moflux.recovery.nativeUnlentConcurrentBreaches === 0,
       evidence.moflux.recovery.nativeUnlentConcurrentBreaches,
       0,
-      "the one-slot allocation-enforced reserve must never disappear from a usable grant",
+      `the ${unlentReserveLabel(policy)} allocation-enforced reserve must never disappear from a usable grant`,
     ));
   }
   const controlPlane = evidence?.moflux?.controlPlane ?? null;
@@ -1556,13 +1621,15 @@ export function vllmSeedProof({
   ));
   const requiredUnlentTokens = Object.values(policy.unlentProtectedTokens)
     .reduce((sum, value) => sum + Number(value), 0);
+  const requiredUnlentConcurrent = Object.values(policy.unlentProtectedConcurrent)
+    .reduce((sum, value) => sum + Number(value), 0);
   gates.push(gate(
     "allocatorUnlentReserve",
     controlPlane?.unlentGauges?.concurrencyStatus === "measured" &&
-      Number(controlPlane?.unlentGauges?.totalUnlentConcurrent ?? 0) >= 1 &&
+      Number(controlPlane?.unlentGauges?.totalUnlentConcurrent ?? 0) >= requiredUnlentConcurrent &&
       Number(controlPlane?.unlentGauges?.totalUnlentTokens ?? 0) >= requiredUnlentTokens,
     controlPlane?.unlentGauges ?? null,
-    `>=1 concurrent and >=${requiredUnlentTokens} tokens withheld`,
+    `>=${requiredUnlentConcurrent} concurrent and >=${requiredUnlentTokens} tokens withheld`,
     "the allocator's gauges, not the submitted policy, must confirm the native reserve",
   ));
   gates.push(gate(

@@ -745,7 +745,20 @@ npm run demo:vllm:metal
 npm run demo:vllm:metal:long-context:dry-run
 npm run demo:vllm:metal:long-context:single
 npm run demo:vllm:metal:long-context
+
+# The same long-context run with two interactive slots unlent instead of one
+npm run demo:vllm:metal:long-context:unlent2:dry-run
+npm run demo:vllm:metal:long-context:unlent2:single
+npm run demo:vllm:metal:long-context:unlent2
 ```
+
+The `unlent2` commands select the `unlent-concurrency-2` policy profile. The
+MoFlux arm lends one of its three protected interactive slots instead of two,
+and everything else about the long-context experiment is unchanged. It tests
+whether the published one-slot reserve is too small, after the long-context
+repeat failed H2 against native priority. Results go to their own corpus,
+`results/runs/vllm-metal-long-context-unlent-concurrency-2/`. No sweep has been
+run with this profile yet.
 
 The harness measures client SLO goodput and TTFT alongside vLLM queue/running
 occupancy, KV-cache usage, preemptions, TTFT/ITL and queue/prefill/decode timing,

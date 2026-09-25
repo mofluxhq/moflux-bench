@@ -1,5 +1,38 @@
 # MoFlux Bench verification
 
+## 0.46.0 two-slot interactive reserve profile
+
+`demo/verify-vllm-contention.mjs` requires the following of
+`unlent-concurrency-2`:
+- both default policies remain `unlent-concurrency-1` with a one-slot reserve,
+  and the default Metal profile returns the published policy object;
+- the new policy differs from the published Metal policy only in its profile
+  name and its interactive reserve of 2;
+- the lending pool sends `globalUnlentProtectedConcurrent: 2`, and the batch
+  class and static pool are identical to the published ones;
+- the profile runs only with `metal-long-context-v1`, writes to
+  `vllm-metal-long-context-unlent-concurrency-2`, and an unknown name, including
+  an inherited property name, is refused;
+- the existing two-slot-lend fixture passes under the published profile but
+  counts two reserve breaches under this one. A one-slot lend still counts as
+  lending, restores in 2s and does not breach;
+- a long-context seed proof passes with two withheld slots on Latchflo's gauges,
+  fails only `allocatorUnlentReserve` with one, and fails only
+  `nativeUnlentFloor` with the two-slot-lend samples;
+- the published profile's reserve gates keep their exact thresholds and wording,
+  and the hypothesis thresholds are unchanged.
+
+A dry-run subprocess plans `results/runs/vllm-metal-long-context-unlent-concurrency-2/`
+with a reserve of 2, and the runner refuses the profile on the default Metal
+workload. `demo/verify-evidence-paths.mjs` requires the new corpus to be
+protected.
+
+All 50 modules in `npm run verify` passed, and the syntax check passed for all
+113 JavaScript modules. `npm run verify:publication` reported only local files
+that are never published: `.DS_Store` files, `demo/moflux/.env` and
+git-ignored run output under `results/runs/`. No sweep has been run with this
+profile, and no Latchflo instance has yet been sent the two-slot reserve.
+
 ## 0.45.1 reporting corrections
 
 The saved five-seed `20260925T001105Z` long-context run was reanalyzed offline.

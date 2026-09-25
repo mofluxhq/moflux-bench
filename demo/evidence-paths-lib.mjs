@@ -81,6 +81,10 @@ export const REVIEWED_EVIDENCE = Object.freeze([
   // the unpinned corpus above, which never pressured KV.
   "results/vllm-metal-long-context.json",
   "results/vllm-metal-long-context/",
+  // The same long-context workload with a two-slot unlent interactive reserve.
+  // A different policy, so a separate corpus, protected in advance.
+  "results/vllm-metal-long-context-unlent-concurrency-2.json",
+  "results/vllm-metal-long-context-unlent-concurrency-2/",
 ]);
 
 /** Directory under the results root that holds generated runs. */

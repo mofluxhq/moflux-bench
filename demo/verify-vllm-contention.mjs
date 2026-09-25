@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -11,7 +11,9 @@ import { buildTrace } from "../load/trace-lib.mjs";
 import { reservationBounds } from "./capacity-lib.mjs";
 import {
   VLLM_ARM_IDS,
+  VLLM_DEFAULT_POLICY_PROFILE,
   VLLM_GPU_MEMORY_UTILIZATION,
+  VLLM_HYPOTHESIS_THRESHOLDS,
   VLLM_KV_PRESSURE_THRESHOLDS,
   VLLM_METAL_LONG_CONTEXT_SWEEP_NAME,
   VLLM_METAL_LONG_CONTEXT_WORKLOAD,
@@ -23,6 +25,7 @@ import {
   VLLM_NVIDIA_WORKLOAD,
   VLLM_NVIDIA_POLICY,
   VLLM_POLICY,
+  VLLM_POLICY_PROFILES,
   VLLM_WORKLOAD,
   armOrderIsCounterbalanced,
   armOrderPlan,
@@ -39,10 +42,13 @@ import {
   summarizeManagedRecovery,
   summarizeVllmTelemetry,
   vllmApiKeyArgument,
+  vllmArm,
+  vllmArmDescription,
   vllmFixedOutputFields,
   vllmGpuMemoryUtilizationForBackend,
   vllmNominalClassGrant,
   vllmPolicyForBackend,
+  vllmPolicyProfileByName,
   vllmPoolDefinition,
   vllmSamplingForBackend,
   vllmSeedProof,
@@ -780,6 +786,117 @@ assert.ok(
   "metal-balanced-v1 evidence cannot pass as a long-context run",
 );
 
+// unlent-concurrency-2: the same long-context run with one lendable interactive slot, not two.
+assert.equal(VLLM_DEFAULT_POLICY_PROFILE, "unlent-concurrency-1");
+for (const policy of [VLLM_NVIDIA_POLICY, VLLM_METAL_POLICY]) {
+  assert.equal(policy.profile, "unlent-concurrency-1", "the published policies keep their profile");
+  assert.deepEqual(policy.unlentProtectedConcurrent, { interactive: 1, batch: 0 });
+}
+assert.equal(vllmPolicyForBackend("metal", "unlent-concurrency-1"), VLLM_METAL_POLICY);
+const unlent2Policy = vllmPolicyForBackend("metal", "unlent-concurrency-2");
+assert.equal(unlent2Policy.profile, "unlent-concurrency-2");
+assert.deepEqual(unlent2Policy.unlentProtectedConcurrent, { interactive: 2, batch: 0 });
+{
+  const { profile: _a, unlentProtectedConcurrent: _b, ...rest } = unlent2Policy;
+  const { profile: _c, unlentProtectedConcurrent: _d, ...published } = VLLM_METAL_POLICY;
+  assert.deepEqual(rest, published, "only the unlent interactive reserve differs from the published policy");
+}
+assert.throws(() => vllmPolicyForBackend("metal", "unlent-concurrency-3"), /unknown vLLM policy profile/u);
+assert.equal(vllmPolicyProfileByName("unlent-concurrency-2", longContext), VLLM_POLICY_PROFILES["unlent-concurrency-2"]);
+assert.equal(vllmPolicyProfileByName("unlent-concurrency-1", VLLM_NVIDIA_WORKLOAD).interactiveUnlentConcurrent, 1);
+assert.throws(
+  () => vllmPolicyProfileByName("unlent-concurrency-2", VLLM_METAL_WORKLOAD),
+  /runs only with --workload=metal-long-context-v1/u,
+);
+assert.throws(() => vllmPolicyProfileByName("toString", longContext), /--policy-profile must be one of/u);
+assert.equal(
+  vllmSweepNameFor("metal", longContext, "unlent-concurrency-2"),
+  "vllm-metal-long-context-unlent-concurrency-2",
+  "a different reserve writes its own corpus",
+);
+assert.equal(vllmSweepNameFor("metal", longContext, "unlent-concurrency-1"), VLLM_METAL_LONG_CONTEXT_SWEEP_NAME);
+assert.throws(() => vllmSweepNameFor("nvidia", VLLM_NVIDIA_WORKLOAD, "unlent-concurrency-2"), /runs only with/u);
+// Latchflo receives the larger reserve on the lending pool only.
+const unlent2Moflux = vllmPoolDefinition("vllm-moflux", 15_000, { lending: true, policy: unlent2Policy });
+const publishedMoflux = vllmPoolDefinition("vllm-moflux", 15_000, { lending: true, policy: VLLM_METAL_POLICY });
+assert.equal(unlent2Moflux.admissionClassLimits.interactive.globalUnlentProtectedConcurrent, 2);
+assert.equal(unlent2Moflux.admissionClassLimits.batch.globalUnlentProtectedConcurrent, undefined);
+assert.deepEqual(
+  { ...unlent2Moflux.admissionClassLimits.interactive, globalUnlentProtectedConcurrent: 1 },
+  publishedMoflux.admissionClassLimits.interactive,
+);
+assert.deepEqual(unlent2Moflux.admissionClassLimits.batch, publishedMoflux.admissionClassLimits.batch);
+assert.deepEqual(
+  vllmPoolDefinition("vllm-static", 15_000, { lending: false, policy: unlent2Policy }),
+  vllmPoolDefinition("vllm-static", 15_000, { lending: false, policy: VLLM_METAL_POLICY }),
+  "the static arm is unchanged",
+);
+assert.equal(vllmArmDescription("moflux", VLLM_METAL_POLICY), vllmArm("moflux").summary);
+assert.equal(
+  vllmArmDescription("moflux", unlent2Policy),
+  "the same 3/1 partition, with one idle interactive slot lendable and restored",
+);
+assert.equal(vllmArmDescription("static", unlent2Policy), vllmArm("static").summary);
+// Lending two slots is the published policy and a reserve breach under this one.
+const unlent2Recovery = summarizeManagedRecovery(managedSamples, VLLM_WORKLOAD, {
+  benchmarkMarkedActiveAtMs: 60_000,
+  restorationWasNeeded: true,
+}, unlent2Policy);
+assert.equal(unlent2Recovery.nativeUnlentConcurrentBreaches, 2);
+const oneSlotLend = managedSamples.map((sample) => sample.classes.interactive.limits.protectedConcurrent === 1
+  ? { ...sample, classes: { ...sample.classes, interactive: { ...sample.classes.interactive, limits: { protectedConcurrent: 2 } } } }
+  : sample);
+const oneSlotRecovery = summarizeManagedRecovery(oneSlotLend, VLLM_WORKLOAD, {
+  benchmarkMarkedActiveAtMs: 60_000,
+  restorationWasNeeded: true,
+}, unlent2Policy);
+assert.equal(oneSlotRecovery.lendingObserved, true, "a one-slot lend is still lending");
+assert.equal(oneSlotRecovery.nativeUnlentConcurrentBreaches, 0);
+assert.equal(oneSlotRecovery.floorRestorationLatencyMs, 2_000);
+const unlent2ProofWith = (unlentGauges, value = oneSlotRecovery) => vllmSeedProof({
+  arms: longContextArms,
+  evidence: { moflux: { recovery: value, controlPlane: { ...controlPlane, unlentGauges } } },
+  backend: "metal",
+  workload: longContext,
+  policy: unlent2Policy,
+});
+const twoSlotGauges = { ...controlPlane.unlentGauges, totalUnlentConcurrent: 2 };
+const unlent2Proof = unlent2ProofWith(twoSlotGauges);
+assert.equal(unlent2Proof.valid, true, JSON.stringify(unlent2Proof.failed));
+assert.deepEqual(
+  failedGates(unlent2ProofWith(controlPlane.unlentGauges)),
+  ["allocatorUnlentReserve"],
+  "the allocator must confirm both withheld slots, not one",
+);
+assert.deepEqual(failedGates(unlent2ProofWith(twoSlotGauges, unlent2Recovery)), ["nativeUnlentFloor"]);
+const reserveGates = (proof) => Object.fromEntries(proof.gates
+  .filter(({ gate }) => gate === "nativeUnlentFloor" || gate === "allocatorUnlentReserve")
+  .map(({ gate, threshold, reason }) => [gate, { threshold, reason }]));
+assert.deepEqual(reserveGates(longContextProof), {
+  nativeUnlentFloor: {
+    threshold: 0,
+    reason: "the one-slot allocation-enforced reserve must never disappear from a usable grant",
+  },
+  allocatorUnlentReserve: {
+    threshold: ">=1 concurrent and >=12288 tokens withheld",
+    reason: "the allocator's gauges, not the submitted policy, must confirm the native reserve",
+  },
+}, "the published profile's reserve gates are unchanged");
+assert.equal(reserveGates(unlent2Proof).nativeUnlentFloor.reason,
+  "the two-slot allocation-enforced reserve must never disappear from a usable grant");
+assert.equal(reserveGates(unlent2Proof).allocatorUnlentReserve.threshold, ">=2 concurrent and >=12288 tokens withheld");
+// Acceptance thresholds are shared; the profile changes none of them.
+assert.deepEqual(VLLM_HYPOTHESIS_THRESHOLDS, {
+  interactiveSloTtftMaxMs: 5_000,
+  interactiveSloLatencyMaxMs: 30_000,
+  priorityGoodputDeltaMinRps: 0,
+  mofluxPriorityNonInferiorityRps: -0.04,
+  batchBorrowGoodputDeltaMinRps: 0.02,
+  minimumSeedsWithLending: 3,
+  minimumSeedsWithRestoration: 3,
+  requiredQueuePeak: 1,
+});
+
 const comparison = {
   priorityGoodputDeltaVsFcfsRps: 0.2,
   mofluxGoodputDeltaVsPriorityRps: 0,
@@ -854,6 +971,24 @@ assert.ok(
   runner.includes("env.HF_TOKEN || env.HUGGING_FACE_HUB_TOKEN"),
   "the runner must honor Hugging Face's current HF_TOKEN variable",
 );
+assert.ok(
+  runner.includes("vllmSweepNameFor(OPT.backend, WORKLOAD, OPT.policyProfile)") &&
+    runner.includes("vllmArmDescription(id, POLICY)"),
+  "the selected policy profile must choose the corpus and describe the lending arm",
+);
+const planRun = (...extra) => spawnSync(process.execPath, [
+  path.join(ROOT, "demo/vllm-contention.mjs"),
+  "--backend=metal",
+  "--dry-run",
+  ...extra,
+], { cwd: ROOT, encoding: "utf8", env: { ...process.env, MOFLUX_BENCH_RESULTS_DIR: "" } });
+const unlent2Plan = planRun("--workload=metal-long-context-v1", "--policy-profile=unlent-concurrency-2");
+assert.equal(unlent2Plan.status, 0, unlent2Plan.stderr);
+assert.match(unlent2Plan.stdout, /results\/runs\/vllm-metal-long-context-unlent-concurrency-2\//u);
+assert.match(unlent2Plan.stdout, /'unlent-concurrency-2' │ 2 /u);
+const refusedPlan = planRun("--policy-profile=unlent-concurrency-2");
+assert.equal(refusedPlan.status, 1);
+assert.match(refusedPlan.stderr, /runs only with --workload=metal-long-context-v1/u);
 for (const config of ["tyr-static-metal.yaml", "tyr-moflux-metal.yaml"]) {
   const text = readFileSync(path.join(ROOT, "demo/vllm", config), "utf8");
   assert.ok(text.includes("baseUrl: http://host.docker.internal:18000"));
