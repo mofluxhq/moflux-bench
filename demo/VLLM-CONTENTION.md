@@ -171,6 +171,60 @@ See the [vLLM Metal installation](https://docs.vllm.ai/projects/vllm-metal/en/la
 and [configuration](https://docs.vllm.ai/projects/vllm-metal/en/latest/configuration/)
 guides.
 
+### Long-context KV pressure on Apple Silicon
+
+`metal-balanced-v1` never pressures the KV cache: its requests are tiny, and the
+Sept 23 run peaked at 3.11% KV usage. `metal-long-context-v1` asks the question
+that run could not. When protected demand returns and Tyr restores the
+interactive grant, are borrowed batch requests still holding KV, so that
+returning interactive work waits inside the engine rather than at admission?
+
+```bash
+npm run demo:vllm:metal:long-context:dry-run
+npm run demo:vllm:metal:long-context:single  # seed 3
+npm run demo:vllm:metal:long-context
+```
+
+The profile keeps every interactive setting of `metal-balanced-v1` and changes
+three things:
+
+- **Batch requests are long:** 7,100 characters, which Qwen2.5-1.5B's chat
+  template turns into 1,607 prompt tokens, decoding exactly 64 tokens. Batch
+  arrives at 0.15 req/s.
+- **The scheduler's KV pool is pinned** with `--num-gpu-blocks-override=320`
+  and `--block-size=16`: 5,120 tokens, which still holds one 4,096-token
+  request. Three batch requests take 315 blocks, and a fourth does not fit.
+  The memory setting stays at 0.4, so the host does not swap. vLLM Metal still
+  allocates its physical cache from that setting (1,933 blocks on a 16 GB
+  M1); the override caps what the scheduler may use, which is where
+  requests wait and are preempted.
+- **Results go to their own corpus,** `results/runs/vllm-metal-long-context/`,
+  never pooled with the unpinned Metal runs.
+
+A probe on an M1 with 16 GB set these sizes. With three batch requests
+resident, KV reached 100%, the engine queued two requests and preempted one,
+and priority-scheduled interactive TTFT rose from 0.35s alone to 1.2–3.3s
+while staying inside the 5s SLO. Each batch request took about 20s at
+three-way concurrency. Arrivals are random per seed. Seeds 1–5 each place
+3–6 batch arrivals in the 20s before demand returns, so borrowed requests are
+still resident when it does. Seed 7 places none, so the single-seed script
+uses seed 3.
+
+Two validity gates apply only to this profile. `kvPoolPinned` reads
+`vllm:cache_config_info` from every arm and requires 320 blocks of 16 tokens,
+so an engine that ignored the override fails the seed. `kvPressureExercised`
+requires peak KV usage of at least 0.9 in a direct arm; a run that never
+filled the pool did not test the question and is inconclusive. The five
+hypotheses and their thresholds are unchanged from `metal-balanced-v1`.
+
+Each arm also records the engine at demand return: KV usage, running and
+waiting requests, and how long requests then waited inside vLLM
+(`vllm.demandReturn.waitingClearanceMs`). Set that beside Tyr's grant and
+occupancy restoration in `evidence.moflux.recovery`, and beside interactive
+TTFT in the contention window. The difference is time the engine, not
+admission, kept returning work waiting. A falling KV gauge still does not
+mean MoFlux evicted anything: completed requests release their blocks.
+
 ## Measurements and proof
 
 The client records logical attempts, successful completions, TTFT, end-to-end

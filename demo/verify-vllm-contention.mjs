@@ -8,9 +8,14 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { buildTrace } from "../load/trace-lib.mjs";
+import { reservationBounds } from "./capacity-lib.mjs";
 import {
   VLLM_ARM_IDS,
   VLLM_GPU_MEMORY_UTILIZATION,
+  VLLM_KV_PRESSURE_THRESHOLDS,
+  VLLM_METAL_LONG_CONTEXT_SWEEP_NAME,
+  VLLM_METAL_LONG_CONTEXT_WORKLOAD,
+  VLLM_METAL_SWEEP_NAME,
   VLLM_METAL_HOST_PRESSURE_LIMITS,
   VLLM_METAL_WORKLOAD,
   VLLM_METAL_POLICY,
@@ -42,6 +47,8 @@ import {
   vllmSamplingForBackend,
   vllmSeedProof,
   vllmSweepProof,
+  vllmSweepNameFor,
+  vllmWorkloadByProfile,
   vllmWorkloadForBackend,
 } from "./vllm-contention-lib.mjs";
 
@@ -627,6 +634,150 @@ assert.equal(wrongMetalWorkloadProof.valid, false);
 assert.ok(
   wrongMetalWorkloadProof.failed.some(({ gate }) => gate === "successfulInferenceObserved"),
 );
+// metal-long-context-v1: a pinned KV pool that three long batch requests nearly fill.
+const longContext = VLLM_METAL_LONG_CONTEXT_WORKLOAD;
+assert.equal(vllmWorkloadForBackend("metal"), VLLM_METAL_WORKLOAD, "the default Metal workload is unchanged");
+assert.equal(VLLM_METAL_WORKLOAD.engine, undefined, "the published Metal profile pins no KV pool");
+assert.equal(vllmWorkloadByProfile("metal-long-context-v1", "metal"), longContext);
+assert.throws(() => vllmWorkloadByProfile("metal-long-context-v1", "nvidia"), /runs on --backend=metal/);
+assert.throws(() => vllmWorkloadByProfile("metal-huge", "metal"), /--workload must be one of/);
+assert.equal(vllmSweepNameFor("metal", longContext), VLLM_METAL_LONG_CONTEXT_SWEEP_NAME);
+assert.equal(vllmSweepNameFor("metal", VLLM_METAL_WORKLOAD), VLLM_METAL_SWEEP_NAME);
+assert.equal(vllmSweepNameFor("nvidia", VLLM_NVIDIA_WORKLOAD), "vllm-contention");
+for (const key of [
+  "durationMs", "interactiveRps", "interactiveDurationMs", "interactiveInputChars", "interactiveMaxTokens",
+  "interactiveResumeStartMs", "interactiveResumeDurationMs", "interactiveResumeRps",
+  "batchStartMs", "batchDurationMs", "maxAttempts", "forceOutputLength",
+]) {
+  assert.equal(longContext[key], VLLM_METAL_WORKLOAD[key], `long-context keeps metal-balanced-v1 ${key}`);
+}
+// Pool arithmetic from the 1,607 prompt tokens the M1 probe measured for a
+// 7,100-character batch prompt under Qwen2.5-1.5B's chat template.
+const MEASURED_BATCH_PROMPT_TOKENS = 1_607;
+const { blockSize, kvCacheBlocks } = longContext.engine;
+const blocksPerBatch = Math.ceil((MEASURED_BATCH_PROMPT_TOKENS + longContext.batchMaxTokens) / blockSize);
+assert.ok(kvCacheBlocks * blockSize >= 4_096 + blockSize, "the pool still holds one max-length request");
+assert.ok(3 * blocksPerBatch <= kvCacheBlocks, "three batch requests fit");
+assert.ok(4 * blocksPerBatch > kvCacheBlocks, "four do not, so KV binds before max-num-seqs");
+assert.ok(MEASURED_BATCH_PROMPT_TOKENS + longContext.batchMaxTokens <= 4_096);
+// Tyr's token budget must never bind, or concurrencyAdmissionExercised fails.
+const batchGrant = reservationBounds({
+  inputChars: longContext.batchInputChars,
+  maxTokens: longContext.batchMaxTokens,
+}).requiredLocalGrant;
+assert.ok(
+  4 * batchGrant <= VLLM_METAL_POLICY.classes.batch.globalProtectedInFlightTokens,
+  "four batch reservations fit the batch token floor",
+);
+// Every publication seed leaves borrowed batch resident when demand returns.
+for (const seed of [1, 2, 3, 4, 5]) {
+  const beforeReturn = buildTrace({ ...longContext, seed }).entries.filter((entry) =>
+    entry.class === "batch" &&
+    entry.arrivalMs >= longContext.interactiveResumeStartMs - 20_000 &&
+    entry.arrivalMs < longContext.interactiveResumeStartMs).length;
+  assert.ok(beforeReturn >= 3, `seed ${seed} has ${beforeReturn} batch arrivals in the 20s before demand returns`);
+}
+
+// vLLM publishes its cache configuration as labels; the pinned pool is read back from the engine.
+const cachedSnapshot = snapshotVllmMetrics(
+  `${metrics({ running: 1, waiting: 0, kv: 0.5, preemptions: 0, count: 2, sum: 1 })}` +
+    'vllm:cache_config_info{block_size="16",engine="0",num_gpu_blocks="320",num_gpu_blocks_override="320"} 1.0\n',
+);
+assert.deepEqual(cachedSnapshot.cacheConfig, { blockSize: 16, numGpuBlocks: 320, numGpuBlocksOverride: 320 });
+assert.equal(snapshotVllmMetrics(metrics({ running: 0, waiting: 0, kv: 0, preemptions: 0, count: 1, sum: 1 })).cacheConfig, null);
+
+// Engine state when protected demand returns, and how long work then waits inside vLLM.
+const returnAt = longContext.interactiveResumeStartMs;
+const engineAt = (kv, running, waiting) => snapshotVllmMetrics(metrics({ running, waiting, kv, preemptions: 0, count: 2, sum: 1 }));
+const returned = summarizeVllmTelemetry({
+  workload: longContext,
+  start: cachedSnapshot,
+  end: cachedSnapshot,
+  samples: [
+    { atMs: returnAt - 1_000, snapshot: engineAt(0.98, 3, 0) },
+    { atMs: returnAt, snapshot: engineAt(0.99, 3, 2) },
+    { atMs: returnAt + 2_000, snapshot: engineAt(1, 4, 1) },
+    { atMs: returnAt + 4_000, snapshot: engineAt(0.7, 3, 0) },
+  ],
+});
+assert.equal(returned.cacheConfig.numGpuBlocks, 320);
+assert.equal(returned.demandReturn.kvCacheUsage, 0.99);
+assert.equal(returned.demandReturn.waiting, 2);
+assert.equal(returned.demandReturn.waitingClearanceMs, 4_000);
+
+// Seed validity with a pinned pool: the pool must be read back and KV must actually fill.
+const longContextArms = Object.fromEntries(Object.entries(metalArms).map(([id, arm]) => [id, {
+  ...arm,
+  classes: {
+    interactive: { ...arm.classes.interactive, completionTokens: longContext.interactiveMaxTokens },
+    batch: { ...arm.classes.batch, completionTokens: longContext.batchMaxTokens },
+  },
+  runtimeIdentity: { ...arm.runtimeIdentity, blockSize, kvCacheBlocks },
+  vllm: {
+    ...arm.vllm,
+    cacheConfig: { blockSize, numGpuBlocks: kvCacheBlocks, numGpuBlocksOverride: kvCacheBlocks },
+    gauges: { ...arm.vllm.gauges, kvCacheUsage: { max: id.startsWith("vllm-") ? 1 : 0.8 } },
+  },
+}]));
+const longContextProofWith = (mutate) => {
+  const variant = structuredClone(longContextArms);
+  mutate(variant);
+  return vllmSeedProof({
+    arms: variant,
+    evidence: { moflux: { recovery, controlPlane } },
+    backend: "metal",
+    workload: longContext,
+    policy: VLLM_METAL_POLICY,
+  });
+};
+const longContextProof = longContextProofWith(() => {});
+assert.equal(longContextProof.valid, true, JSON.stringify(longContextProof.failed));
+for (const gate of ["kvPoolPinned", "kvPressureExercised"]) {
+  assert.ok(longContextProof.gates.some((entry) => entry.gate === gate && entry.passed), gate);
+}
+assert.ok(
+  !metalSeedProof.gates.some(({ gate }) => gate === "kvPoolPinned" || gate === "kvPressureExercised"),
+  "an unpinned Metal run has no KV-pressure gates",
+);
+assert.deepEqual(
+  failedGates(longContextProofWith((variant) => {
+    variant.moflux.vllm.cacheConfig = { blockSize, numGpuBlocks: 1_933, numGpuBlocksOverride: null };
+  })),
+  ["kvPoolPinned"],
+  "an engine that ignored the override is not the pinned pool",
+);
+assert.deepEqual(
+  failedGates(longContextProofWith((variant) => { delete variant.static.vllm.cacheConfig; })),
+  ["kvPoolPinned"],
+  "a missing cache configuration fails closed",
+);
+assert.deepEqual(
+  failedGates(longContextProofWith((variant) => {
+    for (const id of ["vllm-fcfs", "vllm-priority"]) {
+      variant[id].vllm.gauges.kvCacheUsage = { max: VLLM_KV_PRESSURE_THRESHOLDS.minPeakKvCacheUsage - 0.01 };
+    }
+  })),
+  ["kvPressureExercised"],
+  "a pressure workload that never filled the pool is inconclusive",
+);
+assert.deepEqual(
+  failedGates(longContextProofWith((variant) => {
+    for (const arm of Object.values(variant)) delete arm.runtimeIdentity.kvCacheBlocks;
+  })),
+  ["runtimeConfigurationObserved"],
+  "the declared engine pool must match the workload",
+);
+assert.ok(
+  failedGates(vllmSeedProof({
+    arms: metalArms,
+    evidence: { moflux: { recovery, controlPlane } },
+    backend: "metal",
+    workload: longContext,
+    policy: VLLM_METAL_POLICY,
+  })).includes("kvPoolPinned"),
+  "metal-balanced-v1 evidence cannot pass as a long-context run",
+);
+
 const comparison = {
   priorityGoodputDeltaVsFcfsRps: 0.2,
   mofluxGoodputDeltaVsPriorityRps: 0,

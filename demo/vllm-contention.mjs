@@ -84,14 +84,12 @@ import {
   VLLM_EVIDENCE_LIMITS,
   VLLM_METAL_EVIDENCE_LIMITS,
   VLLM_METAL_RUNTIME_PROBE_PREFIX,
-  VLLM_METAL_SWEEP_NAME,
   VLLM_HYPOTHESIS_THRESHOLDS,
   VLLM_IDENTITY_PORT,
   VLLM_LATCHFLO_PORT,
   VLLM_MAX_NUM_SEQS,
   VLLM_PORT,
   VLLM_PUBLICATION_SEED_COUNT,
-  VLLM_SWEEP_NAME,
   VLLM_WARMUP_REQUESTS_PER_CLASS,
   armOrderIsCounterbalanced,
   armOrderPlan,
@@ -118,7 +116,9 @@ import {
   vllmGpuMemoryUtilizationForBackend,
   vllmSamplingForBackend,
   vllmSeedProof,
+  vllmSweepNameFor,
   vllmSweepProof,
+  vllmWorkloadByProfile,
   vllmWorkloadForBackend,
 } from "./vllm-contention-lib.mjs";
 
@@ -182,7 +182,9 @@ let DEFAULT_WORKLOAD;
 let DEFAULT_SAMPLING;
 try {
   const backend = str("backend", "nvidia");
-  DEFAULT_WORKLOAD = vllmWorkloadForBackend(backend);
+  DEFAULT_WORKLOAD = args.has("workload")
+    ? vllmWorkloadByProfile(str("workload", ""), backend)
+    : vllmWorkloadForBackend(backend);
   DEFAULT_SAMPLING = vllmSamplingForBackend(backend);
   OPT = Object.freeze({
     seeds: parseSeeds(str("seeds", `1-${VLLM_PUBLICATION_SEED_COUNT}`)),
@@ -291,7 +293,11 @@ const SAMPLING = Object.freeze({
   platformIntervalMs: OPT.platformTelemetryIntervalMs,
 });
 const IS_METAL = OPT.backend === "metal";
-const SWEEP_NAME = IS_METAL ? VLLM_METAL_SWEEP_NAME : VLLM_SWEEP_NAME;
+const SWEEP_NAME = vllmSweepNameFor(OPT.backend, WORKLOAD);
+/** Engine flags that pin the scheduler's KV pool, when the workload declares one. */
+const KV_POOL_ARGS = WORKLOAD.engine
+  ? ["--block-size", String(WORKLOAD.engine.blockSize), "--num-gpu-blocks-override", String(WORKLOAD.engine.kvCacheBlocks)]
+  : [];
 const EVIDENCE_LIMITS = IS_METAL ? VLLM_METAL_EVIDENCE_LIMITS : VLLM_EVIDENCE_LIMITS;
 const COMPOSE_FILE = IS_METAL ? METAL_COMPOSE_FILE : NVIDIA_COMPOSE_FILE;
 const PROJECT = IS_METAL ? "moflux-vllm-metal-contention" : "moflux-vllm-contention";
@@ -362,6 +368,9 @@ const plan = {
   maxNumSeqs: VLLM_MAX_NUM_SEQS,
   tokenBudget: POLICY.physical.tokenBudget,
   gpuMemoryUtilization: OPT.gpuMemoryUtilization,
+  ...(WORKLOAD.engine
+    ? { kvPool: `${WORKLOAD.engine.kvCacheBlocks} blocks x ${WORKLOAD.engine.blockSize} tokens` }
+    : {}),
   samplingMs:
     `vllm=${SAMPLING.vllmIntervalMs},managed=${SAMPLING.managedIntervalMs},` +
     `platform=${SAMPLING.platformIntervalMs}`,
@@ -494,6 +503,7 @@ function assertMetalPrerequisites() {
     "--no-enable-prefix-caching",
     "--revision",
     "--gpu-memory-utilization",
+    ...(WORKLOAD.engine ? ["--block-size", "--num-gpu-blocks-override"] : []),
   ]) {
     if (!help.includes(option)) throw new Error(`native vLLM serve is missing required option ${option}`);
   }
@@ -514,6 +524,7 @@ function metalServerArgs(arm) {
     "--max-num-seqs", String(VLLM_MAX_NUM_SEQS),
     "--max-model-len", "4096",
     "--gpu-memory-utilization", String(OPT.gpuMemoryUtilization),
+    ...KV_POOL_ARGS,
     "--scheduling-policy", arm.schedulingPolicy,
     "--no-enable-prefix-caching",
     vllmApiKeyArgument(VLLM_API_KEY),
@@ -959,6 +970,8 @@ function runtimeIdentity(arm, gpu) {
       maxNumSeqs: VLLM_MAX_NUM_SEQS,
       maxModelLen: 4_096,
       gpuMemoryUtilization: OPT.gpuMemoryUtilization,
+      blockSize: WORKLOAD.engine?.blockSize ?? null,
+      kvCacheBlocks: WORKLOAD.engine?.kvCacheBlocks ?? null,
       prefixCaching: false,
       pagedAttention: true,
       authenticatedHostBridge: true,
@@ -1497,6 +1510,7 @@ try {
           `seed ${seed} arm ${armId}: interactive SLO goodput ` +
             `${armSummary.classes.interactive.windows.contention?.sloGoodputRps ?? "n/a"} req/s; ` +
             `queue peak ${armSummary.vllm.gauges.waiting?.max ?? "n/a"}; ` +
+            `KV peak ${armSummary.vllm.gauges.kvCacheUsage?.max ?? "n/a"}; ` +
             `preemptions ${armSummary.vllm.preemptions.delta ?? "n/a"}`,
         );
         const pressure = armSummary.hostPressure;
@@ -1565,9 +1579,12 @@ if (OPT.doctor) {
     benchmark: SWEEP_NAME,
     backend: OPT.backend,
     generatedAt: new Date().toISOString(),
-    question:
-      `On one ${IS_METAL ? "Apple-Silicon vLLM Metal" : "GPU-backed vLLM"} server, how do FCFS, native priority, a static protected ` +
-      "partition, and MoFlux lending compare on SLO goodput and resource pressure?",
+    question: WORKLOAD.engine
+      ? "On one Apple-Silicon vLLM Metal server whose KV pool three long batch requests nearly fill, " +
+        "how do FCFS, native priority, a static protected partition, and MoFlux lending compare, and how " +
+        "long does the engine keep returning interactive work waiting after admission has restored it?"
+      : `On one ${IS_METAL ? "Apple-Silicon vLLM Metal" : "GPU-backed vLLM"} server, how do FCFS, native priority, a static protected ` +
+        "partition, and MoFlux lending compare on SLO goodput and resource pressure?",
     runtime: {
       mofluxBench: JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")).version,
       tyr: VLLM_TYR_VERSION,
@@ -1610,6 +1627,9 @@ if (OPT.doctor) {
         gpuMemoryUtilization: OPT.gpuMemoryUtilization,
         prefixCaching: false,
         ...(IS_METAL ? { pagedAttention: true } : {}),
+        ...(WORKLOAD.engine
+          ? { blockSize: WORKLOAD.engine.blockSize, numGpuBlocksOverride: WORKLOAD.engine.kvCacheBlocks }
+          : {}),
       },
       phases: [
         { name: "warm-up", measured: false },

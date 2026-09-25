@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.45.0 - 2026-09-24
 
 ### Added
 
@@ -13,6 +13,33 @@
   fails the batch check: median headroom batch completions were 11 against the
   12 required, and two seeds completed fewer than the plain profile.
   `results/curated/README.md` describes the result.
+- **Long-context KV-pressure workload for vLLM Metal, `metal-long-context-v1`.**
+  Run it with `npm run demo:vllm:metal:long-context`, `:single` (seed 3) or
+  `:dry-run`, or pass `--workload=metal-long-context-v1` with
+  `--backend=metal`. `metal-balanced-v1` never pressured KV: its Sept 23 run
+  peaked at 3.11%. This profile asks whether borrowed batch requests still hold
+  engine KV after Tyr restores the interactive grant.
+  - Interactive traffic is unchanged. Batch requests are 7,100 characters
+    (1,607 prompt tokens) decoding exactly 64 tokens, at 0.15 req/s.
+  - `--num-gpu-blocks-override=320` with `--block-size=16` pins the
+    scheduler's KV pool at 5,120 tokens. Three batch requests fit and a fourth
+    does not. The memory setting stays at 0.4, so the host does not swap.
+  - An M1 probe set the sizes. With three batch requests resident, KV reached
+    100%, the engine queued two requests and preempted one, and
+    priority-scheduled interactive TTFT rose from 0.35s to 1.2-3.3s, inside
+    the 5s SLO.
+  - Two validity gates apply to this profile only. `kvPoolPinned` reads
+    `vllm:cache_config_info` in every arm and requires the pinned pool.
+    `kvPressureExercised` requires peak KV usage of at least 0.9 in a direct
+    arm. The five hypotheses and their thresholds are unchanged.
+  - Every arm now records the engine's cache configuration and its state at
+    demand return, including how long requests waited inside vLLM afterwards
+    (`vllm.demandReturn.waitingClearanceMs`). For `metal-balanced-v1` these
+    fields are additive and change no gate.
+  - Results go to `results/runs/vllm-metal-long-context/`, and
+    `results/vllm-metal-long-context` is protected as reviewed evidence in
+    advance.
+  - No sweep has been run with this profile yet.
 
 ### Fixed
 
@@ -45,7 +72,7 @@
     batch and expected a one-slot cap to halve them. About half were
     interactive requests piling up as they slowed. Both profiles add about one
     batch stream, and the one-slot profile failed the same limit. See the
-    Unreleased entry above.
+    0.45.0 entry above.
 - The headroom profiles live in one table, `HEADROOM_PROFILES` in
   `demo/capacity-lib.mjs`. The presenter, the sweep's adaptive-proof policy
   check and the headroom comparison read their values from it. Each name fixes

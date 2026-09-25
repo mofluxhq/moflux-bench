@@ -8,6 +8,8 @@ import { buildRestorationContract, validateUnlentSlice } from "./restoration-con
 
 export const VLLM_SWEEP_NAME = "vllm-contention";
 export const VLLM_METAL_SWEEP_NAME = "vllm-metal-contention";
+/** Separate corpus: a pinned KV pool changes what the Metal run measures. */
+export const VLLM_METAL_LONG_CONTEXT_SWEEP_NAME = "vllm-metal-long-context";
 export const VLLM_ENDPOINT = "/v1/chat/completions";
 export const VLLM_PORT = 18000;
 export const VLLM_LATCHFLO_PORT = 18086;
@@ -207,6 +209,53 @@ export const VLLM_METAL_WORKLOAD = Object.freeze({
   forceOutputLength: true,
 });
 
+/**
+ * Apple-Silicon workload for KV-cache pressure: does protected capacity that
+ * Tyr has restored also have engine KV room, or do borrowed requests still
+ * hold it?
+ *
+ * `metal-balanced-v1` never pressures KV: four tiny requests use about 1,000
+ * tokens of a pool the 0.4 memory setting sizes at roughly 30,000. This profile
+ * pins the scheduler's pool with `--num-gpu-blocks-override` instead of tuning
+ * the memory fraction, which is host-specific and would push a 16 GB Mac into
+ * swap. vLLM Metal still allocates its physical cache from the memory setting;
+ * the override caps what the scheduler may use, which is where admission
+ * waits and preemption happen. `--block-size` is pinned so a block count means
+ * a fixed number of tokens.
+ *
+ * Sizes come from probes on an M1 with 16 GB (vLLM and vllm-metal 0.29.0, Qwen2.5-1.5B,
+ * priority scheduling). A batch request is 7,100 characters, which the chat template turns into
+ * 1,607 prompt tokens, plus 64 output tokens: 105 blocks. Three of them take
+ * 315 of a 320-block (5,120-token) pool, which still holds one
+ * 4,096-token request. With three batch requests resident, KV reached 100%,
+ * the engine queued two requests and preempted one, and interactive TTFT rose
+ * from 0.35s alone to 1.2-3.3s while staying inside the 5s SLO. Each batch
+ * request took about 20s at three-way concurrency, so 0.15 req/s of batch
+ * keeps roughly three outstanding without outrunning the 105s trace and drain.
+ * Arrivals are random per seed. Seeds 1-5 each place 3-6 batch arrivals in the
+ * 20s before demand returns, so borrowed requests are still resident at 60s.
+ * Seed 7 places none there, so the single-seed script uses seed 3.
+ * Interactive traffic is identical to `metal-balanced-v1`.
+ */
+export const VLLM_METAL_LONG_CONTEXT_WORKLOAD = Object.freeze({
+  ...VLLM_METAL_WORKLOAD,
+  profile: "metal-long-context-v1",
+  batchRps: 0.15,
+  batchInputChars: 7_100,
+  batchMaxTokens: 64,
+  engine: Object.freeze({ blockSize: 16, kvCacheBlocks: 320 }),
+});
+
+/** Every registered workload, keyed by profile, with the backend it runs on. */
+export const VLLM_WORKLOAD_PROFILES = Object.freeze({
+  [VLLM_NVIDIA_WORKLOAD.profile]: Object.freeze({ backend: "nvidia", workload: VLLM_NVIDIA_WORKLOAD }),
+  [VLLM_METAL_WORKLOAD.profile]: Object.freeze({ backend: "metal", workload: VLLM_METAL_WORKLOAD }),
+  [VLLM_METAL_LONG_CONTEXT_WORKLOAD.profile]: Object.freeze({
+    backend: "metal",
+    workload: VLLM_METAL_LONG_CONTEXT_WORKLOAD,
+  }),
+});
+
 /** Backward-compatible name for the canonical CUDA profile. */
 export const VLLM_WORKLOAD = VLLM_NVIDIA_WORKLOAD;
 
@@ -215,6 +264,31 @@ export function vllmWorkloadForBackend(backend) {
   if (backend === "metal") return VLLM_METAL_WORKLOAD;
   throw new Error(`unknown vLLM workload backend ${JSON.stringify(backend)}`);
 }
+
+/** A named workload, which must belong to the requested backend. */
+export function vllmWorkloadByProfile(profile, backend) {
+  const entry = VLLM_WORKLOAD_PROFILES[profile];
+  if (!entry) {
+    throw new Error(
+      `--workload must be one of ${Object.keys(VLLM_WORKLOAD_PROFILES).join(", ")}, got ${JSON.stringify(profile)}`,
+    );
+  }
+  if (entry.backend !== backend) {
+    throw new Error(`workload ${profile} runs on --backend=${entry.backend}, not ${backend}`);
+  }
+  return entry.workload;
+}
+
+/** Where a run's results go. A pinned KV pool is its own corpus. */
+export function vllmSweepNameFor(backend, workload) {
+  if (backend === "nvidia") return VLLM_SWEEP_NAME;
+  return workload?.engine?.kvCacheBlocks ? VLLM_METAL_LONG_CONTEXT_SWEEP_NAME : VLLM_METAL_SWEEP_NAME;
+}
+
+/** Validity threshold for a workload that exists to pressure the KV cache. */
+export const VLLM_KV_PRESSURE_THRESHOLDS = Object.freeze({
+  minPeakKvCacheUsage: 0.9,
+});
 
 const VLLM_NVIDIA_SAMPLING = Object.freeze({
   vllmIntervalMs: 250,
@@ -580,12 +654,32 @@ export function snapshotVllmMetrics(text) {
     ),
   );
   const preemptions = sumMetric(rows, VLLM_METRICS.preemptions);
+  const cacheConfig = cacheConfigInfo(rows);
   const available = Object.freeze([
     ...Object.entries(gauges).filter(([, value]) => value !== null).map(([key]) => key),
     ...(preemptions === null ? [] : ["preemptions"]),
     ...Object.entries(histograms).filter(([, value]) => value !== null).map(([key]) => key),
   ]);
-  return Object.freeze({ gauges, preemptions, histograms, available });
+  return Object.freeze({ gauges, preemptions, histograms, available, cacheConfig });
+}
+
+/**
+ * The KV pool the scheduler actually built, from `vllm:cache_config_info`.
+ * vLLM publishes its cache configuration as labels on a constant gauge, so a
+ * pinned pool can be checked against the engine rather than the command line.
+ */
+function cacheConfigInfo(rows) {
+  const row = rows.find(({ name }) => name === "vllm:cache_config_info");
+  if (!row) return null;
+  const integer = (value) => {
+    const parsed = Number(value);
+    return Number.isSafeInteger(parsed) ? parsed : null;
+  };
+  return Object.freeze({
+    blockSize: integer(row.labels.block_size),
+    numGpuBlocks: integer(row.labels.num_gpu_blocks),
+    numGpuBlocksOverride: integer(row.labels.num_gpu_blocks_override),
+  });
 }
 
 function percentile(values, quantile) {
@@ -690,8 +784,12 @@ export function summarizeVllmTelemetry({
     Number(sample?.snapshot?.gauges?.running) === 0);
   const kvLow = afterArrivals.find((sample) =>
     Number(sample?.snapshot?.gauges?.kvCacheUsage) <= 0.1);
+  const afterReturn = samples.filter(({ atMs }) => atMs >= contentionFrom);
+  const atReturn = afterReturn[0] ?? null;
+  const waitingCleared = afterReturn.find((sample) => Number(sample?.snapshot?.gauges?.waiting) === 0);
   return Object.freeze({
     sampleCount: samples.length,
+    cacheConfig: end?.cacheConfig ?? start?.cacheConfig ?? null,
     scrapeErrors: [...errors],
     missingRequiredMetrics: REQUIRED_VLLM_METRICS.filter((name) => !available.has(name)),
     gauges: Object.freeze({
@@ -725,6 +823,19 @@ export function summarizeVllmTelemetry({
       note:
         "These are observed vLLM engine states after the last arrival. They do not imply " +
         "that MoFlux reclaimed GPU execution or KV-cache blocks.",
+    }),
+    demandReturn: Object.freeze({
+      atMs: contentionFrom,
+      sampledAtMs: atReturn?.atMs ?? null,
+      kvCacheUsage: observed(atReturn?.snapshot?.gauges?.kvCacheUsage),
+      running: observed(atReturn?.snapshot?.gauges?.running),
+      waiting: observed(atReturn?.snapshot?.gauges?.waiting),
+      waitingClearedAtMs: waitingCleared?.atMs ?? null,
+      waitingClearanceMs: waitingCleared ? Math.max(0, waitingCleared.atMs - contentionFrom) : null,
+      note:
+        "Engine state when protected demand returns, and how long requests then waited inside " +
+        "vLLM. Tyr's grant and occupancy restoration are recorded separately; the difference is " +
+        "time the engine, not admission, kept returning work waiting.",
     }),
   });
 }
@@ -1296,6 +1407,8 @@ export function vllmSeedProof({
         gpuMemoryUtilization: value.gpuMemoryUtilization,
         prefixCaching: value.prefixCaching,
         pagedAttention: value.pagedAttention,
+        blockSize: value.blockSize ?? null,
+        kvCacheBlocks: value.kvCacheBlocks ?? null,
       }
     : {
         backend: value.backend,
@@ -1338,6 +1451,8 @@ export function vllmSeedProof({
       value.maxNumSeqs === VLLM_MAX_NUM_SEQS &&
       value.maxModelLen === 4_096 &&
       value.gpuMemoryUtilization === expectedGpuMemoryUtilization &&
+      (value.blockSize ?? null) === (workload.engine?.blockSize ?? null) &&
+      (value.kvCacheBlocks ?? null) === (workload.engine?.kvCacheBlocks ?? null) &&
       value.prefixCaching === false),
     identities,
     metal
@@ -1391,6 +1506,29 @@ export function vllmSeedProof({
     0,
     "engine faults and torn streams are not admission-policy outcomes",
   ));
+  if (workload.engine?.kvCacheBlocks) {
+    const pools = Object.fromEntries(VLLM_ARM_IDS.map((id) => [id, arms[id]?.vllm?.cacheConfig ?? null]));
+    gates.push(gate(
+      "kvPoolPinned",
+      VLLM_ARM_IDS.every((id) =>
+        pools[id]?.numGpuBlocks === workload.engine.kvCacheBlocks &&
+        pools[id]?.blockSize === workload.engine.blockSize),
+      pools,
+      `${workload.engine.kvCacheBlocks} blocks of ${workload.engine.blockSize} tokens in every arm`,
+      "the scheduler's KV pool must be the pinned one, read from the engine, not assumed from the command line",
+    ));
+    const kvPeaks = Object.fromEntries(
+      ["vllm-fcfs", "vllm-priority"].map((id) => [id, observed(arms[id]?.vllm?.gauges?.kvCacheUsage?.max)]),
+    );
+    gates.push(gate(
+      "kvPressureExercised",
+      Object.values(kvPeaks).some((value) =>
+        value !== null && value >= VLLM_KV_PRESSURE_THRESHOLDS.minPeakKvCacheUsage),
+      kvPeaks,
+      `peak KV usage >= ${VLLM_KV_PRESSURE_THRESHOLDS.minPeakKvCacheUsage} in at least one direct arm`,
+      "a KV-pressure workload that never filled the pool did not test what it exists to test",
+    ));
+  }
   if (evidence?.moflux?.recovery) {
     gates.push(gate(
       "nativeUnlentFloor",

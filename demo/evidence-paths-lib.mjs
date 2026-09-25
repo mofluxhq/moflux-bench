@@ -77,6 +77,10 @@ export const REVIEWED_EVIDENCE = Object.freeze([
   // NVIDIA device telemetry.
   "results/vllm-metal-contention.json",
   "results/vllm-metal-contention/",
+  // Metal with a pinned KV pool. Protected in advance and kept separate from
+  // the unpinned corpus above, which never pressured KV.
+  "results/vllm-metal-long-context.json",
+  "results/vllm-metal-long-context/",
 ]);
 
 /** Directory under the results root that holds generated runs. */

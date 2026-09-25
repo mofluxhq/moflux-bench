@@ -1,5 +1,47 @@
 # MoFlux Bench verification
 
+## 0.45.0 long-context KV pressure on vLLM Metal
+
+A probe on an M1 with 16 GB (vLLM and vllm-metal 0.29.0, Qwen2.5-1.5B) confirmed
+the mechanism before the workload was fixed. vLLM Metal allocated 1,933 blocks
+from the 0.4 memory setting. vLLM core logged `Overriding num_gpu_blocks=1933
+with num_gpu_blocks_override=320`, and `vllm:cache_config_info` reported
+`block_size="16"` and `num_gpu_blocks="320"`. Under priority scheduling, three
+7,100-character batch requests (1,607 prompt tokens, 64 output tokens) and ten
+interactive requests arriving every two seconds drove KV usage to 100%. The
+engine queued up to two requests and preempted one. Interactive TTFT was
+1.2-3.3s against 0.35s alone, and all ten met the 5s TTFT and 30s latency SLO.
+A first probe with 12,000-character prompts took 28s per request alone and up
+to 95s with four concurrent, too slow for the 105s trace.
+
+`demo/verify-vllm-contention.mjs` requires the following of the new workload:
+- the default Metal workload is unchanged, and its interactive settings are
+  identical to `metal-balanced-v1`;
+- it runs only on Metal and writes to its own corpus;
+- the pinned pool holds a 4,096-token request and three batch requests but not
+  four;
+- four Tyr batch reservations fit the batch token floor;
+- seeds 1-5 each place at least three batch arrivals in the 20s before demand
+  returns.
+
+It parses `vllm:cache_config_info` and the demand-return snapshot. It requires
+the long-context seed proof to pass with a pinned, filled pool, and to fail
+`kvPoolPinned` on an unpinned or missing pool and `kvPressureExercised` below
+0.9. It also requires that a `metal-balanced-v1` result cannot pass as a
+long-context one. `demo/verify-evidence-paths.mjs` requires
+`results/vllm-metal-long-context` to be protected. `node
+demo/vllm-contention.mjs --backend=metal --workload=metal-long-context-v1
+--dry-run` plans a 320-block pool and `results/runs/vllm-metal-long-context/`.
+It refuses the workload on NVIDIA and refuses an unknown profile.
+
+All 50 modules in `npm run verify` passed. The suite run stopped at
+`demo/verify-presenter.mjs`, which needs 127.0.0.1:18080, while a Docker demo
+stack held that port. The 34 modules before it passed in that run. The
+presenter test and the 15 modules after it passed individually once the port
+was free. Syntax checks passed for all 110 JavaScript modules.
+`npm run verify:publication` reported only local files that are never
+published. No sweep has been run with `metal-long-context-v1`.
+
 ## 0.44.0 one-slot headroom profile
 
 `demo/verify-adaptive-profile.mjs` requires the presenter to accept

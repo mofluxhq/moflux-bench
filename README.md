@@ -740,6 +740,11 @@ npm run demo:vllm:metal:dry-run
 npm run demo:vllm:metal:doctor  # prerequisites/capabilities only; no inference
 npm run demo:vllm:metal:single
 npm run demo:vllm:metal
+
+# Apple Silicon with a pinned KV pool that long batch requests fill
+npm run demo:vllm:metal:long-context:dry-run
+npm run demo:vllm:metal:long-context:single
+npm run demo:vllm:metal:long-context
 ```
 
 The harness measures client SLO goodput and TTFT alongside vLLM queue/running
