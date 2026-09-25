@@ -52,6 +52,8 @@ import {
   vllmWorkloadForBackend,
 } from "./vllm-contention-lib.mjs";
 
+import "./verify-vllm-reporting.mjs";
+
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 assert.deepEqual(VLLM_ARM_IDS, ["vllm-fcfs", "vllm-priority", "static", "moflux"]);
@@ -669,7 +671,7 @@ assert.ok(
   4 * batchGrant <= VLLM_METAL_POLICY.classes.batch.globalProtectedInFlightTokens,
   "four batch reservations fit the batch token floor",
 );
-// Every publication seed leaves borrowed batch resident when demand returns.
+// Offered arrivals provide an opportunity for overlap; they do not establish admitted residency.
 for (const seed of [1, 2, 3, 4, 5]) {
   const beforeReturn = buildTrace({ ...longContext, seed }).entries.filter((entry) =>
     entry.class === "batch" &&
@@ -701,9 +703,9 @@ const returned = summarizeVllmTelemetry({
   ],
 });
 assert.equal(returned.cacheConfig.numGpuBlocks, 320);
-assert.equal(returned.demandReturn.kvCacheUsage, 0.99);
-assert.equal(returned.demandReturn.waiting, 2);
-assert.equal(returned.demandReturn.waitingClearanceMs, 4_000);
+assert.equal(returned.scheduledReturn.kvCacheUsage, 0.99);
+assert.equal(returned.scheduledReturn.waiting, 2);
+assert.equal(returned.scheduledReturn.firstObservedEmptyQueueDelayMs, 4_000);
 
 // Seed validity with a pinned pool: the pool must be read back and KV must actually fill.
 const longContextArms = Object.fromEntries(Object.entries(metalArms).map(([id, arm]) => [id, {

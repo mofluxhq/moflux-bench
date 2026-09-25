@@ -206,8 +206,8 @@ resident, KV reached 100%, the engine queued two requests and preempted one,
 and priority-scheduled interactive TTFT rose from 0.35s alone to 1.2–3.3s
 while staying inside the 5s SLO. Each batch request took about 20s at
 three-way concurrency. Arrivals are random per seed. Seeds 1–5 each place
-3–6 batch arrivals in the 20s before demand returns, so borrowed requests are
-still resident when it does. Seed 7 places none, so the single-seed script
+3–6 batch arrivals in the 20s before demand returns. These offer an opportunity
+for overlap; rejection and completion mean arrivals alone cannot establish residency. Seed 7 places none, so the single-seed script
 uses seed 3.
 
 Two validity gates apply only to this profile. `kvPoolPinned` reads
@@ -217,13 +217,38 @@ requires peak KV usage of at least 0.9 in a direct arm; a run that never
 filled the pool did not test the question and is inconclusive. The five
 hypotheses and their thresholds are unchanged from `metal-balanced-v1`.
 
-Each arm also records the engine at demand return: KV usage, running and
-waiting requests, and how long requests then waited inside vLLM
-(`vllm.demandReturn.waitingClearanceMs`). Set that beside Tyr's grant and
-occupancy restoration in `evidence.moflux.recovery`, and beside interactive
-TTFT in the contention window. The difference is time the engine, not
-admission, kept returning work waiting. A falling KV gauge still does not
-mean MoFlux evicted anything: completed requests release their blocks.
+Each arm records `vllm.scheduledReturn`: an engine-wide snapshot after the
+scheduled return boundary and `firstObservedEmptyQueueDelayMs`, the delay to
+its first sampled empty queue. This includes sampling delay, may precede actual
+interactive arrival or restoration, and does not imply sustained clearance.
+A queue may form after that first zero. Missing waiting metrics remain unknown.
+
+For managed arms, `evidence.*.engineCorrelation` places engine and admission
+snapshots beside the observed demand mark and grant-floor restoration, retaining
+sample offsets and lag. Batch borrowed occupancy is admission-side evidence;
+aggregate KV and queue gauges cannot attribute residency or waiting to a class.
+These observations cannot establish an additional backend-release delay after
+admission occupancy settles. Request-level engine timing would be needed.
+
+`batchBorrowAccounting.arrivalCohort` counts eventual successful completions of
+requests arriving during the borrow phase. `completionWindow` instead counts
+successful batch completions timestamped within that phase, regardless of arrival.
+Both divide by the borrow-phase duration. The historical comparison fields
+`batchBorrowGoodputRps` and `mofluxBatchBorrowDeltaVsStaticRps`, and hypothesis H3,
+retain arrival-cohort semantics and their original thresholds. They do not claim
+within-window throughput. Read successful-request TTFT alongside rejection counts
+and SLO goodput. Five-seed median gates are descriptive, not statistical confidence
+bounds for non-inferiority.
+
+To regenerate reporting from a saved run without modifying its raw evidence:
+
+```bash
+node demo/reanalyze-vllm-reporting.mjs /absolute/path/to/run/summary.json /absolute/path/to/new-summary.json
+```
+
+The output must be a new file outside reviewed evidence paths. Original runtime
+and generation timestamps are retained; reanalysis adds its own timestamp and
+source SHA-256 hashes. No inference runs and no hypothesis thresholds change.
 
 ## Measurements and proof
 
@@ -346,7 +371,7 @@ The top-level result has three states:
 - `pass`: the run was valid and every preregistered hypothesis passed.
 
 The hypotheses are median native-priority SLO goodput no worse than FCFS;
-MoFlux no more than 0.04 req/s below native priority; MoFlux batch borrow-window
+MoFlux no more than 0.04 req/s below native priority; MoFlux batch borrow-arrival cohort
 goodput at least 0.02 req/s above static; lending observed in at least three of
 five seeds; restoration actually required in at least three seeds; and every
 required grant-side restoration within 15 seconds with no native unlent reserve

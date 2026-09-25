@@ -1,5 +1,24 @@
 # MoFlux Bench verification
 
+## 0.45.1 reporting corrections
+
+The saved five-seed `20260925T001105Z` long-context run was reanalyzed offline.
+All validity and hypothesis gates still pass with their original thresholds.
+Across five seeds, static and MoFlux each completed 12 batch requests during
+25–60s, while eventual completions of requests arriving during that interval
+were 15 and 23 respectively. Overall batch completions remain 21 and 29.
+The separate reporting-v2 summary preserves original runtime metadata and
+records SHA-256 hashes of the source summary and all 40 raw input files.
+
+Reporting regression tests cover arrival versus completion boundaries, late
+completions, missing timestamps, missing queue gauges, a queue forming after
+an initial zero, and engine/admission samples aligned to observed demand and
+restoration with explicit sampling lag. The reanalysis refuses to overwrite
+existing files and verifies raw arm/seed/trace identity and cohort totals.
+No new inference was run; engine gauges still cannot identify per-class KV
+residency or interactive waiting after restoration.
+
+
 ## 0.45.0 long-context KV pressure on vLLM Metal
 
 A probe on an M1 with 16 GB (vLLM and vllm-metal 0.29.0, Qwen2.5-1.5B) confirmed
@@ -40,7 +59,7 @@ stack held that port. The 34 modules before it passed in that run. The
 presenter test and the 15 modules after it passed individually once the port
 was free. Syntax checks passed for all 110 JavaScript modules.
 `npm run verify:publication` reported only local files that are never
-published. No sweep has been run with `metal-long-context-v1`.
+published. At release preparation, no sweep had been run with `metal-long-context-v1`.
 
 ## 0.44.0 one-slot headroom profile
 

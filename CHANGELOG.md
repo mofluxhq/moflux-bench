@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.45.1 - 2026-09-25
+
+### Fixed
+
+- Correct vLLM reporting: name the scheduled-boundary engine queue observation
+  precisely, retain missing metrics as unknown, and correlate managed return
+  and restoration with separately timestamped engine/admission snapshots.
+- Distinguish borrow-arrival completion yield from completions within the borrow
+  window. Preserve existing hypothesis thresholds and arrival-cohort semantics.
+- Remove the inference that offered arrivals prove resident borrowed work. Add
+  offline reanalysis with source hashes; original evidence remains untouched.
+
 ## 0.45.0 - 2026-09-24
 
 ### Added
@@ -39,7 +51,7 @@
   - Results go to `results/runs/vllm-metal-long-context/`, and
     `results/vllm-metal-long-context` is protected as reviewed evidence in
     advance.
-  - No sweep has been run with this profile yet.
+  - At release preparation, no sweep had been run with this profile.
 
 ### Fixed
 

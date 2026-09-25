@@ -233,7 +233,7 @@ export const VLLM_METAL_WORKLOAD = Object.freeze({
  * request took about 20s at three-way concurrency, so 0.15 req/s of batch
  * keeps roughly three outstanding without outrunning the 105s trace and drain.
  * Arrivals are random per seed. Seeds 1-5 each place 3-6 batch arrivals in the
- * 20s before demand returns, so borrowed requests are still resident at 60s.
+ * 20s before demand returns, which offers an opportunity for overlap, not proof of residency at 60s.
  * Seed 7 places none there, so the single-seed script uses seed 3.
  * Interactive traffic is identical to `metal-balanced-v1`.
  */
@@ -786,7 +786,7 @@ export function summarizeVllmTelemetry({
     Number(sample?.snapshot?.gauges?.kvCacheUsage) <= 0.1);
   const afterReturn = samples.filter(({ atMs }) => atMs >= contentionFrom);
   const atReturn = afterReturn[0] ?? null;
-  const waitingCleared = afterReturn.find((sample) => Number(sample?.snapshot?.gauges?.waiting) === 0);
+  const waitingCleared = afterReturn.find((sample) => observed(sample?.snapshot?.gauges?.waiting) === 0);
   return Object.freeze({
     sampleCount: samples.length,
     cacheConfig: end?.cacheConfig ?? start?.cacheConfig ?? null,
@@ -824,18 +824,18 @@ export function summarizeVllmTelemetry({
         "These are observed vLLM engine states after the last arrival. They do not imply " +
         "that MoFlux reclaimed GPU execution or KV-cache blocks.",
     }),
-    demandReturn: Object.freeze({
+    scheduledReturn: Object.freeze({
       atMs: contentionFrom,
       sampledAtMs: atReturn?.atMs ?? null,
       kvCacheUsage: observed(atReturn?.snapshot?.gauges?.kvCacheUsage),
       running: observed(atReturn?.snapshot?.gauges?.running),
       waiting: observed(atReturn?.snapshot?.gauges?.waiting),
-      waitingClearedAtMs: waitingCleared?.atMs ?? null,
-      waitingClearanceMs: waitingCleared ? Math.max(0, waitingCleared.atMs - contentionFrom) : null,
+      firstObservedEmptyQueueAtMs: waitingCleared?.atMs ?? null,
+      firstObservedEmptyQueueDelayMs: waitingCleared ? Math.max(0, waitingCleared.atMs - contentionFrom) : null,
       note:
-        "Engine state when protected demand returns, and how long requests then waited inside " +
-        "vLLM. Tyr's grant and occupancy restoration are recorded separately; the difference is " +
-        "time the engine, not admission, kept returning work waiting.",
+        "Engine-wide snapshot after the scheduled return boundary, and delay to the first sampled " +
+        "empty queue. Includes sampling delay, may precede actual demand or grant restoration, " +
+        "and does not establish sustained clearance or interactive waiting time. Later queues may form.",
     }),
   });
 }
@@ -1134,12 +1134,20 @@ export function compareVllmArms(arms) {
   const ttft = (id) => arms[id]?.classes?.interactive?.windows?.contention?.ttftP95Ms;
   return Object.freeze({
     traceHash: arms[VLLM_ARM_IDS.find((id) => arms[id])]?.trace?.hash ?? null,
+    metricDefinitions: {
+      batchBorrowGoodputRps: "Eventual successful completions of borrow-phase arrivals / borrow duration; not completion throughput within that window.",
+      mofluxBatchBorrowDeltaVsStaticRps: "Paired difference in arrival-cohort goodput; historical gate name retained.",
+      interactiveContentionTtftP95Ms: "Successful requests only; read alongside SLO goodput and rejections.",
+    },
+    batchBorrowWindowCompletionRps: Object.fromEntries(VLLM_ARM_IDS.map((id) =>
+      [id, arms[id]?.batchBorrowAccounting?.completionWindow?.goodputRps ?? null])),
     interactiveContentionSloGoodputRps: Object.freeze(
       Object.fromEntries(VLLM_ARM_IDS.map((id) => [id, observed(contentionGoodput(id))])),
     ),
     interactiveContentionTtftP95Ms: Object.freeze(
       Object.fromEntries(VLLM_ARM_IDS.map((id) => [id, observed(ttft(id))])),
     ),
+    // Compatibility name: eventual successful completions attributed to borrow-phase arrivals.
     batchBorrowGoodputRps: Object.freeze(
       Object.fromEntries(VLLM_ARM_IDS.map((id) => [id, observed(borrowGoodput(id))])),
     ),
@@ -1602,7 +1610,7 @@ export function vllmSweepProof({ rows = [], armOrder = [], requiredSeeds = VLLM_
   const hypothesisGates = [
     gate("h1PriorityVsFcfs", priorityDelta !== null && priorityDelta >= VLLM_HYPOTHESIS_THRESHOLDS.priorityGoodputDeltaMinRps, priorityDelta, `>=${VLLM_HYPOTHESIS_THRESHOLDS.priorityGoodputDeltaMinRps} req/s`, "native priority should not reduce interactive contention-window SLO goodput"),
     gate("h2MofluxVsPriority", mofluxDelta !== null && mofluxDelta >= VLLM_HYPOTHESIS_THRESHOLDS.mofluxPriorityNonInferiorityRps, mofluxDelta, `>=${VLLM_HYPOTHESIS_THRESHOLDS.mofluxPriorityNonInferiorityRps} req/s`, "MoFlux interactive SLO goodput must be non-inferior to native priority within one request per window"),
-    gate("h3BorrowVsStatic", borrowDelta !== null && borrowDelta >= VLLM_HYPOTHESIS_THRESHOLDS.batchBorrowGoodputDeltaMinRps, borrowDelta, `>=${VLLM_HYPOTHESIS_THRESHOLDS.batchBorrowGoodputDeltaMinRps} req/s`, "lending should turn otherwise-idle protected capacity into batch goodput"),
+    gate("h3BorrowVsStatic", borrowDelta !== null && borrowDelta >= VLLM_HYPOTHESIS_THRESHOLDS.batchBorrowGoodputDeltaMinRps, borrowDelta, `>=${VLLM_HYPOTHESIS_THRESHOLDS.batchBorrowGoodputDeltaMinRps} req/s`, "lending should improve eventual completion goodput for borrow-phase arrivals; this is not within-window throughput"),
     gate("h4LendingObserved", lendingSeeds >= Math.min(requiredSeeds, VLLM_HYPOTHESIS_THRESHOLDS.minimumSeedsWithLending), lendingSeeds, `>=${Math.min(requiredSeeds, VLLM_HYPOTHESIS_THRESHOLDS.minimumSeedsWithLending)} seeds`, "restoration cannot be tested unless capacity was first lent"),
     gate("h5GrantRestoration", restorationSeeds >= Math.min(requiredSeeds, VLLM_HYPOTHESIS_THRESHOLDS.minimumSeedsWithRestoration) && recovery.every((value) => value.floorWithinSlo && value.nativeUnlentConcurrentBreaches === 0), { restorationSeeds, recovery }, `>=${Math.min(requiredSeeds, VLLM_HYPOTHESIS_THRESHOLDS.minimumSeedsWithRestoration)} restoration-required seeds; all grant floors restored within 15s; zero reserve breaches`, "raw occupancy recovery is reported separately; this is an admission-grant claim, not GPU reclamation"),
   ];

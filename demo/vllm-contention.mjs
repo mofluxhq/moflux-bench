@@ -122,6 +122,8 @@ import {
   vllmWorkloadForBackend,
 } from "./vllm-contention-lib.mjs";
 
+import { summarizeBorrowAccounting, correlateReturnEvidence } from "./vllm-reporting-lib.mjs";
+
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const execFileAsync = promisify(execFile);
 const ENV_FILE = process.env.MOFLUX_BENCH_ENV_FILE
@@ -1452,6 +1454,7 @@ try {
           },
           startingGrant: startingGrant?.classes ?? null,
           classes: summarizeArmClasses(loadgenSummary, VLLM_HYPOTHESIS_THRESHOLDS),
+          batchBorrowAccounting: summarizeBorrowAccounting(loadgenSummary, WORKLOAD),
           bindingConstraint: {
             interactive: loadgenSummary?.classes?.interactive?.bindingConstraint ?? null,
             batch: loadgenSummary?.classes?.batch?.bindingConstraint ?? null,
@@ -1485,6 +1488,7 @@ try {
             }),
             recovery: summarizeManagedRecovery(managed.samples, WORKLOAD, demandReturn, POLICY),
             demandReturn,
+            engineCorrelation: correlateReturnEvidence(measured.raw.vllmSamples, managed.samples, demandReturn),
             controlPlane,
             criticalWindow: criticalWindowDigest(managed.samples, {
               fromMs: WORKLOAD.interactiveResumeStartMs - 10_000,
@@ -1545,7 +1549,7 @@ try {
       console.log(
         `seed ${seed}: priority-fcfs ${comparison.priorityGoodputDeltaVsFcfsRps} req/s; ` +
           `moflux-priority ${comparison.mofluxGoodputDeltaVsPriorityRps} req/s; ` +
-          `moflux-static batch borrow ${comparison.mofluxBatchBorrowDeltaVsStaticRps} req/s; ` +
+          `moflux-static batch arrival-cohort goodput ${comparison.mofluxBatchBorrowDeltaVsStaticRps} req/s; ` +
           `valid=${proof.valid}`,
       );
     }
@@ -1576,13 +1580,14 @@ if (OPT.doctor) {
   });
   const summary = {
     schemaVersion: 1,
+    reportingVersion: 2,
     benchmark: SWEEP_NAME,
     backend: OPT.backend,
     generatedAt: new Date().toISOString(),
     question: WORKLOAD.engine
       ? "On one Apple-Silicon vLLM Metal server whose KV pool three long batch requests nearly fill, " +
-        "how do FCFS, native priority, a static protected partition, and MoFlux lending compare, and how " +
-        "long does the engine keep returning interactive work waiting after admission has restored it?"
+        "how do FCFS, native priority, a static protected partition, and MoFlux lending compare on " +
+        "SLO goodput, batch completion yield, and sampled admission and engine states?"
       : `On one ${IS_METAL ? "Apple-Silicon vLLM Metal" : "GPU-backed vLLM"} server, how do FCFS, native priority, a static protected ` +
         "partition, and MoFlux lending compare on SLO goodput and resource pressure?",
     runtime: {
