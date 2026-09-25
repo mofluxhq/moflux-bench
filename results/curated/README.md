@@ -2,6 +2,16 @@
 
 Only intentionally reviewed evidence belongs here. Generated benchmark output elsewhere under `results/` is ignored by Git.
 
+## vLLM Metal long-context paired runs (0.45.0 / 0.45.1)
+
+[vllm-metal-long-context/](vllm-metal-long-context/README.md) retains both the
+passing five-seed run and its valid but failing repeat. The repeat fails H2:
+median paired interactive SLO goodput is 0.20 req/s below native priority,
+outside the 0.04 req/s allowance. Batch arrival-cohort yield improves over static
+in both runs. The paired README documents counts, spread, reporting corrections,
+source hashes, and the recorded macOS change; the first pass was not reliably
+reproduced.
+
 ## Historical negative result
 
 `negative-fragmented-batch-floor/` preserves the five-seed version 0.5.0 failure that exposed batch-token fragmentation and baseline nondeterminism. It is retained because the failure informed the corrected topology and trace-replay design.
@@ -14,4 +24,4 @@ The profile was added on a wrong premise. The two-slot profile's p95 cost was at
 
 What the result does show: on this provider at this load, one extra batch stream during contention costs interactive roughly 10-15% p95. That includes the added load from interactive requests piling up.
 
-This directory contains historical negative evidence only; it is **not** the current licensed MoFlux performance corpus. Do not treat these files as evidence for the current harness. Current reviewed comparisons live under their explicitly published top-level `results/<evidence-name>.json` and companion directories, and new runs become reviewed evidence only through deliberate promotion.
+The historical artifacts above retain their recorded harness versions. The paired vLLM corpus includes a pass and a failed repeat; it is not a claim of reliable current performance. Current reviewed comparisons live under their explicitly published top-level `results/<evidence-name>.json` and companion directories, and new runs become reviewed evidence only through deliberate promotion.
