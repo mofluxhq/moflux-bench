@@ -1,0 +1,1423 @@
+{
+  "arm": "vllm-metal-long-context-unlent-concurrency-2-moflux",
+  "seed": 4,
+  "percentileScope": "run",
+  "drain": {
+    "elapsedMs": 9984,
+    "idleMs": 90000,
+    "maxMs": 180000,
+    "timeoutMode": "fail",
+    "outcome": "complete",
+    "cause": null,
+    "censoredTotal": 0,
+    "censoredByClass": {
+      "interactive": 0,
+      "batch": 0
+    },
+    "censoredRequests": []
+  },
+  "config": {
+    "targets": [
+      "http://127.0.0.1:18126"
+    ],
+    "interactiveTargets": [
+      "http://127.0.0.1:18126"
+    ],
+    "batchTargets": [
+      "http://127.0.0.1:18126"
+    ],
+    "metricsPort": 0,
+    "metricsRelayUrl": "",
+    "metricsPushIntervalMs": 1000,
+    "metricsRelayRequired": false,
+    "armLabel": "vllm-metal-long-context-unlent-concurrency-2-moflux",
+    "providerApi": "openai",
+    "durationMs": 105000,
+    "seed": 4,
+    "interactiveModel": "moflux-vllm",
+    "batchModel": "moflux-vllm",
+    "interactiveRps": 0.25,
+    "interactiveInputChars": 400,
+    "sizeDistribution": "uniform",
+    "interactiveSizeSigma": 0.75,
+    "batchSizeSigma": 0,
+    "interactiveMaxTokens": 16,
+    "interactiveStartMs": 0,
+    "interactiveDurationMs": 25000,
+    "interactiveResumeStartMs": 60000,
+    "interactiveResumeDurationMs": 25000,
+    "interactiveResumeRps": 0.5,
+    "batchStartMs": 25000,
+    "batchDurationMs": 60000,
+    "batchRps": 0.15,
+    "batchInputChars": 7100,
+    "batchMaxTokens": 64,
+    "maxAttempts": 1,
+    "backoffBaseMs": 500,
+    "honorRetryHints": true,
+    "inFlightCeiling": 256,
+    "drainIdleMs": 90000,
+    "drainMaxMs": 180000,
+    "drainTimeoutMode": "fail",
+    "windowMs": 105000,
+    "temperature": 0,
+    "interactivePriority": 0,
+    "batchPriority": 10,
+    "forceOutputLength": true,
+    "fixedOutputMinTokens": false,
+    "emitPhaseSamples": true,
+    "traceFile": "provided",
+    "traceOut": "",
+    "out": "requested",
+    "interactiveIdentityToken": "provided",
+    "batchIdentityToken": "provided",
+    "providerCredentialConfigured": true
+  },
+  "generatorSaturated": 0,
+  "startedAt": "2026-09-25T23:55:09.507Z",
+  "startedAtEpochMs": 1790380509507,
+  "wallClockMs": 92467,
+  "trace": {
+    "version": 3,
+    "hash": "ca433c1cc9b864c92e937d9c27da78cdd344005ec43e437b803a8a700f8f93f2",
+    "planned": {
+      "interactive": 19,
+      "batch": 13,
+      "total": 32
+    },
+    "source": "provided"
+  },
+  "classes": {
+    "interactive": {
+      "logical": 19,
+      "attempts": 19,
+      "success": 13,
+      "successRate": 0.6842,
+      "retryAmplification": 1,
+      "localReject": 6,
+      "localRejectReasons": {
+        "concurrency_limit": 6
+      },
+      "localRejectPools": {
+        "vllm-moflux": 6
+      },
+      "localRejectConstraints": {
+        "global": 3,
+        "admission_class_protection": 3
+      },
+      "localRejectDetails": [
+        {
+          "pool": "vllm-moflux",
+          "reason": "concurrency_limit",
+          "grantUnavailable": false,
+          "count": 6,
+          "requestedMin": 126,
+          "requestedMax": 129,
+          "availableMin": 61527,
+          "availableMax": 63265,
+          "budgetMin": 65536,
+          "budgetMax": 65536
+        }
+      ],
+      "localRejectGrantUnavailable": {},
+      "localRejectSnapshots": [
+        {
+          "requestId": "interactive-resume-3",
+          "requestClass": "interactive",
+          "attempt": 1,
+          "rejectedAtMs": 64798.4,
+          "target": "http://127.0.0.1:18126",
+          "type": "admission_rejected",
+          "pool": "vllm-moflux",
+          "reason": "concurrency_limit",
+          "grantUnavailable": false,
+          "admissionClass": "interactive",
+          "admissionRevision": 1267,
+          "retryAfterMs": 9847,
+          "grant": {
+            "id": "dd5db089-8256-4afa-9335-cf3e2a4b2a5e",
+            "controllerEpoch": 1
+          },
+          "detail": {
+            "limitRevision": 1267,
+            "constraint": "global",
+            "inFlight": 4,
+            "pending": 0,
+            "maxConcurrent": 4,
+            "maxQueue": 0,
+            "tokenBudget": {
+              "budget": 65536,
+              "inFlightTokens": 4004,
+              "effectiveBudget": 65536,
+              "available": 61532,
+              "requested": 126
+            },
+            "sharedCapacity": {
+              "concurrency": {
+                "capacity": 0,
+                "inUse": 1,
+                "available": 0,
+                "requestedBorrowed": 0
+              },
+              "tokenBudget": {
+                "capacity": 0,
+                "inUse": 0,
+                "available": 0,
+                "requestedBorrowed": 0
+              }
+            },
+            "admissionClass": {
+              "id": "interactive",
+              "inFlight": 2,
+              "protectedConcurrent": 3,
+              "protectedConcurrentInUse": 2,
+              "borrowedConcurrent": 0,
+              "availableProtectedConcurrent": 1,
+              "maxConcurrent": 4,
+              "availableConcurrent": 2,
+              "tokenBudget": {
+                "inFlightTokens": 252,
+                "protectedInFlightTokens": 49152,
+                "protectedTokensInUse": 252,
+                "borrowedInFlightTokens": 0,
+                "availableProtectedTokens": 48900,
+                "maxInFlightTokens": 65536,
+                "available": 65284,
+                "requested": 126
+              }
+            }
+          }
+        },
+        {
+          "requestId": "interactive-resume-4",
+          "requestClass": "interactive",
+          "attempt": 1,
+          "rejectedAtMs": 65416.6,
+          "target": "http://127.0.0.1:18126",
+          "type": "admission_rejected",
+          "pool": "vllm-moflux",
+          "reason": "concurrency_limit",
+          "grantUnavailable": false,
+          "admissionClass": "interactive",
+          "admissionRevision": 1267,
+          "retryAfterMs": 9229,
+          "grant": {
+            "id": "dd5db089-8256-4afa-9335-cf3e2a4b2a5e",
+            "controllerEpoch": 1
+          },
+          "detail": {
+            "limitRevision": 1267,
+            "constraint": "global",
+            "inFlight": 4,
+            "pending": 0,
+            "maxConcurrent": 4,
+            "maxQueue": 0,
+            "tokenBudget": {
+              "budget": 65536,
+              "inFlightTokens": 4004,
+              "effectiveBudget": 65536,
+              "available": 61532,
+              "requested": 126
+            },
+            "sharedCapacity": {
+              "concurrency": {
+                "capacity": 0,
+                "inUse": 1,
+                "available": 0,
+                "requestedBorrowed": 0
+              },
+              "tokenBudget": {
+                "capacity": 0,
+                "inUse": 0,
+                "available": 0,
+                "requestedBorrowed": 0
+              }
+            },
+            "admissionClass": {
+              "id": "interactive",
+              "inFlight": 2,
+              "protectedConcurrent": 3,
+              "protectedConcurrentInUse": 2,
+              "borrowedConcurrent": 0,
+              "availableProtectedConcurrent": 1,
+              "maxConcurrent": 4,
+              "availableConcurrent": 2,
+              "tokenBudget": {
+                "inFlightTokens": 252,
+                "protectedInFlightTokens": 49152,
+                "protectedTokensInUse": 252,
+                "borrowedInFlightTokens": 0,
+                "availableProtectedTokens": 48900,
+                "maxInFlightTokens": 65536,
+                "available": 65284,
+                "requested": 126
+              }
+            }
+          }
+        },
+        {
+          "requestId": "interactive-resume-7",
+          "requestClass": "interactive",
+          "attempt": 1,
+          "rejectedAtMs": 69087.5,
+          "target": "http://127.0.0.1:18126",
+          "type": "admission_rejected",
+          "pool": "vllm-moflux",
+          "reason": "concurrency_limit",
+          "grantUnavailable": false,
+          "admissionClass": "interactive",
+          "admissionRevision": 1267,
+          "retryAfterMs": 13274,
+          "grant": {
+            "id": "dd5db089-8256-4afa-9335-cf3e2a4b2a5e",
+            "controllerEpoch": 1
+          },
+          "detail": {
+            "limitRevision": 1267,
+            "constraint": "global",
+            "inFlight": 4,
+            "pending": 0,
+            "maxConcurrent": 4,
+            "maxQueue": 0,
+            "tokenBudget": {
+              "budget": 65536,
+              "inFlightTokens": 4009,
+              "effectiveBudget": 65536,
+              "available": 61527,
+              "requested": 129
+            },
+            "sharedCapacity": {
+              "concurrency": {
+                "capacity": 0,
+                "inUse": 1,
+                "available": 0,
+                "requestedBorrowed": 0
+              },
+              "tokenBudget": {
+                "capacity": 0,
+                "inUse": 0,
+                "available": 0,
+                "requestedBorrowed": 0
+              }
+            },
+            "admissionClass": {
+              "id": "interactive",
+              "inFlight": 2,
+              "protectedConcurrent": 3,
+              "protectedConcurrentInUse": 2,
+              "borrowedConcurrent": 0,
+              "availableProtectedConcurrent": 1,
+              "maxConcurrent": 4,
+              "availableConcurrent": 2,
+              "tokenBudget": {
+                "inFlightTokens": 257,
+                "protectedInFlightTokens": 49152,
+                "protectedTokensInUse": 257,
+                "borrowedInFlightTokens": 0,
+                "availableProtectedTokens": 48895,
+                "maxInFlightTokens": 65536,
+                "available": 65279,
+                "requested": 129
+              }
+            }
+          }
+        },
+        {
+          "requestId": "interactive-resume-12",
+          "requestClass": "interactive",
+          "attempt": 1,
+          "rejectedAtMs": 78964.7,
+          "target": "http://127.0.0.1:18126",
+          "type": "admission_rejected",
+          "pool": "vllm-moflux",
+          "reason": "concurrency_limit",
+          "grantUnavailable": false,
+          "admissionClass": "interactive",
+          "admissionRevision": 1281,
+          "retryAfterMs": 4722,
+          "grant": {
+            "id": "099b4337-106e-47af-b55b-ea0f77dd10fe",
+            "controllerEpoch": 1
+          },
+          "detail": {
+            "limitRevision": 1281,
+            "constraint": "admission_class_protection",
+            "inFlight": 4,
+            "pending": 0,
+            "maxConcurrent": 4,
+            "maxQueue": 0,
+            "tokenBudget": {
+              "budget": 65536,
+              "inFlightTokens": 2271,
+              "effectiveBudget": 65536,
+              "available": 63265,
+              "requested": 127
+            },
+            "sharedCapacity": {
+              "concurrency": {
+                "capacity": 0,
+                "inUse": 0,
+                "available": 0,
+                "requestedBorrowed": 1
+              },
+              "tokenBudget": {
+                "capacity": 0,
+                "inUse": 0,
+                "available": 0,
+                "requestedBorrowed": 0
+              }
+            },
+            "admissionClass": {
+              "id": "interactive",
+              "inFlight": 3,
+              "protectedConcurrent": 3,
+              "protectedConcurrentInUse": 3,
+              "borrowedConcurrent": 0,
+              "availableProtectedConcurrent": 0,
+              "maxConcurrent": 4,
+              "availableConcurrent": 1,
+              "tokenBudget": {
+                "inFlightTokens": 385,
+                "protectedInFlightTokens": 49152,
+                "protectedTokensInUse": 385,
+                "borrowedInFlightTokens": 0,
+                "availableProtectedTokens": 48767,
+                "maxInFlightTokens": 65536,
+                "available": 65151,
+                "requested": 127
+              }
+            }
+          }
+        },
+        {
+          "requestId": "interactive-resume-13",
+          "requestClass": "interactive",
+          "attempt": 1,
+          "rejectedAtMs": 81008.6,
+          "target": "http://127.0.0.1:18126",
+          "type": "admission_rejected",
+          "pool": "vllm-moflux",
+          "reason": "concurrency_limit",
+          "grantUnavailable": false,
+          "admissionClass": "interactive",
+          "admissionRevision": 1281,
+          "retryAfterMs": 2677,
+          "grant": {
+            "id": "099b4337-106e-47af-b55b-ea0f77dd10fe",
+            "controllerEpoch": 1
+          },
+          "detail": {
+            "limitRevision": 1281,
+            "constraint": "admission_class_protection",
+            "inFlight": 4,
+            "pending": 0,
+            "maxConcurrent": 4,
+            "maxQueue": 0,
+            "tokenBudget": {
+              "budget": 65536,
+              "inFlightTokens": 2271,
+              "effectiveBudget": 65536,
+              "available": 63265,
+              "requested": 127
+            },
+            "sharedCapacity": {
+              "concurrency": {
+                "capacity": 0,
+                "inUse": 0,
+                "available": 0,
+                "requestedBorrowed": 1
+              },
+              "tokenBudget": {
+                "capacity": 0,
+                "inUse": 0,
+                "available": 0,
+                "requestedBorrowed": 0
+              }
+            },
+            "admissionClass": {
+              "id": "interactive",
+              "inFlight": 3,
+              "protectedConcurrent": 3,
+              "protectedConcurrentInUse": 3,
+              "borrowedConcurrent": 0,
+              "availableProtectedConcurrent": 0,
+              "maxConcurrent": 4,
+              "availableConcurrent": 1,
+              "tokenBudget": {
+                "inFlightTokens": 385,
+                "protectedInFlightTokens": 49152,
+                "protectedTokensInUse": 385,
+                "borrowedInFlightTokens": 0,
+                "availableProtectedTokens": 48767,
+                "maxInFlightTokens": 65536,
+                "available": 65151,
+                "requested": 127
+              }
+            }
+          }
+        },
+        {
+          "requestId": "interactive-resume-14",
+          "requestClass": "interactive",
+          "attempt": 1,
+          "rejectedAtMs": 82480.5,
+          "target": "http://127.0.0.1:18126",
+          "type": "admission_rejected",
+          "pool": "vllm-moflux",
+          "reason": "concurrency_limit",
+          "grantUnavailable": false,
+          "admissionClass": "interactive",
+          "admissionRevision": 1281,
+          "retryAfterMs": 1206,
+          "grant": {
+            "id": "099b4337-106e-47af-b55b-ea0f77dd10fe",
+            "controllerEpoch": 1
+          },
+          "detail": {
+            "limitRevision": 1281,
+            "constraint": "admission_class_protection",
+            "inFlight": 4,
+            "pending": 0,
+            "maxConcurrent": 4,
+            "maxQueue": 0,
+            "tokenBudget": {
+              "budget": 65536,
+              "inFlightTokens": 2271,
+              "effectiveBudget": 65536,
+              "available": 63265,
+              "requested": 127
+            },
+            "sharedCapacity": {
+              "concurrency": {
+                "capacity": 0,
+                "inUse": 0,
+                "available": 0,
+                "requestedBorrowed": 1
+              },
+              "tokenBudget": {
+                "capacity": 0,
+                "inUse": 0,
+                "available": 0,
+                "requestedBorrowed": 0
+              }
+            },
+            "admissionClass": {
+              "id": "interactive",
+              "inFlight": 3,
+              "protectedConcurrent": 3,
+              "protectedConcurrentInUse": 3,
+              "borrowedConcurrent": 0,
+              "availableProtectedConcurrent": 0,
+              "maxConcurrent": 4,
+              "availableConcurrent": 1,
+              "tokenBudget": {
+                "inFlightTokens": 385,
+                "protectedInFlightTokens": 49152,
+                "protectedTokensInUse": 385,
+                "borrowedInFlightTokens": 0,
+                "availableProtectedTokens": 48767,
+                "maxInFlightTokens": 65536,
+                "available": 65151,
+                "requested": 127
+              }
+            }
+          }
+        }
+      ],
+      "admissionClassResponses": {
+        "interactive": 19
+      },
+      "upstreamReject": 0,
+      "borrowedDeadlineAbandoned": 0,
+      "borrowedDeadlineSnapshots": [],
+      "serverError": 0,
+      "serverErrorSnapshots": [],
+      "requestError": 0,
+      "requestErrorReasons": {},
+      "requestErrorSnapshots": [],
+      "transportError": 0,
+      "exhausted": 6,
+      "drainTimeoutCensored": 0,
+      "drainTimeoutSnapshots": [],
+      "requestSizes": null,
+      "bindingConstraint": {
+        "budgetLimited": 0,
+        "concurrencyLimited": 6,
+        "grantUnavailable": 0,
+        "tokenBoundShare": 0,
+        "exercisedTokenAwareness": false
+      },
+      "firstAttemptAtMs": 3421,
+      "lastAttemptAtMs": 82472.7,
+      "lastLocalRejectAtMs": 82480.5,
+      "firstResponseHeadersAtMs": 3918.8,
+      "firstSuccessAtMs": 5017.9,
+      "responseHeadersGapMs": 497.8,
+      "firstSuccessGapMs": 1596.9,
+      "windows": {
+        "boundaryMs": 25000,
+        "endMs": 105000,
+        "idle": {
+          "completed": 5,
+          "goodputRps": 0.2,
+          "p50Ms": 1597.0200410000002,
+          "p95Ms": 2501.7526660000003,
+          "ttftP50Ms": 499.18554199999926,
+          "ttftP95Ms": 692.3704170000001
+        },
+        "contended": {
+          "completed": 8,
+          "goodputRps": 0.1,
+          "p50Ms": 5317.8454589999965,
+          "p95Ms": 10182.537624999997,
+          "ttftP50Ms": 967.2374999999956,
+          "ttftP95Ms": 6802.1647920000105
+        },
+        "resumeMs": 60000,
+        "borrow": {
+          "completed": 0,
+          "goodputRps": 0,
+          "p50Ms": null,
+          "p95Ms": null,
+          "ttftP50Ms": null,
+          "ttftP95Ms": null
+        },
+        "contention": {
+          "completed": 8,
+          "goodputRps": 0.178,
+          "p50Ms": 5317.8454589999965,
+          "p95Ms": 10182.537624999997,
+          "ttftP50Ms": 967.2374999999956,
+          "ttftP95Ms": 6802.1647920000105
+        },
+        "drainCompleted": 0
+      },
+      "phaseSamples": [
+        {
+          "t": 1790380514525,
+          "offsetMs": 5018,
+          "arrivalMs": 3418.6,
+          "completedAtMs": 5018,
+          "latencyMs": 1597.0200410000002,
+          "ttftMs": 498.5497909999999
+        },
+        {
+          "t": 1790380518497,
+          "offsetMs": 8990,
+          "arrivalMs": 6486.5,
+          "completedAtMs": 8990,
+          "latencyMs": 2501.7526660000003,
+          "ttftMs": 671.3796249999996
+        },
+        {
+          "t": 1790380518497,
+          "offsetMs": 8990.5,
+          "arrivalMs": 6582,
+          "completedAtMs": 8990.5,
+          "latencyMs": 2406.8504999999996,
+          "ttftMs": 692.3704170000001
+        },
+        {
+          "t": 1790380529845,
+          "offsetMs": 20337.9,
+          "arrivalMs": 18817.9,
+          "completedAtMs": 20337.9,
+          "latencyMs": 1518.6082080000015,
+          "ttftMs": 492.4962080000005
+        },
+        {
+          "t": 1790380534537,
+          "offsetMs": 25029.7,
+          "arrivalMs": 23433.9,
+          "completedAtMs": 25029.7,
+          "latencyMs": 1593.8904589999984,
+          "ttftMs": 499.18554199999926
+        },
+        {
+          "t": 1790380575355,
+          "offsetMs": 65848.1,
+          "arrivalMs": 60528.8,
+          "completedAtMs": 65848.1,
+          "latencyMs": 5317.8454589999965,
+          "ttftMs": 2508.659083999999
+        },
+        {
+          "t": 1790380575541,
+          "offsetMs": 66034.5,
+          "arrivalMs": 62261.9,
+          "completedAtMs": 66034.5,
+          "latencyMs": 3773.070959000004,
+          "ttftMs": 967.2374999999956
+        },
+        {
+          "t": 1790380579784,
+          "offsetMs": 70276.5,
+          "arrivalMs": 65869.5,
+          "completedAtMs": 70276.5,
+          "latencyMs": 4406.147582999998,
+          "ttftMs": 866.6345409999922
+        },
+        {
+          "t": 1790380582103,
+          "offsetMs": 72596.2,
+          "arrivalMs": 68476.5,
+          "completedAtMs": 72596.2,
+          "latencyMs": 4118.539000000004,
+          "ttftMs": 933.796417000005
+        },
+        {
+          "t": 1790380587259,
+          "offsetMs": 77751.6,
+          "arrivalMs": 73583.2,
+          "completedAtMs": 77751.6,
+          "latencyMs": 4167.356792000006,
+          "ttftMs": 774.7967920000083
+        },
+        {
+          "t": 1790380594870,
+          "offsetMs": 85362.6,
+          "arrivalMs": 75354.1,
+          "completedAtMs": 85362.6,
+          "latencyMs": 10008.080000000002,
+          "ttftMs": 829.0896659999999
+        },
+        {
+          "t": 1790380597610,
+          "offsetMs": 88103.3,
+          "arrivalMs": 77919.7,
+          "completedAtMs": 88103.3,
+          "latencyMs": 10182.537624999997,
+          "ttftMs": 1037.8797079999931
+        },
+        {
+          "t": 1790380597700,
+          "offsetMs": 88192.6,
+          "arrivalMs": 78334.2,
+          "completedAtMs": 88192.6,
+          "latencyMs": 9858.787334000008,
+          "ttftMs": 6802.1647920000105
+        }
+      ],
+      "retryHints": {
+        "received": 0,
+        "applied": 0,
+        "blindSleepMs": 0,
+        "hintedSleepMs": 0,
+        "totalSleepMs": 0
+      },
+      "outputTokens": 208,
+      "inputTokens": 1534,
+      "inputTokensReported": 13,
+      "latencyMs": {
+        "p50": 4118.5,
+        "p95": 10182.5,
+        "p99": 10182.5
+      },
+      "ttftMs": {
+        "p50": 829.1,
+        "p95": 6802.2,
+        "p99": 6802.2
+      }
+    },
+    "batch": {
+      "logical": 13,
+      "attempts": 13,
+      "success": 5,
+      "successRate": 0.3846,
+      "retryAmplification": 1,
+      "localReject": 8,
+      "localRejectReasons": {
+        "concurrency_limit": 8
+      },
+      "localRejectPools": {
+        "vllm-moflux": 8
+      },
+      "localRejectConstraints": {
+        "admission_class_protection": 8
+      },
+      "localRejectDetails": [
+        {
+          "pool": "vllm-moflux",
+          "reason": "concurrency_limit",
+          "grantUnavailable": false,
+          "count": 8,
+          "requestedMin": 1876,
+          "requestedMax": 1991,
+          "availableMin": 61522,
+          "availableMax": 63265,
+          "budgetMin": 65536,
+          "budgetMax": 65536
+        }
+      ],
+      "localRejectGrantUnavailable": {},
+      "localRejectSnapshots": [
+        {
+          "requestId": "batch-3",
+          "requestClass": "batch",
+          "attempt": 1,
+          "rejectedAtMs": 43213.1,
+          "target": "http://127.0.0.1:18126",
+          "type": "admission_rejected",
+          "pool": "vllm-moflux",
+          "reason": "concurrency_limit",
+          "grantUnavailable": false,
+          "admissionClass": "batch",
+          "admissionRevision": 1251,
+          "retryAfterMs": 50,
+          "grant": {
+            "id": "57a768ba-5e4a-424e-8d26-4a679c4f8ec5",
+            "controllerEpoch": 1
+          },
+          "detail": {
+            "limitRevision": 1251,
+            "constraint": "admission_class_protection",
+            "inFlight": 2,
+            "pending": 0,
+            "maxConcurrent": 4,
+            "maxQueue": 0,
+            "tokenBudget": {
+              "budget": 65536,
+              "inFlightTokens": 3982,
+              "effectiveBudget": 65536,
+              "available": 61554,
+              "requested": 1991
+            },
+            "sharedCapacity": {
+              "concurrency": {
+                "capacity": 1,
+                "inUse": 1,
+                "available": 0,
+                "requestedBorrowed": 1
+              },
+              "tokenBudget": {
+                "capacity": 40960,
+                "inUse": 0,
+                "available": 40960,
+                "requestedBorrowed": 0
+              }
+            },
+            "admissionClass": {
+              "id": "batch",
+              "inFlight": 2,
+              "protectedConcurrent": 1,
+              "protectedConcurrentInUse": 1,
+              "borrowedConcurrent": 1,
+              "availableProtectedConcurrent": 0,
+              "maxConcurrent": 4,
+              "availableConcurrent": 2,
+              "tokenBudget": {
+                "inFlightTokens": 3982,
+                "protectedInFlightTokens": 16384,
+                "protectedTokensInUse": 3982,
+                "borrowedInFlightTokens": 0,
+                "availableProtectedTokens": 12402,
+                "maxInFlightTokens": 65536,
+                "available": 61554,
+                "requested": 1991
+              }
+            }
+          }
+        },
+        {
+          "requestId": "batch-4",
+          "requestClass": "batch",
+          "attempt": 1,
+          "rejectedAtMs": 45569.3,
+          "target": "http://127.0.0.1:18126",
+          "type": "admission_rejected",
+          "pool": "vllm-moflux",
+          "reason": "concurrency_limit",
+          "grantUnavailable": false,
+          "admissionClass": "batch",
+          "admissionRevision": 1251,
+          "retryAfterMs": 50,
+          "grant": {
+            "id": "57a768ba-5e4a-424e-8d26-4a679c4f8ec5",
+            "controllerEpoch": 1
+          },
+          "detail": {
+            "limitRevision": 1251,
+            "constraint": "admission_class_protection",
+            "inFlight": 2,
+            "pending": 0,
+            "maxConcurrent": 4,
+            "maxQueue": 0,
+            "tokenBudget": {
+              "budget": 65536,
+              "inFlightTokens": 3982,
+              "effectiveBudget": 65536,
+              "available": 61554,
+              "requested": 1991
+            },
+            "sharedCapacity": {
+              "concurrency": {
+                "capacity": 1,
+                "inUse": 1,
+                "available": 0,
+                "requestedBorrowed": 1
+              },
+              "tokenBudget": {
+                "capacity": 40960,
+                "inUse": 0,
+                "available": 40960,
+                "requestedBorrowed": 0
+              }
+            },
+            "admissionClass": {
+              "id": "batch",
+              "inFlight": 2,
+              "protectedConcurrent": 1,
+              "protectedConcurrentInUse": 1,
+              "borrowedConcurrent": 1,
+              "availableProtectedConcurrent": 0,
+              "maxConcurrent": 4,
+              "availableConcurrent": 2,
+              "tokenBudget": {
+                "inFlightTokens": 3982,
+                "protectedInFlightTokens": 16384,
+                "protectedTokensInUse": 3982,
+                "borrowedInFlightTokens": 0,
+                "availableProtectedTokens": 12402,
+                "maxInFlightTokens": 65536,
+                "available": 61554,
+                "requested": 1991
+              }
+            }
+          }
+        },
+        {
+          "requestId": "batch-7",
+          "requestClass": "batch",
+          "attempt": 1,
+          "rejectedAtMs": 58480.9,
+          "target": "http://127.0.0.1:18126",
+          "type": "admission_rejected",
+          "pool": "vllm-moflux",
+          "reason": "concurrency_limit",
+          "grantUnavailable": false,
+          "admissionClass": "batch",
+          "admissionRevision": 1263,
+          "retryAfterMs": 16166,
+          "grant": {
+            "id": "8adfabe9-e94c-45dc-9fa8-085f13ee7e22",
+            "controllerEpoch": 1
+          },
+          "detail": {
+            "limitRevision": 1263,
+            "constraint": "admission_class_protection",
+            "inFlight": 2,
+            "pending": 0,
+            "maxConcurrent": 4,
+            "maxQueue": 0,
+            "tokenBudget": {
+              "budget": 65536,
+              "inFlightTokens": 3752,
+              "effectiveBudget": 65536,
+              "available": 61784,
+              "requested": 1876
+            },
+            "sharedCapacity": {
+              "concurrency": {
+                "capacity": 1,
+                "inUse": 1,
+                "available": 0,
+                "requestedBorrowed": 1
+              },
+              "tokenBudget": {
+                "capacity": 40960,
+                "inUse": 0,
+                "available": 40960,
+                "requestedBorrowed": 0
+              }
+            },
+            "admissionClass": {
+              "id": "batch",
+              "inFlight": 2,
+              "protectedConcurrent": 1,
+              "protectedConcurrentInUse": 1,
+              "borrowedConcurrent": 1,
+              "availableProtectedConcurrent": 0,
+              "maxConcurrent": 4,
+              "availableConcurrent": 2,
+              "tokenBudget": {
+                "inFlightTokens": 3752,
+                "protectedInFlightTokens": 16384,
+                "protectedTokensInUse": 3752,
+                "borrowedInFlightTokens": 0,
+                "availableProtectedTokens": 12632,
+                "maxInFlightTokens": 65536,
+                "available": 61784,
+                "requested": 1876
+              }
+            }
+          }
+        },
+        {
+          "requestId": "batch-8",
+          "requestClass": "batch",
+          "attempt": 1,
+          "rejectedAtMs": 61513,
+          "target": "http://127.0.0.1:18126",
+          "type": "admission_rejected",
+          "pool": "vllm-moflux",
+          "reason": "concurrency_limit",
+          "grantUnavailable": false,
+          "admissionClass": "batch",
+          "admissionRevision": 1267,
+          "retryAfterMs": 13134,
+          "grant": {
+            "id": "dd5db089-8256-4afa-9335-cf3e2a4b2a5e",
+            "controllerEpoch": 1
+          },
+          "detail": {
+            "limitRevision": 1267,
+            "constraint": "admission_class_protection",
+            "inFlight": 3,
+            "pending": 0,
+            "maxConcurrent": 4,
+            "maxQueue": 0,
+            "tokenBudget": {
+              "budget": 65536,
+              "inFlightTokens": 3878,
+              "effectiveBudget": 65536,
+              "available": 61658,
+              "requested": 1876
+            },
+            "sharedCapacity": {
+              "concurrency": {
+                "capacity": 0,
+                "inUse": 1,
+                "available": 0,
+                "requestedBorrowed": 1
+              },
+              "tokenBudget": {
+                "capacity": 0,
+                "inUse": 0,
+                "available": 0,
+                "requestedBorrowed": 0
+              }
+            },
+            "admissionClass": {
+              "id": "batch",
+              "inFlight": 2,
+              "protectedConcurrent": 1,
+              "protectedConcurrentInUse": 1,
+              "borrowedConcurrent": 1,
+              "availableProtectedConcurrent": 0,
+              "maxConcurrent": 4,
+              "availableConcurrent": 2,
+              "tokenBudget": {
+                "inFlightTokens": 3752,
+                "protectedInFlightTokens": 16384,
+                "protectedTokensInUse": 3752,
+                "borrowedInFlightTokens": 0,
+                "availableProtectedTokens": 12632,
+                "maxInFlightTokens": 65536,
+                "available": 61784,
+                "requested": 1876
+              }
+            }
+          }
+        },
+        {
+          "requestId": "batch-9",
+          "requestClass": "batch",
+          "attempt": 1,
+          "rejectedAtMs": 63235.6,
+          "target": "http://127.0.0.1:18126",
+          "type": "admission_rejected",
+          "pool": "vllm-moflux",
+          "reason": "concurrency_limit",
+          "grantUnavailable": false,
+          "admissionClass": "batch",
+          "admissionRevision": 1267,
+          "retryAfterMs": 11410,
+          "grant": {
+            "id": "dd5db089-8256-4afa-9335-cf3e2a4b2a5e",
+            "controllerEpoch": 1
+          },
+          "detail": {
+            "limitRevision": 1267,
+            "constraint": "admission_class_protection",
+            "inFlight": 4,
+            "pending": 0,
+            "maxConcurrent": 4,
+            "maxQueue": 0,
+            "tokenBudget": {
+              "budget": 65536,
+              "inFlightTokens": 4004,
+              "effectiveBudget": 65536,
+              "available": 61532,
+              "requested": 1876
+            },
+            "sharedCapacity": {
+              "concurrency": {
+                "capacity": 0,
+                "inUse": 1,
+                "available": 0,
+                "requestedBorrowed": 1
+              },
+              "tokenBudget": {
+                "capacity": 0,
+                "inUse": 0,
+                "available": 0,
+                "requestedBorrowed": 0
+              }
+            },
+            "admissionClass": {
+              "id": "batch",
+              "inFlight": 2,
+              "protectedConcurrent": 1,
+              "protectedConcurrentInUse": 1,
+              "borrowedConcurrent": 1,
+              "availableProtectedConcurrent": 0,
+              "maxConcurrent": 4,
+              "availableConcurrent": 2,
+              "tokenBudget": {
+                "inFlightTokens": 3752,
+                "protectedInFlightTokens": 16384,
+                "protectedTokensInUse": 3752,
+                "borrowedInFlightTokens": 0,
+                "availableProtectedTokens": 12632,
+                "maxInFlightTokens": 65536,
+                "available": 61784,
+                "requested": 1876
+              }
+            }
+          }
+        },
+        {
+          "requestId": "batch-10",
+          "requestClass": "batch",
+          "attempt": 1,
+          "rejectedAtMs": 71538.4,
+          "target": "http://127.0.0.1:18126",
+          "type": "admission_rejected",
+          "pool": "vllm-moflux",
+          "reason": "concurrency_limit",
+          "grantUnavailable": false,
+          "admissionClass": "batch",
+          "admissionRevision": 1271,
+          "retryAfterMs": 9692,
+          "grant": {
+            "id": "4fae729f-e9d4-4b26-a5c5-9c72903cf16b",
+            "controllerEpoch": 1
+          },
+          "detail": {
+            "limitRevision": 1271,
+            "constraint": "admission_class_protection",
+            "inFlight": 3,
+            "pending": 0,
+            "maxConcurrent": 4,
+            "maxQueue": 0,
+            "tokenBudget": {
+              "budget": 65536,
+              "inFlightTokens": 3881,
+              "effectiveBudget": 65536,
+              "available": 61655,
+              "requested": 1942
+            },
+            "sharedCapacity": {
+              "concurrency": {
+                "capacity": 0,
+                "inUse": 1,
+                "available": 0,
+                "requestedBorrowed": 1
+              },
+              "tokenBudget": {
+                "capacity": 0,
+                "inUse": 0,
+                "available": 0,
+                "requestedBorrowed": 0
+              }
+            },
+            "admissionClass": {
+              "id": "batch",
+              "inFlight": 2,
+              "protectedConcurrent": 1,
+              "protectedConcurrentInUse": 1,
+              "borrowedConcurrent": 1,
+              "availableProtectedConcurrent": 0,
+              "maxConcurrent": 4,
+              "availableConcurrent": 2,
+              "tokenBudget": {
+                "inFlightTokens": 3752,
+                "protectedInFlightTokens": 16384,
+                "protectedTokensInUse": 3752,
+                "borrowedInFlightTokens": 0,
+                "availableProtectedTokens": 12632,
+                "maxInFlightTokens": 65536,
+                "available": 61784,
+                "requested": 1942
+              }
+            }
+          }
+        },
+        {
+          "requestId": "batch-11",
+          "requestClass": "batch",
+          "attempt": 1,
+          "rejectedAtMs": 76671.6,
+          "target": "http://127.0.0.1:18126",
+          "type": "admission_rejected",
+          "pool": "vllm-moflux",
+          "reason": "concurrency_limit",
+          "grantUnavailable": false,
+          "admissionClass": "batch",
+          "admissionRevision": 1271,
+          "retryAfterMs": 4505,
+          "grant": {
+            "id": "4fae729f-e9d4-4b26-a5c5-9c72903cf16b",
+            "controllerEpoch": 1
+          },
+          "detail": {
+            "limitRevision": 1271,
+            "constraint": "admission_class_protection",
+            "inFlight": 4,
+            "pending": 0,
+            "maxConcurrent": 4,
+            "maxQueue": 0,
+            "tokenBudget": {
+              "budget": 65536,
+              "inFlightTokens": 4014,
+              "effectiveBudget": 65536,
+              "available": 61522,
+              "requested": 1957
+            },
+            "sharedCapacity": {
+              "concurrency": {
+                "capacity": 0,
+                "inUse": 1,
+                "available": 0,
+                "requestedBorrowed": 1
+              },
+              "tokenBudget": {
+                "capacity": 0,
+                "inUse": 0,
+                "available": 0,
+                "requestedBorrowed": 0
+              }
+            },
+            "admissionClass": {
+              "id": "batch",
+              "inFlight": 2,
+              "protectedConcurrent": 1,
+              "protectedConcurrentInUse": 1,
+              "borrowedConcurrent": 1,
+              "availableProtectedConcurrent": 0,
+              "maxConcurrent": 4,
+              "availableConcurrent": 2,
+              "tokenBudget": {
+                "inFlightTokens": 3752,
+                "protectedInFlightTokens": 16384,
+                "protectedTokensInUse": 3752,
+                "borrowedInFlightTokens": 0,
+                "availableProtectedTokens": 12632,
+                "maxInFlightTokens": 65536,
+                "available": 61784,
+                "requested": 1957
+              }
+            }
+          }
+        },
+        {
+          "requestId": "batch-13",
+          "requestClass": "batch",
+          "attempt": 1,
+          "rejectedAtMs": 81129.6,
+          "target": "http://127.0.0.1:18126",
+          "type": "admission_rejected",
+          "pool": "vllm-moflux",
+          "reason": "concurrency_limit",
+          "grantUnavailable": false,
+          "admissionClass": "batch",
+          "admissionRevision": 1281,
+          "retryAfterMs": 2556,
+          "grant": {
+            "id": "099b4337-106e-47af-b55b-ea0f77dd10fe",
+            "controllerEpoch": 1
+          },
+          "detail": {
+            "limitRevision": 1281,
+            "constraint": "admission_class_protection",
+            "inFlight": 4,
+            "pending": 0,
+            "maxConcurrent": 4,
+            "maxQueue": 0,
+            "tokenBudget": {
+              "budget": 65536,
+              "inFlightTokens": 2271,
+              "effectiveBudget": 65536,
+              "available": 63265,
+              "requested": 1886
+            },
+            "sharedCapacity": {
+              "concurrency": {
+                "capacity": 0,
+                "inUse": 0,
+                "available": 0,
+                "requestedBorrowed": 1
+              },
+              "tokenBudget": {
+                "capacity": 0,
+                "inUse": 0,
+                "available": 0,
+                "requestedBorrowed": 0
+              }
+            },
+            "admissionClass": {
+              "id": "batch",
+              "inFlight": 1,
+              "protectedConcurrent": 1,
+              "protectedConcurrentInUse": 1,
+              "borrowedConcurrent": 0,
+              "availableProtectedConcurrent": 0,
+              "maxConcurrent": 4,
+              "availableConcurrent": 3,
+              "tokenBudget": {
+                "inFlightTokens": 1886,
+                "protectedInFlightTokens": 16384,
+                "protectedTokensInUse": 1886,
+                "borrowedInFlightTokens": 0,
+                "availableProtectedTokens": 14498,
+                "maxInFlightTokens": 65536,
+                "available": 63650,
+                "requested": 1886
+              }
+            }
+          }
+        }
+      ],
+      "admissionClassResponses": {
+        "batch": 13
+      },
+      "upstreamReject": 0,
+      "borrowedDeadlineAbandoned": 0,
+      "borrowedDeadlineSnapshots": [],
+      "serverError": 0,
+      "serverErrorSnapshots": [],
+      "requestError": 0,
+      "requestErrorReasons": {},
+      "requestErrorSnapshots": [],
+      "transportError": 0,
+      "exhausted": 8,
+      "drainTimeoutCensored": 0,
+      "drainTimeoutSnapshots": [],
+      "requestSizes": null,
+      "bindingConstraint": {
+        "budgetLimited": 0,
+        "concurrencyLimited": 8,
+        "grantUnavailable": 0,
+        "tokenBoundShare": 0,
+        "exercisedTokenAwareness": false
+      },
+      "firstAttemptAtMs": 32655.4,
+      "lastAttemptAtMs": 81123.3,
+      "lastLocalRejectAtMs": 81129.6,
+      "firstResponseHeadersAtMs": 38762.5,
+      "firstSuccessAtMs": 50091.4,
+      "responseHeadersGapMs": 6107.1,
+      "firstSuccessGapMs": 17436,
+      "windows": {
+        "boundaryMs": 25000,
+        "endMs": 105000,
+        "idle": {
+          "completed": 0,
+          "goodputRps": 0,
+          "p50Ms": null,
+          "p95Ms": null,
+          "ttftP50Ms": null,
+          "ttftP95Ms": null
+        },
+        "contended": {
+          "completed": 5,
+          "goodputRps": 0.063,
+          "p50Ms": 17436.062500000004,
+          "p95Ms": 25795.948333,
+          "ttftP50Ms": 6716.4939999999915,
+          "ttftP95Ms": 11009.427375
+        },
+        "resumeMs": 60000,
+        "borrow": {
+          "completed": 4,
+          "goodputRps": 0.114,
+          "p50Ms": 24534.490250000003,
+          "p95Ms": 25795.948333,
+          "ttftP50Ms": 10038.830457999997,
+          "ttftP95Ms": 11009.427375
+        },
+        "contention": {
+          "completed": 1,
+          "goodputRps": 0.022,
+          "p50Ms": 13745.721624999991,
+          "p95Ms": 13745.721624999991,
+          "ttftP50Ms": 6716.4939999999915,
+          "ttftP95Ms": 6716.4939999999915
+        },
+        "drainCompleted": 0
+      },
+      "phaseSamples": [
+        {
+          "t": 1790380559598,
+          "offsetMs": 50091.4,
+          "arrivalMs": 32654.6,
+          "completedAtMs": 50091.4,
+          "latencyMs": 17436.062500000004,
+          "ttftMs": 6107.300791999998
+        },
+        {
+          "t": 1790380559599,
+          "offsetMs": 50091.7,
+          "arrivalMs": 32746.7,
+          "completedAtMs": 50091.7,
+          "latencyMs": 17345.243458000004,
+          "ttftMs": 6140.687333000002
+        },
+        {
+          "t": 1790380586348,
+          "offsetMs": 76841,
+          "arrivalMs": 51043.7,
+          "completedAtMs": 76841,
+          "latencyMs": 25795.948333,
+          "ttftMs": 11009.427375
+        },
+        {
+          "t": 1790380586550,
+          "offsetMs": 77043.3,
+          "arrivalMs": 52506.9,
+          "completedAtMs": 77043.3,
+          "latencyMs": 24534.490250000003,
+          "ttftMs": 10038.830457999997
+        },
+        {
+          "t": 1790380601900,
+          "offsetMs": 92393.3,
+          "arrivalMs": 78647.6,
+          "completedAtMs": 92393.3,
+          "latencyMs": 13745.721624999991,
+          "ttftMs": 6716.4939999999915
+        }
+      ],
+      "retryHints": {
+        "received": 0,
+        "applied": 0,
+        "blindSleepMs": 0,
+        "hintedSleepMs": 0,
+        "totalSleepMs": 0
+      },
+      "outputTokens": 320,
+      "inputTokens": 8035,
+      "inputTokensReported": 5,
+      "latencyMs": {
+        "p50": 17436.1,
+        "p95": 25795.9,
+        "p99": 25795.9
+      },
+      "ttftMs": {
+        "p50": 6716.5,
+        "p95": 11009.4,
+        "p99": 11009.4
+      }
+    }
+  }
+}
